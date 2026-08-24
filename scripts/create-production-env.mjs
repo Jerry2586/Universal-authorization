@@ -74,6 +74,16 @@ if (!existing.get('LICENSE_SIGNING_PRIVATE_KEY_PEM_BASE64')) {
   generated.set('LICENSE_SIGNING_PRIVATE_KEY_PEM_BASE64', createSigningPrivateKey());
 }
 
+if (!existing.get('ADMIN_BOOTSTRAP_TENANT_CODE')) generated.set('ADMIN_BOOTSTRAP_TENANT_CODE', 'default');
+if (!existing.get('ADMIN_BOOTSTRAP_TENANT_NAME')) generated.set('ADMIN_BOOTSTRAP_TENANT_NAME', '默认工作区');
+if (!existing.get('ADMIN_BOOTSTRAP_EMAIL')) generated.set('ADMIN_BOOTSTRAP_EMAIL', 'admin@example.com');
+if (!existing.get('ADMIN_BOOTSTRAP_PASSWORD')) generated.set('ADMIN_BOOTSTRAP_PASSWORD', randomBytes(18).toString('base64url'));
+if (!existing.get('ADMIN_BOOTSTRAP_DISPLAY_NAME')) generated.set('ADMIN_BOOTSTRAP_DISPLAY_NAME', '系统管理员');
+if (!existing.get('ADMIN_BOOTSTRAP_RESET_PASSWORD')) generated.set('ADMIN_BOOTSTRAP_RESET_PASSWORD', 'false');
+if (!existing.get('ADMIN_SESSION_TTL_SECONDS')) generated.set('ADMIN_SESSION_TTL_SECONDS', '28800');
+if (!existing.get('ADMIN_COOKIE_SECURE')) generated.set('ADMIN_COOKIE_SECURE', 'false');
+if (!existing.get('ADMIN_WEB_ROOT')) generated.set('ADMIN_WEB_ROOT', 'public/admin');
+
 const templateKeys = new Set();
 const outputLines = template.split(/\r?\n/u).map((line) => {
   const separator = line.indexOf('=');
@@ -98,7 +108,7 @@ await writeFile(outputPath, `${outputLines.join('\n').replace(/\n+$/u, '')}\n`, 
 });
 
 console.log(`[一键部署] 环境配置已准备：${outputPath}`);
-console.log('[一键部署] 安全令牌、Key Pepper、数据库密码和 Ed25519 私钥已自动生成或保留。');
+console.log('[一键部署] 安全令牌、Key Pepper、数据库密码、管理员密码和 Ed25519 私钥已自动生成或保留。');
 
 if (outputAlreadyExists) {
   const warnings = [];

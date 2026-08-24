@@ -24,6 +24,9 @@ const environmentSchema = z.object({
   REDIS_URL: z.string().url().default('redis://127.0.0.1:6379'),
   REDIS_KEY_PREFIX: z.string().min(1).max(64).default('license-server:'),
   MANAGEMENT_GATEWAY_TOKEN: optionalSecret,
+  ADMIN_SESSION_TTL_SECONDS: z.coerce.number().int().min(900).max(604_800).default(28_800),
+  ADMIN_COOKIE_SECURE: z.enum(['true', 'false']).default('false'),
+  ADMIN_WEB_ROOT: z.string().min(1).default('public/admin'),
   LICENSE_KEY_PEPPER: optionalSecret,
   LICENSE_SIGNING_PRIVATE_KEY_PEM_BASE64: optionalValue,
   LICENSE_SIGNING_KEY_ID: z.string().min(1).max(96).default('license-signing-v1'),
@@ -53,6 +56,9 @@ export type AppConfig = {
   redisUrl: string;
   redisKeyPrefix: string;
   managementGatewayToken?: string;
+  adminSessionTtlSeconds: number;
+  adminCookieSecure: boolean;
+  adminWebRoot: string;
   licenseKeyPepper?: string;
   licenseSigningPrivateKeyPemBase64?: string;
   licenseSigningKeyId: string;
@@ -88,6 +94,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     redisUrl: parsed.REDIS_URL,
     redisKeyPrefix: parsed.REDIS_KEY_PREFIX,
     ...(parsed.MANAGEMENT_GATEWAY_TOKEN === undefined ? {} : { managementGatewayToken: parsed.MANAGEMENT_GATEWAY_TOKEN }),
+    adminSessionTtlSeconds: parsed.ADMIN_SESSION_TTL_SECONDS,
+    adminCookieSecure: parsed.ADMIN_COOKIE_SECURE === 'true',
+    adminWebRoot: parsed.ADMIN_WEB_ROOT,
     ...(parsed.LICENSE_KEY_PEPPER === undefined ? {} : { licenseKeyPepper: parsed.LICENSE_KEY_PEPPER }),
     ...(parsed.LICENSE_SIGNING_PRIVATE_KEY_PEM_BASE64 === undefined ? {} : { licenseSigningPrivateKeyPemBase64: parsed.LICENSE_SIGNING_PRIVATE_KEY_PEM_BASE64 }),
     licenseSigningKeyId: parsed.LICENSE_SIGNING_KEY_ID,

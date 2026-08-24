@@ -259,8 +259,12 @@ SERVER_IP=${SERVER_IP:-服务器IP}
 printf '\n\033[32m==================================================\n'
 printf '  Linux 一键拉取和安装已经完成\n'
 printf '  安装目录：%s\n' "$INSTALL_DIR"
-printf '  本机检查：http://127.0.0.1:%s/health\n' "$PORT"
-printf '  远程检查：http://%s:%s/health\n' "$SERVER_IP" "$PORT"
+printf '  本机管理后台：http://127.0.0.1:%s/admin/\n' "$PORT"
+printf '  远程管理后台：http://%s:%s/admin/\n' "$SERVER_IP" "$PORT"
+printf '  管理员邮箱：%s\n' "$(grep '^ADMIN_BOOTSTRAP_EMAIL=' .env | cut -d '=' -f 2-)"
+printf '  工作区代码：%s\n' "$(grep '^ADMIN_BOOTSTRAP_TENANT_CODE=' .env | cut -d '=' -f 2-)"
+printf '  初始管理员密码：%s\n' "$(grep '^ADMIN_BOOTSTRAP_PASSWORD=' .env | cut -d '=' -f 2-)"
+printf '  健康检查：http://127.0.0.1:%s/health\n' "$PORT"
 printf '  查看日志：cd %s && docker compose logs -f app\n' "$INSTALL_DIR"
 printf '  更新程序：重新执行同一条一键安装命令\n'
 printf '==================================================\033[0m\n'

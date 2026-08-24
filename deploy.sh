@@ -69,6 +69,10 @@ PORT=${PORT:-3000}
 
 printf '\n\033[32m========================================\n'
 printf '  通用 Key 授权服务器搭建成功\n'
+printf '  Web 管理后台：http://127.0.0.1:%s/admin/\n' "$PORT"
+printf '  管理员邮箱：%s\n' "$(grep '^ADMIN_BOOTSTRAP_EMAIL=' .env | cut -d '=' -f 2-)"
+printf '  工作区代码：%s\n' "$(grep '^ADMIN_BOOTSTRAP_TENANT_CODE=' .env | cut -d '=' -f 2-)"
+printf '  初始管理员密码：%s\n' "$(grep '^ADMIN_BOOTSTRAP_PASSWORD=' .env | cut -d '=' -f 2-)"
 printf '  健康检查：http://127.0.0.1:%s/health\n' "$PORT"
 printf '  就绪检查：http://127.0.0.1:%s/ready\n' "$PORT"
 printf '  查看日志：docker compose logs -f app\n'

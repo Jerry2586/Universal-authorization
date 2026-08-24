@@ -18,7 +18,11 @@
     "db:status": "tsx scripts/migration-status.ts",
     "infra:up": "docker compose up -d postgres redis",
     "infra:down": "docker compose down",
-    "signing-key:generate": "tsx scripts/generate-dev-signing-key.ts"
+    "signing-key:generate": "tsx scripts/generate-dev-signing-key.ts",
+    "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build",
+    "build:all": "pnpm web:build && pnpm build"
   },
   "dependencies": {
     "fastify": "5.12.1",
@@ -35,6 +39,3 @@
   },
   "packageManager": "pnpm@11.19.0"
 }
-
-
-

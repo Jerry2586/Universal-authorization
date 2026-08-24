@@ -3,6 +3,8 @@ import type { KeyValueCache } from '../src/infrastructure/cache/key-value-cache.
 import { RedisChallengeStore } from '../src/modules/challenges/infrastructure/redis-challenge.store.js';
 
 class FakeCache implements KeyValueCache {
+  public async get(_key: string): Promise<string | null> { return null; }
+  public async incrementWithTtl(_key: string, _ttlSeconds: number): Promise<number> { return 1; }
   private readonly values = new Map<string, string>();
 
   public async connect(): Promise<void> {}

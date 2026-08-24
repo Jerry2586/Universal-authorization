@@ -30,6 +30,8 @@ import { DeviceUnbindService } from './modules/devices/device-unbind.service.js'
 import { registerSessionLifecycleRoutes } from './modules/sessions/session-lifecycle.routes.js';
 import { registerAdminDeviceRoutes, type AdminDeviceRouteDependencies } from './modules/admin-devices/admin-device.routes.js';
 import { registerAdminAuditRoutes, type AdminAuditRouteDependencies } from './modules/admin-audit/admin-audit.routes.js';
+import { registerAdminAuthRoutes, type AdminAuthRouteDependencies } from './modules/admin-auth/admin-auth.routes.js';
+import { registerAdminWebRoutes } from './modules/admin-web/admin-web.routes.js';
 
 export interface ActivationModuleDependencies {
   repository: ActivationRepository;
@@ -64,6 +66,8 @@ export interface BuildAppOptions {
   management?: ManagementRouteDependencies;
   adminDevices?: AdminDeviceRouteDependencies;
   adminAudit?: AdminAuditRouteDependencies;
+  adminAuth?: AdminAuthRouteDependencies;
+  adminWebRoot?: string;
   activation?: ActivationModuleDependencies;
   licenseRuntime?: LicenseRuntimeModuleDependencies;
 }
@@ -76,6 +80,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   registerErrorHandler(app);
   registerHealthRoutes(app, options.readinessCheck);
   registerChallengeRoutes(app, challengeService);
+  if (options.adminAuth !== undefined) registerAdminAuthRoutes(app, options.adminAuth);
   if (options.management !== undefined) registerManagementRoutes(app, options.management);
   if (options.adminDevices !== undefined) registerAdminDeviceRoutes(app, options.adminDevices);
   if (options.adminAudit !== undefined) registerAdminAuditRoutes(app, options.adminAudit);
@@ -148,6 +153,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       registerSessionLifecycleRoutes(app, heartbeatService, releaseService, unbindService);
     }
   }
+  if (options.adminWebRoot !== undefined) registerAdminWebRoutes(app, options.adminWebRoot);
   return app;
 }
 

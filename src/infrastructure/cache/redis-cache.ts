@@ -28,21 +28,21 @@ export class RedisCache implements KeyValueCache {
   }
 
   public async connect(): Promise<void> {
-    if (!this.client.isOpen) {
-      await this.client.connect();
-    }
+    if (!this.client.isOpen) await this.client.connect();
   }
 
   public async close(): Promise<void> {
-    if (this.client.isOpen) {
-      await this.client.quit();
-    }
+    if (this.client.isOpen) await this.client.quit();
   }
 
   public async ping(): Promise<number> {
     const startedAt = performance.now();
     await this.client.ping();
     return Math.round((performance.now() - startedAt) * 100) / 100;
+  }
+
+  public async get(key: string): Promise<string | null> {
+    return this.client.get(key);
   }
 
   public async set(key: string, value: string, ttlSeconds: number): Promise<void> {
@@ -53,20 +53,18 @@ export class RedisCache implements KeyValueCache {
     await this.client.del(key);
   }
 
-  public async setIfAbsent(
-    key: string,
-    value: string,
-    ttlSeconds: number,
-  ): Promise<boolean> {
-    const result = await this.client.set(key, value, {
-      EX: ttlSeconds,
-      NX: true,
-    });
-
+  public async setIfAbsent(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.set(key, value, { EX: ttlSeconds, NX: true });
     return result === 'OK';
   }
 
   public async getAndDelete(key: string): Promise<string | null> {
     return this.client.getDel(key);
+  }
+
+  public async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
+    const value = await this.client.incr(key);
+    if (value === 1) await this.client.expire(key, ttlSeconds);
+    return value;
   }
 }

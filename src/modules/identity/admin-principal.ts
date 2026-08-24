@@ -9,6 +9,9 @@ export interface AdminPrincipal {
 export interface AdminPrincipalRequest {
   authorization?: string;
   adminUserId?: string;
+  sessionToken?: string;
+  csrfToken?: string;
+  csrfRequired?: boolean;
 }
 
 export interface AdminPrincipalResolver {
