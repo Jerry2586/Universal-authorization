@@ -218,6 +218,12 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+print_step "检查远端分支：${BRANCH}"
+if ! git ls-remote --exit-code --heads "$REPOSITORY_URL" "refs/heads/$BRANCH" >/dev/null 2>&1; then
+  print_error "远端分支不存在或当前无法访问：$BRANCH"
+  exit 1
+fi
+
 print_step "拉取授权服务器源码到 ${INSTALL_DIR}"
 if [ -d "$INSTALL_DIR/.git" ]; then
   cd "$INSTALL_DIR"
@@ -269,7 +275,9 @@ PUBLIC_HOST="$SERVER_IP" ./show-admin-login.sh --show
 printf '  登录信息文件：%s/admin-login.txt\n' "$INSTALL_DIR"
 printf '  随时查看账号密码：sudo cat %s/admin-login.txt\n' "$INSTALL_DIR"
 printf '  或执行：cd %s && sudo ./show-admin-login.sh\n' "$INSTALL_DIR"
-printf '  健康检查：http://127.0.0.1:%s/health\n' "$PORT"
+printf '  后台地址：http://%s:%s/admin/\n' "$SERVER_IP" "$PORT"
+printf '  健康检查：http://%s:%s/health\n' "$SERVER_IP" "$PORT"
+printf '  就绪检查：http://%s:%s/ready\n' "$SERVER_IP" "$PORT"
 printf '  查看日志：cd %s && docker compose logs -f app\n' "$INSTALL_DIR"
 printf '  更新程序：重新执行同一条一键安装命令\n'
 printf '==================================================\033[0m\n'

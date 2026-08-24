@@ -4,6 +4,7 @@ import { AppError } from '../../shared/errors/app-error.js';
 
 export interface AdminSession {
   userId: string;
+  sessionVersion: number;
   csrfToken: string;
   createdAt: string;
   expiresAt: string;
@@ -20,12 +21,13 @@ export class AdminSessionStore {
     private readonly ttlSeconds: number,
   ) {}
 
-  public async create(userId: string): Promise<CreatedAdminSession> {
+  public async create(userId: string, sessionVersion: number): Promise<CreatedAdminSession> {
     const sessionToken = randomBytes(32).toString('base64url');
     const csrfToken = randomBytes(24).toString('base64url');
     const now = new Date();
     const session: AdminSession = {
       userId,
+      sessionVersion,
       csrfToken,
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + this.ttlSeconds * 1000).toISOString(),
@@ -40,7 +42,7 @@ export class AdminSessionStore {
     if (value === null) return null;
     try {
       const session = JSON.parse(value) as Partial<AdminSession>;
-      if (typeof session.userId !== 'string' || typeof session.csrfToken !== 'string' || typeof session.createdAt !== 'string' || typeof session.expiresAt !== 'string') return null;
+      if (typeof session.userId !== 'string' || typeof session.sessionVersion !== 'number' || typeof session.csrfToken !== 'string' || typeof session.createdAt !== 'string' || typeof session.expiresAt !== 'string') return null;
       if (Date.parse(session.expiresAt) <= Date.now()) return null;
       return session as AdminSession;
     } catch {

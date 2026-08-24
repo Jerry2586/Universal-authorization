@@ -1,10 +1,10 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit3, Filter, Gauge, Plus, Search, ShieldCheck, Smartphone, Timer, WifiOff } from 'lucide-react';
 import { api, fetchAllPages, queryString } from '../api/client';
 import type { LicenseType, Page, Policy, Product } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
-import { Empty, Modal, SkeletonRows } from '../components/Ui';
+import { Empty, Modal, QueryError, SkeletonRows } from '../components/Ui';
 import { useToast } from '../components/Toast';
 import { formatDate, JsonField, Pagination, parseJsonObject, PermissionNotice, toLocalDateTime } from '../components/AdminForms';
 
@@ -27,6 +27,17 @@ export function PoliciesPage() {
     queryFn: () => api<Page<Policy>>(`/admin/v1/license-policies${queryString({ limit: PAGE_SIZE, offset, product_id: productId || undefined })}`),
   });
   const filtered = useMemo(() => policies.data?.items.filter((policy) => `${policy.name} ${policy.code}`.toLowerCase().includes(search.toLowerCase())) ?? [], [policies.data, search]);
+  useEffect(() => {
+    if (products.isError) setEditor(null);
+  }, [products.isError]);
+  useEffect(() => {
+    const total = policies.data?.total;
+    if (total === undefined) return;
+    if (total === 0 && offset !== 0) setOffset(0);
+    else if (total > 0 && offset >= total) setOffset(Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE);
+  }, [policies.data?.total, offset]);
+
+  const productOptionsReady = products.isSuccess;
   const save = useMutation({
     mutationFn: ({ body, item }: { body: unknown; item: Policy | 'create' }) => api<Policy>(item === 'create' ? '/admin/v1/license-policies' : `/admin/v1/license-policies/${item.id}`, { method: item === 'create' ? 'POST' : 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['policies'] }); setEditor(null); toast('授权策略已保存'); },
@@ -36,15 +47,17 @@ export function PoliciesPage() {
   return <div className="page-stack">
     <div className="toolbar wrap">
       <div className="search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索当前页策略名称或代码" /></div>
-      <div className="select-icon"><Filter /><select value={productId} onChange={(event) => { setProductId(event.target.value); setOffset(0); }}><option value="">全部产品和通用策略</option>{products.data?.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select></div>
-      {canWrite && <button className="primary" onClick={() => setEditor('create')}><Plus />新建策略</button>}
+      <div className="select-icon"><Filter /><select value={productId} disabled={!productOptionsReady} onChange={(event) => { setProductId(event.target.value); setOffset(0); }}><option value="">{products.isLoading ? '正在读取产品...' : products.isError ? '产品选项读取失败' : '全部产品和通用策略'}</option>{products.data?.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select></div>
+      {canWrite && <button className="primary" disabled={!productOptionsReady} title={!productOptionsReady ? '需要先成功读取真实产品选项' : undefined} onClick={() => setEditor('create')}><Plus />新建策略</button>}
     </div>
     {!canWrite && <PermissionNotice>当前账号只有授权读取权限，策略编辑功能已隐藏。</PermissionNotice>}
+    {canWrite && products.isLoading && <div className="dependency-hint"><Filter />正在读取真实产品选项，完成前暂不可新建或编辑策略。</div>}
+    {canWrite && products.isError && <QueryError compact title="产品选项读取失败，策略编辑已停用" error={products.error} onRetry={() => void products.refetch()} />}
     <section className="panel table-panel">
-      {policies.isLoading ? <SkeletonRows /> : filtered.length === 0 ? <Empty icon={<ShieldCheck />} title="暂无授权策略" text="当前筛选条件下没有策略。" /> : (
+      {policies.isLoading ? <SkeletonRows /> : policies.isError ? <QueryError title="授权策略读取失败" error={policies.error} onRetry={() => void policies.refetch()} /> : filtered.length === 0 ? <Empty icon={<ShieldCheck />} title={search ? "当前页没有匹配策略" : productId ? "当前产品没有策略" : offset > 0 ? "当前页没有策略" : "暂无授权策略"} text={search ? "请调整当前页搜索词。" : productId ? "数据库中没有符合该产品条件的策略。" : offset > 0 ? "请返回上一页继续查看。" : "数据库中还没有授权策略。"} /> : (
         <div className="policy-grid">
           {filtered.map((policy) => <article className="policy-card" key={policy.id}>
-            <header><span><ShieldCheck /></span><div><h3>{policy.name}</h3><code>{policy.code}</code></div>{canWrite && <button className="icon-button" onClick={() => setEditor(policy)}><Edit3 /></button>}</header>
+            <header><span><ShieldCheck /></span><div><h3>{policy.name}</h3><code>{policy.code}</code></div>{canWrite && <button className="icon-button" disabled={!productOptionsReady} title={!productOptionsReady ? '产品选项未成功读取，禁止编辑' : '编辑策略'} onClick={() => setEditor(policy)}><Edit3 /></button>}</header>
             <div className="policy-type">{typeName[policy.license_type]}</div>
             <div className="policy-stats">
               <div><Smartphone /><span><strong>{policy.max_devices}</strong>台设备</span></div>
@@ -56,9 +69,9 @@ export function PoliciesPage() {
           </article>)}
         </div>
       )}
-      <Pagination offset={offset} limit={PAGE_SIZE} itemCount={policies.data?.items.length ?? 0} busy={policies.isFetching} onChange={setOffset} />
+      {!policies.isError && <Pagination offset={offset} limit={PAGE_SIZE} itemCount={policies.data?.items.length ?? 0} total={policies.data?.total} busy={policies.isFetching} onChange={setOffset} />}
     </section>
-    <PolicyModal key={editor === 'create' ? 'create' : editor?.id ?? 'closed'} item={editor} products={products.data ?? []} busy={save.isPending} onClose={() => setEditor(null)} onSubmit={(body, item) => save.mutate({ body, item })} onInvalid={(message) => toast(message, 'error')} />
+    <PolicyModal key={editor === 'create' ? 'create' : editor?.id ?? 'closed'} item={productOptionsReady ? editor : null} products={products.data ?? []} busy={save.isPending} onClose={() => setEditor(null)} onSubmit={(body, item) => save.mutate({ body, item })} onInvalid={(message) => toast(message, 'error')} />
   </div>;
 }
 

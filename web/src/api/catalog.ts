@@ -1,5 +1,5 @@
 export interface ApiCatalogItem {
-  method: 'GET' | 'POST' | 'PATCH';
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT';
   path: string;
   name: string;
   permission?: string;
@@ -42,6 +42,18 @@ export const managementEndpoints: readonly ApiCatalogItem[] = [
   { method: 'POST', path: '/admin/v1/devices/:deviceId/unbind', name: '管理员强制解绑', permission: 'devices.unbind', ui: 'Key 管理' },
   { method: 'POST', path: '/admin/v1/devices/:deviceId/block', name: '封禁设备', permission: 'devices.block', ui: 'Key 管理' },
   { method: 'POST', path: '/admin/v1/devices/:deviceId/unblock', name: '解封设备', permission: 'devices.block', ui: 'Key 管理' },
+  { method: 'GET', path: '/admin/v1/admin-users', name: '管理员分页列表', permission: 'admin.users.manage', ui: '管理员与角色' },
+  { method: 'POST', path: '/admin/v1/admin-users', name: '创建管理员', permission: 'admin.users.manage', ui: '管理员与角色' },
+  { method: 'PATCH', path: '/admin/v1/admin-users/:adminId', name: '修改管理员', permission: 'admin.users.manage', ui: '管理员与角色' },
+  { method: 'POST', path: '/admin/v1/admin-users/:adminId/reset-password', name: '重置管理员密码', permission: 'admin.users.manage', ui: '管理员与角色' },
+  { method: 'PATCH', path: '/admin/v1/profile', name: '修改个人资料', permission: '登录管理员', ui: '个人中心' },
+  { method: 'POST', path: '/admin/v1/profile/change-password', name: '修改自己的密码', permission: '登录管理员', ui: '个人中心' },
+  { method: 'GET', path: '/admin/v1/admin-roles', name: '角色列表', permission: 'admin.users.manage', ui: '管理员与角色' },
+  { method: 'GET', path: '/admin/v1/admin-permissions', name: '权限目录', permission: 'admin.roles.manage', ui: '管理员与角色' },
+  { method: 'POST', path: '/admin/v1/admin-roles', name: '创建角色', permission: 'admin.roles.manage', ui: '管理员与角色' },
+  { method: 'PATCH', path: '/admin/v1/admin-roles/:roleId', name: '修改角色权限', permission: 'admin.roles.manage', ui: '管理员与角色' },
+  { method: 'GET', path: '/admin/v1/settings/tenant', name: '读取工作区设置', permission: 'tenant.settings.manage', ui: '系统设置' },
+  { method: 'PUT', path: '/admin/v1/settings/tenant', name: '保存工作区设置', permission: 'tenant.settings.manage', ui: '系统设置' },
   { method: 'GET', path: '/admin/v1/audit-logs', name: '管理员审计完整查询', permission: 'audit.read', ui: '审计与事件' },
   { method: 'GET', path: '/admin/v1/license-events', name: '授权事件完整查询', permission: 'audit.read', ui: '审计与事件' },
 ];

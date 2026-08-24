@@ -86,7 +86,7 @@ function header(request: FastifyRequest, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function authResponse(admin: { id: string; tenantId: string | null; tenantCode: string | null; tenantName: string | null; email: string; displayName: string; permissions: string[] }, csrfToken: string, expiresAt: string) {
+function authResponse(admin: { id: string; tenantId: string | null; tenantCode: string | null; tenantName: string | null; email: string; displayName: string; permissions: string[]; status: string; lastLoginAt: Date | null; createdAt: Date; roles: Array<{ id: string; code: string; name: string }> }, csrfToken: string, expiresAt: string) {
   return {
     admin: {
       id: admin.id,
@@ -94,6 +94,10 @@ function authResponse(admin: { id: string; tenantId: string | null; tenantCode: 
       display_name: admin.displayName,
       tenant: admin.tenantId === null ? null : { id: admin.tenantId, code: admin.tenantCode, name: admin.tenantName },
       permissions: admin.permissions,
+      status: admin.status,
+      last_login_at: admin.lastLoginAt?.toISOString() ?? null,
+      created_at: admin.createdAt.toISOString(),
+      roles: admin.roles,
     },
     csrf_token: csrfToken,
     expires_at: expiresAt,

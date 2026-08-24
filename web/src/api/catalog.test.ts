@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { allEndpoints, authEndpoints, clientEndpoints, managementEndpoints } from './catalog';
 
 describe('Web 管理后台接口目录', () => {
-  it('覆盖当前全部 40 个服务端路由且没有重复项', () => {
+  it('覆盖当前全部 52 个服务端路由且没有重复项', () => {
     expect(clientEndpoints).toHaveLength(7);
-    expect(managementEndpoints).toHaveLength(27);
+    expect(managementEndpoints).toHaveLength(39);
     expect(authEndpoints).toHaveLength(6);
-    expect(allEndpoints).toHaveLength(40);
+    expect(allEndpoints).toHaveLength(52);
     expect(new Set(allEndpoints.map((item) => `${item.method} ${item.path}`)).size).toBe(allEndpoints.length);
   });
 

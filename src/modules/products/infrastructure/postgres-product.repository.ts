@@ -39,6 +39,7 @@ interface PolicyRow extends QueryResultRow {
   allow_self_unbind: boolean; unbind_cooldown_seconds: number; rules: Record<string, unknown>;
   status: LicensePolicy['status']; created_at: Date; updated_at: Date;
 }
+interface CountRow extends QueryResultRow { count: string; }
 
 export class PostgresProductRepository implements ProductRepository {
   public constructor(private readonly database: PostgresDatabase) {}
@@ -64,12 +65,15 @@ export class PostgresProductRepository implements ProductRepository {
     return result.rows[0] === undefined ? null : mapProduct(result.rows[0]);
   }
 
-  public async listProducts(tenantId: string, page: PageInput): Promise<readonly ManagedProduct[]> {
-    const result = await this.database.query<ProductRow>(
-      'SELECT * FROM products WHERE tenant_id=$1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3',
-      [tenantId, page.limit, page.offset],
-    );
-    return result.rows.map(mapProduct);
+  public async listProducts(tenantId: string, page: PageInput): Promise<{ items: readonly ManagedProduct[]; total: number }> {
+    const [itemsResult, countResult] = await Promise.all([
+      this.database.query<ProductRow>(
+        'SELECT * FROM products WHERE tenant_id=$1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3',
+        [tenantId, page.limit, page.offset],
+      ),
+      this.database.query<CountRow>('SELECT COUNT(*)::text AS count FROM products WHERE tenant_id=$1', [tenantId]),
+    ]);
+    return { items: itemsResult.rows.map(mapProduct), total: Number(countResult.rows[0]?.count ?? 0) };
   }
 
   public async updateProduct(tenantId: string, productId: string, input: UpdateProductInput): Promise<ManagedProduct | null> {
@@ -169,11 +173,18 @@ export class PostgresProductRepository implements ProductRepository {
     return result.rows[0] === undefined ? null : mapPolicy(result.rows[0]);
   }
 
-  public async listPolicies(tenantId: string, productId: string | undefined, page: PageInput): Promise<readonly LicensePolicy[]> {
-    const result = await this.database.query<PolicyRow>(
-      `SELECT * FROM license_policies WHERE tenant_id=$1 AND ($2::uuid IS NULL OR product_id=$2)
-       ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`, [tenantId, productId ?? null, page.limit, page.offset]);
-    return result.rows.map(mapPolicy);
+  public async listPolicies(tenantId: string, productId: string | undefined, page: PageInput): Promise<{ items: readonly LicensePolicy[]; total: number }> {
+    const values = [tenantId, productId ?? null] as const;
+    const [itemsResult, countResult] = await Promise.all([
+      this.database.query<PolicyRow>(
+        `SELECT * FROM license_policies WHERE tenant_id=$1 AND ($2::uuid IS NULL OR product_id=$2)
+         ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`, [...values, page.limit, page.offset]),
+      this.database.query<CountRow>(
+        'SELECT COUNT(*)::text AS count FROM license_policies WHERE tenant_id=$1 AND ($2::uuid IS NULL OR product_id=$2)',
+        [...values],
+      ),
+    ]);
+    return { items: itemsResult.rows.map(mapPolicy), total: Number(countResult.rows[0]?.count ?? 0) };
   }
 
   public async updatePolicy(tenantId: string, policyId: string, input: UpdateLicensePolicyInput): Promise<LicensePolicy | null> {

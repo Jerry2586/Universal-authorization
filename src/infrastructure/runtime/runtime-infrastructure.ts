@@ -18,6 +18,7 @@ import { PostgresAdminDeviceRepository } from '../../modules/admin-devices/infra
 import { PostgresAdminAuditQueryRepository } from '../../modules/admin-audit/infrastructure/postgres-admin-audit-query.repository.js';
 import { AdminAuthRepository } from '../../modules/admin-auth/admin-auth.repository.js';
 import { AdminSessionStore } from '../../modules/admin-auth/admin-session.store.js';
+import { AdminConsoleRepository } from '../../modules/admin-console/admin-console.repository.js';
 
 export class RuntimeInfrastructure {
   public readonly database: PostgresDatabase;
@@ -38,6 +39,7 @@ export class RuntimeInfrastructure {
   public readonly adminAuditQueryRepository: PostgresAdminAuditQueryRepository;
   public readonly adminAuthRepository: AdminAuthRepository;
   public readonly adminSessionStore: AdminSessionStore;
+  public readonly adminConsoleRepository: AdminConsoleRepository;
 
   public constructor(config: AppConfig, onError: (component: string, error: Error) => void = () => undefined) {
     this.database = new PostgresDatabase({
@@ -59,6 +61,7 @@ export class RuntimeInfrastructure {
     this.licenseRepository = new PostgresLicenseRepository(this.database);
     this.adminAuthRepository = new AdminAuthRepository(this.database);
     this.adminSessionStore = new AdminSessionStore(this.cache, config.redisKeyPrefix, config.adminSessionTtlSeconds);
+    this.adminConsoleRepository = new AdminConsoleRepository(this.database);
     this.adminPrincipalResolver = new PostgresAdminPrincipalResolver(
       this.database,
       config.managementGatewayToken,

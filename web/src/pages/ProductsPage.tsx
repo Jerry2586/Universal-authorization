@@ -1,10 +1,10 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Edit3, Layers3, Plus, Power, Puzzle, Search, Tag } from 'lucide-react';
 import { api, queryString } from '../api/client';
 import type { Feature, Page, Product, ProductVersion } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
-import { Drawer, Empty, Modal, SkeletonRows } from '../components/Ui';
+import { Drawer, Empty, Modal, QueryError, SkeletonRows } from '../components/Ui';
 import { useToast } from '../components/Toast';
 import { formatDate, JsonField, Pagination, parseJsonObject, PermissionNotice, toLocalDateTime } from '../components/AdminForms';
 
@@ -28,6 +28,12 @@ export function ProductsPage() {
     () => products.data?.items.filter((product) => `${product.name} ${product.code}`.toLowerCase().includes(search.toLowerCase())) ?? [],
     [products.data, search],
   );
+  useEffect(() => {
+    const total = products.data?.total;
+    if (total === undefined) return;
+    if (total === 0 && offset !== 0) setOffset(0);
+    else if (total > 0 && offset >= total) setOffset(Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE);
+  }, [products.data?.total, offset]);
   const create = useMutation({
     mutationFn: (body: unknown) => api<Product>('/admin/v1/products', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: (product) => {
@@ -47,8 +53,10 @@ export function ProductsPage() {
       </div>
       {!canWrite && <PermissionNotice>当前账号只有产品读取权限，修改按钮已隐藏。</PermissionNotice>}
       <section className="panel table-panel">
-        {products.isLoading ? <SkeletonRows /> : filtered.length === 0 ? (
-          <Empty icon={<Boxes />} title="暂无产品" text="当前页没有匹配产品。" action={canWrite ? <button className="primary" onClick={() => setCreateOpen(true)}><Plus />创建产品</button> : undefined} />
+        {products.isLoading ? <SkeletonRows /> : products.isError ? (
+          <QueryError title="产品读取失败" error={products.error} onRetry={() => void products.refetch()} />
+        ) : filtered.length === 0 ? (
+          <Empty icon={<Boxes />} title={search ? "当前页没有匹配产品" : offset > 0 ? "当前页没有产品" : "暂无产品"} text={search ? "请调整当前页搜索词。" : offset > 0 ? "请返回上一页继续查看。" : "数据库中还没有产品。"} action={canWrite && offset === 0 ? <button className="primary" onClick={() => setCreateOpen(true)}><Plus />创建产品</button> : undefined} />
         ) : (
           <div className="card-grid">
             {filtered.map((product) => (
@@ -61,7 +69,7 @@ export function ProductsPage() {
             ))}
           </div>
         )}
-        <Pagination offset={offset} limit={PAGE_SIZE} itemCount={products.data?.items.length ?? 0} busy={products.isFetching} onChange={setOffset} />
+        {!products.isError && <Pagination offset={offset} limit={PAGE_SIZE} itemCount={products.data?.items.length ?? 0} total={products.data?.total} busy={products.isFetching} onChange={setOffset} />}
       </section>
       <ProductFormModal mode="create" open={createOpen} busy={create.isPending} onClose={() => setCreateOpen(false)} onSubmit={(body) => create.mutate(body)} onInvalid={(message) => toast(message, 'error')} />
       <ProductDrawer productId={selectedId} canWrite={canWrite} onClose={() => setSelectedId(null)} />
@@ -105,8 +113,10 @@ function ProductDrawer({ productId, canWrite, onClose }: { productId: string | n
   const current = product.data;
   return (
     <>
-      <Drawer open={productId !== null} title={current?.name ?? '读取产品...'} subtitle={current?.code} onClose={onClose}>
-        {product.isLoading || !current ? <SkeletonRows /> : (
+      <Drawer open={productId !== null} title={product.isError ? '产品详情读取失败' : current?.name ?? '读取产品...'} subtitle={current?.code} onClose={onClose}>
+        {product.isLoading ? <SkeletonRows /> : product.isError ? (
+          <QueryError title="产品详情读取失败" error={product.error} onRetry={() => void product.refetch()} />
+        ) : !current ? null : (
           <div className="drawer-stack">
             <div className="detail-actions">
               <span className={`badge ${current.status.toLowerCase()}`}>{current.status}</span>
@@ -118,8 +128,8 @@ function ProductDrawer({ productId, canWrite, onClose }: { productId: string | n
               <button className={tab === 'features' ? 'active' : ''} onClick={() => setTab('features')}>功能 {features.data?.items.length ?? 0}</button>
             </div>
             {tab === 'overview' && <ProductOverview product={current} />}
-            {tab === 'versions' && <VersionPanel items={versions.data?.items ?? []} loading={versions.isLoading} canWrite={canWrite} onCreate={() => setVersionModal('create')} onEdit={setVersionModal} />}
-            {tab === 'features' && <FeaturePanel items={features.data?.items ?? []} loading={features.isLoading} canWrite={canWrite} onCreate={() => setFeatureModal('create')} onEdit={setFeatureModal} />}
+            {tab === 'versions' && <VersionPanel items={versions.data?.items ?? []} loading={versions.isLoading} error={versions.isError ? versions.error : null} canWrite={canWrite} onRetry={() => void versions.refetch()} onCreate={() => setVersionModal('create')} onEdit={setVersionModal} />}
+            {tab === 'features' && <FeaturePanel items={features.data?.items ?? []} loading={features.isLoading} error={features.isError ? features.error : null} canWrite={canWrite} onRetry={() => void features.refetch()} onCreate={() => setFeatureModal('create')} onEdit={setFeatureModal} />}
           </div>
         )}
       </Drawer>
@@ -139,19 +149,19 @@ function ProductOverview({ product }: { product: Product }) {
   </div>;
 }
 
-function VersionPanel({ items, loading, canWrite, onCreate, onEdit }: { items: ProductVersion[]; loading: boolean; canWrite: boolean; onCreate(): void; onEdit(item: ProductVersion): void }) {
+function VersionPanel({ items, loading, error, canWrite, onRetry, onCreate, onEdit }: { items: ProductVersion[]; loading: boolean; error: unknown; canWrite: boolean; onRetry(): void; onCreate(): void; onEdit(item: ProductVersion): void }) {
   return <div className="nested-panel">
-    {canWrite && <button className="primary compact" onClick={onCreate}><Plus />新增版本</button>}
-    {loading ? <SkeletonRows /> : items.length === 0 ? <Empty icon={<Layers3 />} title="暂无版本" text="还没有登记产品版本。" /> : items.map((item) => (
+    {canWrite && <button className="primary compact" disabled={loading || Boolean(error)} onClick={onCreate}><Plus />新增版本</button>}
+    {loading ? <SkeletonRows /> : error ? <QueryError compact title="产品版本读取失败" error={error} onRetry={onRetry} /> : items.length === 0 ? <Empty icon={<Layers3 />} title="暂无版本" text="还没有登记产品版本。" /> : items.map((item) => (
       <article className="nested-row" key={item.id}><div><strong>{item.version}</strong><span>{item.release_notes || '无发布说明'}</span><small>{formatDate(item.released_at ?? item.created_at)}</small></div><div><span className={`badge ${item.status.toLowerCase()}`}>{item.status}</span>{item.force_update && <span className="badge warning">强制升级</span>}{canWrite && <button className="icon-button" onClick={() => onEdit(item)}><Edit3 /></button>}</div></article>
     ))}
   </div>;
 }
 
-function FeaturePanel({ items, loading, canWrite, onCreate, onEdit }: { items: Feature[]; loading: boolean; canWrite: boolean; onCreate(): void; onEdit(item: Feature): void }) {
+function FeaturePanel({ items, loading, error, canWrite, onRetry, onCreate, onEdit }: { items: Feature[]; loading: boolean; error: unknown; canWrite: boolean; onRetry(): void; onCreate(): void; onEdit(item: Feature): void }) {
   return <div className="nested-panel">
-    {canWrite && <button className="primary compact" onClick={onCreate}><Plus />新增功能</button>}
-    {loading ? <SkeletonRows /> : items.length === 0 ? <Empty icon={<Puzzle />} title="暂无功能定义" text="还没有为产品定义可授权功能。" /> : items.map((item) => (
+    {canWrite && <button className="primary compact" disabled={loading || Boolean(error)} onClick={onCreate}><Plus />新增功能</button>}
+    {loading ? <SkeletonRows /> : error ? <QueryError compact title="功能定义读取失败" error={error} onRetry={onRetry} /> : items.length === 0 ? <Empty icon={<Puzzle />} title="暂无功能定义" text="还没有为产品定义可授权功能。" /> : items.map((item) => (
       <article className="nested-row" key={item.id}><div><strong>{item.name}</strong><code>{item.code}</code><span>{item.description || '无说明'}</span></div><div><span className={`badge ${item.status.toLowerCase()}`}>{item.status}</span>{canWrite && <button className="icon-button" onClick={() => onEdit(item)}><Edit3 /></button>}</div></article>
     ))}
   </div>;

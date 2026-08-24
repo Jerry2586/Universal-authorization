@@ -26,6 +26,14 @@ export interface ManagementRequestContext {
   userAgent?: string;
 }
 
+export interface AuthenticatedAdminRequestContext {
+  principal: AdminPrincipal;
+  tenantId: string | null;
+  requestId: string;
+  sourceIp?: string;
+  userAgent?: string;
+}
+
 export interface RequiredManagementPermission {
   permissions: readonly PermissionCode[];
   platformOnly?: boolean;

@@ -5,24 +5,27 @@ export function Pagination({
   offset,
   limit,
   itemCount,
+  total,
   onChange,
   busy = false,
 }: {
   offset: number;
   limit: number;
   itemCount: number;
+  total?: number;
   onChange(nextOffset: number): void;
   busy?: boolean;
 }) {
   const page = Math.floor(offset / limit) + 1;
+  const reachedEnd = total === undefined ? itemCount < limit : offset + itemCount >= total;
   return (
     <div className="pagination">
-      <span>第 {page} 页 · 当前 {itemCount} 条</span>
+      <span>第 {page} 页 · 当前 {itemCount} 条{total === undefined ? '' : ` · 共 ${total} 条`}</span>
       <div>
         <button type="button" className="ghost" disabled={busy || offset === 0} onClick={() => onChange(Math.max(0, offset - limit))}>
           <ChevronLeft />上一页
         </button>
-        <button type="button" className="ghost" disabled={busy || itemCount < limit} onClick={() => onChange(offset + limit)}>
+        <button type="button" className="ghost" disabled={busy || reachedEnd} onClick={() => onChange(offset + limit)}>
           下一页<ChevronRight />
         </button>
       </div>

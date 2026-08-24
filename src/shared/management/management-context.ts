@@ -1,7 +1,12 @@
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '../errors/app-error.js';
-import type { AdminPrincipal, AdminPrincipalResolver, ManagementRequestContext } from '../../modules/identity/admin-principal.js';
+import type {
+  AdminPrincipal,
+  AdminPrincipalResolver,
+  AuthenticatedAdminRequestContext,
+  ManagementRequestContext,
+} from '../../modules/identity/admin-principal.js';
 import { hasAllPermissions, hasTenantPermissions, type PermissionCode } from '../../modules/identity/domain/permissions.js';
 import { ADMIN_SESSION_COOKIE, parseCookie } from '../../modules/admin-auth/admin-cookie.js';
 
@@ -13,6 +18,20 @@ export async function requireManagementContext(
   resolver: AdminPrincipalResolver,
   required: readonly PermissionCode[],
 ): Promise<ManagementRequestContext> {
+  const authenticated = await requireAuthenticatedAdminContext(request, resolver);
+  const tenantId = resolveTenantId(authenticated.principal, header(request, 'x-tenant-id'));
+
+  if (!hasTenantPermissions(authenticated.principal, tenantId, required)) {
+    throw new AppError({ code: 'ADMIN_FORBIDDEN', message: '没有执行此操作的权限', statusCode: 403 });
+  }
+
+  return { ...authenticated, tenantId };
+}
+
+export async function requireAuthenticatedAdminContext(
+  request: FastifyRequest,
+  resolver: AdminPrincipalResolver,
+): Promise<AuthenticatedAdminRequestContext> {
   const authorization = header(request, 'authorization');
   const adminUserId = header(request, 'x-admin-user-id');
   const sessionToken = parseCookie(header(request, 'cookie'), ADMIN_SESSION_COOKIE);
@@ -26,19 +45,28 @@ export async function requireManagementContext(
     ...(csrfToken === undefined ? {} : { csrfToken }),
     ...(csrfRequired ? { csrfRequired: true } : {}),
   });
-  const tenantId = resolveTenantId(principal, header(request, 'x-tenant-id'));
-
-  if (!hasTenantPermissions(principal, tenantId, required)) {
-    throw new AppError({ code: 'ADMIN_FORBIDDEN', message: '没有执行此操作的权限', statusCode: 403 });
-  }
-
   return {
     principal,
-    tenantId,
+    tenantId: principal.tenantId,
     requestId: request.id,
     sourceIp: request.ip,
     ...(request.headers['user-agent'] === undefined ? {} : { userAgent: request.headers['user-agent'] }),
   };
+}
+
+export async function requireAnyManagementContext(
+  request: FastifyRequest,
+  resolver: AdminPrincipalResolver,
+  requiredAny: readonly PermissionCode[],
+): Promise<ManagementRequestContext> {
+  const context = await requireManagementContext(request, resolver, []);
+  const allowed = requiredAny.some((permission) =>
+    hasTenantPermissions(context.principal, context.tenantId, [permission]),
+  );
+  if (!allowed) {
+    throw new AppError({ code: 'ADMIN_FORBIDDEN', message: '没有执行此操作的权限', statusCode: 403 });
+  }
+  return context;
 }
 
 export async function requireBatchExportContext(

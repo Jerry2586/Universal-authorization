@@ -11,6 +11,7 @@ export const PERMISSIONS = {
   DEVICES_UNBIND: 'devices.unbind',
   DEVICES_BLOCK: 'devices.block',
   AUDIT_READ: 'audit.read',
+  TENANT_SETTINGS_MANAGE: 'tenant.settings.manage',
   SETTINGS_MANAGE: 'settings.manage',
   SIGNING_KEYS_MANAGE: 'signing-keys.manage',
 } as const;

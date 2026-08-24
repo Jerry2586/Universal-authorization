@@ -11,6 +11,7 @@ import { CompactTokenVerifier } from './modules/cryptography/compact-token-verif
 import { AdminDeviceManagementService } from './modules/admin-devices/admin-device-management.service.js';
 import { AdminAuditQueryService } from './modules/admin-audit/admin-audit-query.service.js';
 import { AdminAuthService } from './modules/admin-auth/admin-auth.service.js';
+import { AdminConsoleService } from './modules/admin-console/admin-console.service.js';
 
 loadLocalEnvFile();
 const config = loadConfig();
@@ -35,6 +36,11 @@ const adminAuthService = new AdminAuthService(
   infrastructure.adminSessionStore,
   infrastructure.auditLog,
 );
+const adminConsoleService = new AdminConsoleService(
+  infrastructure.adminConsoleRepository,
+  infrastructure.adminSessionStore,
+  infrastructure.auditLog,
+);
 const signingProvider = new Ed25519FileSigningKeyProvider(
   config.licenseSigningKeyId,
   config.licenseSigningPrivateKeyPemBase64,
@@ -52,6 +58,11 @@ const app = buildApp({
     sessionTtlSeconds: config.adminSessionTtlSeconds,
   },
   adminWebRoot: config.adminWebRoot,
+  adminConsole: {
+    principalResolver: infrastructure.adminPrincipalResolver,
+    service: adminConsoleService,
+    secureCookie: config.adminCookieSecure,
+  },
   management: {
     principalResolver: infrastructure.adminPrincipalResolver,
     productService,

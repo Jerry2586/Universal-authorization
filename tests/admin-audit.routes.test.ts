@@ -18,8 +18,8 @@ describe('eighth-stage admin audit routes', () => {
   it('requires audit.read for both query endpoints', async () => {
     let called = false;
     app = buildApp({ adminAudit: dependencies(new Set(), {
-      listAuditLogs: async () => { called = true; return []; },
-      listLicenseEvents: async () => { called = true; return []; },
+      listAuditLogs: async () => { called = true; return { items: [], total: 0 }; },
+      listLicenseEvents: async () => { called = true; return { items: [], total: 0 }; },
     }) });
 
     const auditResponse = await app.inject({ method: 'GET', url: '/admin/v1/audit-logs', headers: adminHeaders() });
@@ -34,7 +34,7 @@ describe('eighth-stage admin audit routes', () => {
   it('passes audit filters and returns snake-case audit records', async () => {
     let received: unknown;
     app = buildApp({ adminAudit: dependencies(new Set([PERMISSIONS.AUDIT_READ]), {
-      listAuditLogs: async (_context: unknown, filters: unknown) => { received = filters; return [auditRecord()]; },
+      listAuditLogs: async (_context: unknown, filters: unknown) => { received = filters; return { items: [auditRecord()], total: 17 }; },
     }) });
 
     const response = await app.inject({
@@ -47,14 +47,14 @@ describe('eighth-stage admin audit routes', () => {
     expect(received).toMatchObject({ action: 'device.block', result: 'SUCCESS', limit: 20, offset: 5 });
     expect(response.json()).toMatchObject({
       success: true,
-      data: { items: [{ id: '101', tenant_id: tenantId, action: 'device.block', before_data: { status: 'ACTIVE' } }], limit: 20, offset: 5 },
+      data: { items: [{ id: '101', tenant_id: tenantId, action: 'device.block', before_data: { status: 'ACTIVE' } }], total: 17, limit: 20, offset: 5 },
     });
   });
 
   it('passes license-event filters and returns authorization history', async () => {
     let received: unknown;
     app = buildApp({ adminAudit: dependencies(new Set([PERMISSIONS.AUDIT_READ]), {
-      listLicenseEvents: async (_context: unknown, filters: unknown) => { received = filters; return [licenseEventRecord()]; },
+      listLicenseEvents: async (_context: unknown, filters: unknown) => { received = filters; return { items: [licenseEventRecord()], total: 23 }; },
     }) });
 
     const response = await app.inject({
@@ -67,14 +67,14 @@ describe('eighth-stage admin audit routes', () => {
     expect(received).toMatchObject({ licenseId, deviceId, eventType: 'ADMIN_DEVICE_BLOCKED', limit: 50, offset: 0 });
     expect(response.json()).toMatchObject({
       success: true,
-      data: { items: [{ id: '202', license_id: licenseId, device_id: deviceId, event_type: 'ADMIN_DEVICE_BLOCKED' }] },
+      data: { items: [{ id: '202', license_id: licenseId, device_id: deviceId, event_type: 'ADMIN_DEVICE_BLOCKED' }], total: 23 },
     });
   });
 
   it('rejects an inverted time range before running the service', async () => {
     let called = false;
     app = buildApp({ adminAudit: dependencies(new Set([PERMISSIONS.AUDIT_READ]), {
-      listAuditLogs: async () => { called = true; return []; },
+      listAuditLogs: async () => { called = true; return { items: [], total: 0 }; },
     }) });
     const response = await app.inject({
       method: 'GET',
@@ -89,7 +89,7 @@ describe('eighth-stage admin audit routes', () => {
   it('enforces tenant isolation before running the service', async () => {
     let called = false;
     app = buildApp({ adminAudit: dependencies(new Set([PERMISSIONS.AUDIT_READ]), {
-      listLicenseEvents: async () => { called = true; return []; },
+      listLicenseEvents: async () => { called = true; return { items: [], total: 0 }; },
     }) });
     const response = await app.inject({
       method: 'GET', url: '/admin/v1/license-events',

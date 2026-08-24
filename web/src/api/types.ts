@@ -4,6 +4,10 @@ export interface AdminUser {
   display_name: string;
   tenant: { id: string; code: string | null; name: string | null } | null;
   permissions: string[];
+  status: string;
+  last_login_at: string | null;
+  created_at: string;
+  roles: Array<{ id: string; code: string; name: string }>;
 }
 
 export interface AuthPayload {
@@ -12,6 +16,21 @@ export interface AuthPayload {
   expires_at: string;
 }
 
+export type AdminStatus = 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+export interface ManagedAdmin {
+  id: string; email: string; display_name: string; status: AdminStatus; mfa_required: boolean;
+  last_login_at: string | null; password_changed_at: string | null; created_at: string; updated_at: string;
+  roles: Array<{ id: string; code: string; name: string }>;
+}
+export interface AdminRole {
+  id: string; code: string; name: string; description: string | null; is_system: boolean;
+  permissions: string[]; user_count: number; created_at: string; updated_at: string;
+}
+export interface AdminPermission { code: string; name: string; description: string | null }
+export interface TenantSettings {
+  console_name: string; support_email: string; default_license_days: number;
+  default_max_devices: number; expiry_warning_days: number; updated_at: string | null;
+}
 export type ProductStatus = 'ACTIVE' | 'DISABLED';
 export type VersionStatus = 'ACTIVE' | 'BLOCKED' | 'DEPRECATED';
 export type LicenseStatus = 'CREATED' | 'ACTIVE' | 'SUSPENDED' | 'EXPIRED' | 'REVOKED' | 'DISABLED';
@@ -169,4 +188,5 @@ export interface Page<T> {
   items: T[];
   limit: number;
   offset: number;
+  total?: number;
 }

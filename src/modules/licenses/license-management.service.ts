@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../../shared/errors/app-error.js';
 import type { AuditLogPort } from '../audit/audit-log.port.js';
+import type { PageResult } from '../../shared/pagination/page-result.js';
 import type { ManagementRequestContext } from '../identity/admin-principal.js';
 import type { LicenseStatus } from './domain/license-key.js';
 import type { LicenseKeyCodec } from './license-key-codec.js';
@@ -117,7 +118,7 @@ export class LicenseManagementService {
     return this.requireLicense(context.tenantId, licenseId);
   }
 
-  public async list(context: ManagementRequestContext, input: Omit<LicenseListInput, 'tenantId'>): Promise<readonly ManagedLicenseKey[]> {
+  public async list(context: ManagementRequestContext, input: Omit<LicenseListInput, 'tenantId'>): Promise<PageResult<ManagedLicenseKey>> {
     return this.repository.list({ ...input, tenantId: context.tenantId });
   }
 

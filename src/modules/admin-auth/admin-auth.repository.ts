@@ -12,6 +12,7 @@ export interface AdminLoginRecord {
   passwordHash: string;
   status: string;
   mfaRequired: boolean;
+  sessionVersion: number;
 }
 
 export interface AdminView {
@@ -22,6 +23,11 @@ export interface AdminView {
   email: string;
   displayName: string;
   permissions: string[];
+  sessionVersion: number;
+  status: string;
+  lastLoginAt: Date | null;
+  createdAt: Date;
+  roles: Array<{ id: string; code: string; name: string }>;
 }
 
 interface LoginRow extends QueryResultRow {
@@ -35,6 +41,7 @@ interface LoginRow extends QueryResultRow {
   password_hash: string;
   status: string;
   mfa_required: boolean;
+  session_version: number;
 }
 
 interface ViewRow extends QueryResultRow {
@@ -45,6 +52,13 @@ interface ViewRow extends QueryResultRow {
   email: string;
   display_name: string;
   permission_code: string | null;
+  status: string;
+  session_version: number;
+  last_login_at: Date | null;
+  created_at: Date;
+  role_id: string | null;
+  role_code: string | null;
+  role_name: string | null;
 }
 
 export class AdminAuthRepository {
@@ -54,7 +68,7 @@ export class AdminAuthRepository {
     const result = await this.database.query<LoginRow>(
       `SELECT admin.id, admin.tenant_id, tenant.code AS tenant_code, tenant.name AS tenant_name,
               tenant.status AS tenant_status, admin.email, admin.display_name, admin.password_hash,
-              admin.status, admin.mfa_required
+              admin.status, admin.mfa_required, admin.session_version
          FROM admin_users admin
          LEFT JOIN tenants tenant ON tenant.id = admin.tenant_id
         WHERE LOWER(admin.email) = LOWER($1)
@@ -76,13 +90,15 @@ export class AdminAuthRepository {
       passwordHash: row.password_hash,
       status: row.status,
       mfaRequired: row.mfa_required,
+      sessionVersion: row.session_version,
     };
   }
 
   public async getAdminView(userId: string): Promise<AdminView | null> {
     const result = await this.database.query<ViewRow>(
       `SELECT admin.id, admin.tenant_id, tenant.code AS tenant_code, tenant.name AS tenant_name,
-              admin.email, admin.display_name, permission.code AS permission_code
+              admin.email, admin.display_name, admin.status, admin.session_version, admin.last_login_at, admin.created_at,
+              role.id AS role_id, role.code AS role_code, role.name AS role_name, permission.code AS permission_code
          FROM admin_users admin
          LEFT JOIN tenants tenant ON tenant.id = admin.tenant_id
          LEFT JOIN admin_user_roles assignment ON assignment.admin_user_id = admin.id
@@ -105,6 +121,11 @@ export class AdminAuthRepository {
       email: first.email,
       displayName: first.display_name,
       permissions: [...new Set(result.rows.flatMap((row) => row.permission_code === null ? [] : [row.permission_code]))],
+      sessionVersion: first.session_version,
+      status: first.status,
+      lastLoginAt: first.last_login_at,
+      createdAt: first.created_at,
+      roles: [...new Map(result.rows.flatMap((row) => row.role_id === null || row.role_code === null || row.role_name === null ? [] : [[row.role_id, { id: row.role_id, code: row.role_code, name: row.role_name }] as const])).values()],
     };
   }
 

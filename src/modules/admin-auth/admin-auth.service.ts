@@ -58,7 +58,7 @@ export class AdminAuthService {
 
     const admin = await this.repository.getAdminView(record.id);
     if (admin === null) throw new AppError({ code: 'ADMIN_LOGIN_FAILED', message: '账号、密码或工作区不正确', statusCode: 401 });
-    const session = await this.sessions.create(record.id);
+    const session = await this.sessions.create(record.id, record.sessionVersion);
     await Promise.all([
       this.repository.updateLastLogin(record.id),
       this.sessions.clearFailures('account', accountIdentity),
@@ -74,7 +74,7 @@ export class AdminAuthService {
   public async current(sessionToken: string): Promise<{ session: Awaited<ReturnType<AdminSessionStore['require']>>; admin: AdminView }> {
     const session = await this.sessions.require(sessionToken);
     const admin = await this.repository.getAdminView(session.userId);
-    if (admin === null) {
+    if (admin === null || admin.sessionVersion !== session.sessionVersion) {
       await this.sessions.destroy(sessionToken);
       throw new AppError({ code: 'ADMIN_SESSION_INVALID', message: '登录已失效，请重新登录', statusCode: 401 });
     }

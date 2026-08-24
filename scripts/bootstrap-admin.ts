@@ -56,7 +56,10 @@ try {
       if (resetPassword) {
         const passwordHash = await hashAdminPassword(password);
         await client.query(
-          `UPDATE admin_users SET display_name = $2, password_hash = $3, status = 'ACTIVE' WHERE id = $1`,
+          `UPDATE admin_users
+              SET display_name = $2, password_hash = $3, status = 'ACTIVE',
+                  password_changed_at = NOW(), session_version = session_version + 1
+            WHERE id = $1`,
           [adminId, displayName, passwordHash],
         );
       }
@@ -78,7 +81,9 @@ try {
     }
     await client.query(
       `INSERT INTO role_permissions (role_id, permission_code)
-       SELECT $1, code FROM permissions
+       SELECT $1, code
+         FROM permissions
+        WHERE code NOT IN ('platform.tenants.manage', 'settings.manage', 'signing-keys.manage')
        ON CONFLICT DO NOTHING`,
       [roleId],
     );

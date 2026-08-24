@@ -47,8 +47,9 @@ export async function fetchAllPages<T>(path: string, values: Record<string, stri
   let offset = 0;
   const all: T[] = [];
   for (;;) {
-    const page = await api<{ items: T[]; limit: number; offset: number }>(`${path}${queryString({ ...values, limit, offset })}`);
+    const page = await api<{ items: T[]; limit: number; offset: number; total?: number }>(`${path}${queryString({ ...values, limit, offset })}`);
     all.push(...page.items);
+    if (page.total !== undefined && all.length >= page.total) return all;
     if (page.items.length < limit) return all;
     offset += limit;
   }

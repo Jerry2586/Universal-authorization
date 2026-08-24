@@ -8,6 +8,7 @@ import type { AdminPrincipal, AdminPrincipalRequest, AdminPrincipalResolver } fr
 interface PrincipalRow extends QueryResultRow {
   user_id: string;
   tenant_id: string | null;
+  session_version: number;
   permission_code: string | null;
 }
 
@@ -35,7 +36,7 @@ export class PostgresAdminPrincipalResolver implements AdminPrincipalResolver {
         request.sessionToken,
         request.csrfRequired === true ? request.csrfToken : undefined,
       );
-      return this.loadPrincipal(session.userId);
+      return this.loadPrincipal(session.userId, session.sessionVersion);
     }
 
     if (this.gatewayToken === undefined && this.sessions === undefined) {
@@ -44,9 +45,9 @@ export class PostgresAdminPrincipalResolver implements AdminPrincipalResolver {
     throw unauthorized();
   }
 
-  private async loadPrincipal(userId: string): Promise<AdminPrincipal> {
+  private async loadPrincipal(userId: string, expectedSessionVersion?: number): Promise<AdminPrincipal> {
     const result = await this.database.query<PrincipalRow>(
-      `SELECT admin.id AS user_id, admin.tenant_id, permission.code AS permission_code
+      `SELECT admin.id AS user_id, admin.tenant_id, admin.session_version, permission.code AS permission_code
          FROM admin_users admin
          LEFT JOIN tenants tenant ON tenant.id = admin.tenant_id
          LEFT JOIN admin_user_roles assignment ON assignment.admin_user_id = admin.id
@@ -60,7 +61,7 @@ export class PostgresAdminPrincipalResolver implements AdminPrincipalResolver {
       [userId],
     );
     const first = result.rows[0];
-    if (first === undefined) throw unauthorized('管理员不存在、已停用或租户不可用');
+    if (first === undefined || (expectedSessionVersion !== undefined && first.session_version !== expectedSessionVersion)) throw unauthorized('管理员不存在、已停用或会话已失效');
     return {
       userId: first.user_id,
       tenantId: first.tenant_id,

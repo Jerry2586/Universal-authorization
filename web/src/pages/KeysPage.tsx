@@ -4,7 +4,7 @@ import { Ban, Check, Clipboard, Download, Eye, KeyRound, Laptop, PauseCircle, Pl
 import { api, fetchAllPages, queryString } from '../api/client';
 import type { DeviceBinding, Feature, License, Page, Policy, Product } from '../api/types';
 import { useAuth } from '../auth/AuthProvider';
-import { Drawer, Empty, Modal, SkeletonRows } from '../components/Ui';
+import { Drawer, Empty, Modal, QueryError, SkeletonRows } from '../components/Ui';
 import { useToast } from '../components/Toast';
 import { formatDate, JsonField, Pagination, parseJsonObject, PermissionNotice, toLocalDateTime } from '../components/AdminForms';
 
@@ -37,7 +37,16 @@ export function KeysPage() {
     queryKey: ['keys', status, productId, offset],
     queryFn: () => api<Page<License>>(`/admin/v1/license-keys${queryString({ limit: PAGE_SIZE, offset, status: status || undefined, product_id: productId || undefined })}`),
   });
+  const activeProducts = products.data?.filter((product) => product.status === 'ACTIVE') ?? [];
+  const activePolicies = policies.data?.filter((policy) => policy.status === 'ACTIVE') ?? [];
+  const generationReady = products.isSuccess && policies.isSuccess && activeProducts.length > 0 && activePolicies.length > 0;
   const visible = useMemo(() => keys.data?.items.filter((key) => key.display_key.toLowerCase().includes(search.toLowerCase())) ?? [], [keys.data, search]);
+  useEffect(() => {
+    const total = keys.data?.total;
+    if (total === undefined) return;
+    if (total === 0 && offset !== 0) setOffset(0);
+    else if (total > 0 && offset >= total) setOffset(Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE);
+  }, [keys.data?.total, offset]);
   const generate = useMutation({
     mutationFn: ({ body, batch }: { body: unknown; batch: boolean }) => api<Delivery>(batch ? '/admin/v1/license-keys/batch' : '/admin/v1/license-keys', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: (data) => { setDelivery(data); void qc.invalidateQueries({ queryKey: ['keys'] }); toast('Key 已真实生成，请立即保存明文'); },
@@ -47,13 +56,18 @@ export function KeysPage() {
   return <div className="page-stack">
     <div className="toolbar wrap">
       <div className="search"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索当前页 Key 前缀或后缀" /></div>
-      <select value={productId} onChange={(event) => { setProductId(event.target.value); setOffset(0); }}><option value="">全部产品</option>{products.data?.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select>
+      <select value={productId} disabled={!products.isSuccess} onChange={(event) => { setProductId(event.target.value); setOffset(0); }}><option value="">{products.isLoading ? '正在读取产品...' : products.isError ? '产品列表读取失败' : '全部产品'}</option>{products.data?.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select>
       <select value={status} onChange={(event) => { setStatus(event.target.value); setOffset(0); }}><option value="">全部状态</option>{Object.entries(stateName).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select>
-      {canWrite && <button className="primary" onClick={() => { setDelivery(null); setCreateOpen(true); }}><Plus />生成 Key</button>}
+      {canWrite && <button className="primary" disabled={!generationReady} title={!generationReady ? '必须先成功读取且至少存在一个启用产品和启用策略' : undefined} onClick={() => { setDelivery(null); setCreateOpen(true); }}><Plus />生成 Key</button>}
     </div>
     {!canWrite && <PermissionNotice>当前账号只有 Key 读取权限，生成和状态操作已隐藏。</PermissionNotice>}
+    {products.isError && <QueryError compact title="产品列表读取失败" error={products.error} onRetry={() => void products.refetch()} />}
+    {canWrite && policies.isError && <QueryError compact title="授权策略读取失败，Key 生成已停用" error={policies.error} onRetry={() => void policies.refetch()} />}
+    {canWrite && (products.isLoading || policies.isLoading) && <div className="dependency-hint"><RefreshCw />正在读取真实产品和策略，完成前暂不可生成 Key。</div>}
+    {canWrite && products.isSuccess && activeProducts.length === 0 && <div className="dependency-hint"><TriangleAlert />没有启用产品，请先在产品管理中创建或启用产品。</div>}
+    {canWrite && policies.isSuccess && activePolicies.length === 0 && <div className="dependency-hint"><TriangleAlert />没有启用授权策略，请先在策略管理中创建或启用策略。</div>}
     <section className="panel table-panel">
-      {keys.isLoading ? <SkeletonRows /> : visible.length === 0 ? <Empty icon={<KeyRound />} title="没有匹配的 Key" text="调整筛选条件，或生成新的授权 Key。" /> : <div className="data-table">
+      {keys.isLoading ? <SkeletonRows /> : keys.isError ? <QueryError title="Key 列表读取失败" error={keys.error} onRetry={() => void keys.refetch()} /> : visible.length === 0 ? <Empty icon={<KeyRound />} title={search ? "当前页没有匹配的 Key" : status || productId ? "当前筛选没有 Key" : offset > 0 ? "当前页没有 Key" : "暂无 Key"} text={search ? "请调整当前页搜索词。" : status || productId ? "数据库中没有符合当前产品或状态条件的 Key。" : offset > 0 ? "请返回上一页继续查看。" : "数据库中还没有授权 Key。"} /> : <div className="data-table">
         <div className="tr head"><span>Key</span><span>状态</span><span>授权类型</span><span>设备 / 并发</span><span>到期时间</span><span /></div>
         {visible.map((key) => <button className="tr" key={key.id} onClick={() => setSelectedId(key.id)}>
           <span><code>{key.display_key}</code><small>{key.id}</small></span>
@@ -61,9 +75,9 @@ export function KeysPage() {
           <span>{licenseTypeName[key.license_type] ?? key.license_type}</span><span>{key.max_devices} / {key.max_concurrent_sessions}</span><span>{key.expires_at ? formatDate(key.expires_at) : '永久'}</span><span><Eye /></span>
         </button>)}
       </div>}
-      <Pagination offset={offset} limit={PAGE_SIZE} itemCount={keys.data?.items.length ?? 0} busy={keys.isFetching} onChange={setOffset} />
+      {!keys.isError && <Pagination offset={offset} limit={PAGE_SIZE} itemCount={keys.data?.items.length ?? 0} total={keys.data?.total} busy={keys.isFetching} onChange={setOffset} />}
     </section>
-    <GenerateModal open={createOpen} close={() => setCreateOpen(false)} products={products.data ?? []} policies={policies.data ?? []} canBatch={canExport} submit={(body, batch) => generate.mutate({ body, batch })} busy={generate.isPending} delivery={delivery} onInvalid={(message) => toast(message, 'error')} />
+    <GenerateModal open={createOpen && generationReady} close={() => setCreateOpen(false)} products={products.data ?? []} policies={policies.data ?? []} canBatch={canExport} submit={(body, batch) => generate.mutate({ body, batch })} busy={generate.isPending} delivery={delivery} onInvalid={(message) => toast(message, 'error')} />
     <KeyDrawer id={selectedId} canWrite={canWrite} canReadDevices={auth.has('devices.read')} canUnbind={auth.has('devices.unbind')} canBlock={auth.has('devices.block')} close={() => setSelectedId(null)} />
   </div>;
 }
@@ -71,15 +85,21 @@ export function KeysPage() {
 function GenerateModal({ open, close, products, policies, canBatch, submit, busy, delivery, onInvalid }: { open: boolean; close(): void; products: Product[]; policies: Policy[]; canBatch: boolean; submit(body: unknown, batch: boolean): void; busy: boolean; delivery: Delivery | null; onInvalid(message: string): void }) {
   const [batch, setBatch] = useState(false);
   const [productId, setProductId] = useState('');
+  const [policyId, setPolicyId] = useState('');
   const toast = useToast();
   const features = useQuery({ queryKey: ['features', productId, 'generation'], queryFn: () => api<{ items: Feature[] }>(`/admin/v1/products/${productId}/features`), enabled: open && Boolean(productId) });
   const matching = policies.filter((policy) => policy.status === 'ACTIVE' && (policy.product_id === null || policy.product_id === productId));
-  useEffect(() => { if (!open) { setBatch(false); setProductId(''); } }, [open]);
+  useEffect(() => { if (!open) { setBatch(false); setProductId(''); setPolicyId(''); } }, [open]);
+  useEffect(() => { setPolicyId(''); }, [productId]);
 
   function submitForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
       const form = new FormData(event.currentTarget);
+      if (!productId) throw new Error('请选择启用产品');
+      if (!policyId || !matching.some((policy) => policy.id === policyId)) throw new Error('请选择与当前产品匹配的启用策略');
+      if (features.isLoading) throw new Error('产品功能定义仍在读取，请稍后再试');
+      if (features.isError) throw features.error;
       const grants = (features.data?.items ?? []).filter((feature) => String(form.get(`grant-mode:${feature.code}`) ?? '') !== '').map((feature) => ({ code: feature.code, allowed: form.get(`grant-mode:${feature.code}`) === 'allow', limits: parseJsonObject(form, `limits:${feature.code}`), ...(form.get(`expires:${feature.code}`) ? { expires_at: new Date(String(form.get(`expires:${feature.code}`))).toISOString() } : {}) }));
       const maxDevices = String(form.get('max_devices') ?? '').trim();
       const maxSessions = String(form.get('max_concurrent_sessions') ?? '').trim();
@@ -96,12 +116,13 @@ function GenerateModal({ open, close, products, policies, canBatch, submit, busy
         <label>生成方式<select value={batch ? 'batch' : 'single'} onChange={(event) => setBatch(event.target.value === 'batch')}><option value="single">单枚 Key</option>{canBatch && <option value="batch">批量生成</option>}</select></label>
         {batch && <label>生成数量<input name="count" type="number" min="1" max="500" defaultValue="10" required /></label>}
         <label>产品<select name="product_id" value={productId} onChange={(event) => setProductId(event.target.value)} required><option value="">请选择启用产品</option>{products.filter((item) => item.status === 'ACTIVE').map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-        <label>授权策略<select name="policy_id" required><option value="">请选择启用策略</option>{matching.map((policy) => <option value={policy.id} key={policy.id}>{policy.name} · {licenseTypeName[policy.license_type]}</option>)}</select></label>
+        <label>授权策略<select name="policy_id" value={policyId} onChange={(event) => setPolicyId(event.target.value)} disabled={!productId || matching.length === 0} required><option value="">{!productId ? '请先选择产品' : matching.length === 0 ? '没有匹配的启用策略' : '请选择启用策略'}</option>{matching.map((policy) => <option value={policy.id} key={policy.id}>{policy.name} · {licenseTypeName[policy.license_type]}</option>)}</select></label>
         <label>覆盖最大设备数<input name="max_devices" type="number" min="1" max="1000" placeholder="留空使用策略值" /></label>
         <label>覆盖最大并发数<input name="max_concurrent_sessions" type="number" min="1" max="1000" placeholder="留空使用策略值" /></label>
         <JsonField name="metadata" label="Key Metadata JSON" defaultValue={{}} help="例如客户编号、订单号、交付批次等真实业务数据。" />
-        <div className="full feature-grants"><div className="section-title"><div><h3>功能授权</h3><p>直接读取所选产品的功能定义</p></div></div>{!productId ? <div className="compact-empty">请先选择产品</div> : features.isLoading ? <SkeletonRows /> : features.data?.items.filter((feature) => feature.status === 'ACTIVE').length ? features.data.items.filter((feature) => feature.status === 'ACTIVE').map((feature) => <article key={feature.id}><label>{feature.name} <code>{feature.code}</code><select name={`grant-mode:${feature.code}`} defaultValue=""><option value="">不写入授权快照</option><option value="allow">明确允许</option><option value="deny">明确拒绝</option></select></label><textarea name={`limits:${feature.code}`} rows={2} defaultValue="{}" spellCheck={false} aria-label={`${feature.name} 限制 JSON`} /><input name={`expires:${feature.code}`} type="datetime-local" aria-label={`${feature.name} 到期时间`} /></article>) : <div className="compact-empty">该产品没有启用的功能定义</div>}</div>
-        <div className="form-actions full"><button className="ghost" type="button" onClick={close}>取消</button><button className="primary" disabled={busy || !productId || matching.length === 0}>{busy ? '正在生成...' : batch ? '批量生成' : '生成 Key'}</button></div>
+        <div className="full feature-grants"><div className="section-title"><div><h3>功能授权</h3><p>直接读取所选产品的功能定义</p></div></div>{!productId ? <div className="compact-empty">请先选择产品</div> : features.isLoading ? <SkeletonRows /> : features.isError ? <QueryError compact title="产品功能定义读取失败" error={features.error} onRetry={() => void features.refetch()} /> : features.data?.items.filter((feature) => feature.status === 'ACTIVE').length ? features.data.items.filter((feature) => feature.status === 'ACTIVE').map((feature) => <article key={feature.id}><label>{feature.name} <code>{feature.code}</code><select name={`grant-mode:${feature.code}`} defaultValue=""><option value="">不写入授权快照</option><option value="allow">明确允许</option><option value="deny">明确拒绝</option></select></label><textarea name={`limits:${feature.code}`} rows={2} defaultValue="{}" spellCheck={false} aria-label={`${feature.name} 限制 JSON`} /><input name={`expires:${feature.code}`} type="datetime-local" aria-label={`${feature.name} 到期时间`} /></article>) : <div className="compact-empty">该产品没有启用的功能定义</div>}</div>
+        {productId && matching.length === 0 && <div className="dependency-hint full"><TriangleAlert />当前产品没有可用的通用策略或专属策略，请先到策略管理中创建或启用策略。</div>}
+        <div className="form-actions full"><button className="ghost" type="button" onClick={close}>取消</button><button className="primary" disabled={busy || !productId || !policyId || matching.length === 0 || features.isLoading || features.isError}>{busy ? '正在生成...' : batch ? '批量生成' : '生成 Key'}</button></div>
       </form>
     )}
   </Modal>;
@@ -116,6 +137,19 @@ function KeyDrawer({ id, canWrite, canReadDevices, canUnbind, canBlock, close }:
   const [deviceOffset, setDeviceOffset] = useState(0);
   const detail = useQuery({ queryKey: ['license', id], queryFn: () => api<License>(`/admin/v1/license-keys/${id}`), enabled: Boolean(id) });
   const devices = useQuery({ queryKey: ['devices', id, deviceStatus, deviceOffset], queryFn: () => api<Page<DeviceBinding>>(`/admin/v1/license-keys/${id}/devices${queryString({ limit: DEVICE_PAGE_SIZE, offset: deviceOffset, activation_status: deviceStatus || undefined })}`), enabled: Boolean(id) && canReadDevices });
+  useEffect(() => {
+    setConfirmAction(null);
+    setRenewOpen(false);
+    setDeviceStatus('');
+    setDeviceOffset(0);
+  }, [id]);
+  useEffect(() => {
+    const total = devices.data?.total;
+    if (total === undefined) return;
+    if (total === 0 && deviceOffset !== 0) setDeviceOffset(0);
+    else if (total > 0 && deviceOffset >= total) setDeviceOffset(Math.floor((total - 1) / DEVICE_PAGE_SIZE) * DEVICE_PAGE_SIZE);
+  }, [devices.data?.total, deviceOffset]);
+
   const action = useMutation({
     mutationFn: ({ path, body }: ManagedAction) => api(`/admin/v1/${path}`, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
     onSuccess: (_data, variables) => { void qc.invalidateQueries({ queryKey: ['license', id] }); void qc.invalidateQueries({ queryKey: ['keys'] }); void qc.invalidateQueries({ queryKey: ['devices', id] }); setConfirmAction(null); setRenewOpen(false); toast(variables.successMessage); },
@@ -151,13 +185,13 @@ function KeyDrawer({ id, canWrite, canReadDevices, canUnbind, canBlock, close }:
           <button className="danger" disabled={action.isPending || key.status === 'REVOKED'} onClick={() => setConfirmAction({ kind: 'revoke' })}><Ban />永久吊销</button>
         </div></section>}
         <section className="device-zone"><div className="section-title"><div><h3>绑定设备</h3><p>真实设备、绑定、在线与封禁状态</p></div>{canReadDevices && <select value={deviceStatus} onChange={(event) => { setDeviceStatus(event.target.value); setDeviceOffset(0); }}><option value="">全部绑定状态</option><option value="ACTIVE">ACTIVE</option><option value="UNBOUND">UNBOUND</option><option value="BLOCKED">BLOCKED</option><option value="REPLACED">REPLACED</option></select>}</div>
-          {!canReadDevices ? <PermissionNotice>当前账号没有 devices.read 权限。</PermissionNotice> : devices.isLoading ? <SkeletonRows /> : devices.data?.items.length === 0 ? <div className="compact-empty">当前条件下没有设备记录。</div> : <div className="device-list detailed">{devices.data?.items.map((device) => <article key={`${device.activation_id}:${device.device_id}`}>
+          {!canReadDevices ? <PermissionNotice>当前账号没有 devices.read 权限。</PermissionNotice> : devices.isLoading ? <SkeletonRows /> : devices.isError ? <QueryError compact title="设备记录读取失败" error={devices.error} onRetry={() => void devices.refetch()} /> : devices.data?.items.length === 0 ? <div className="compact-empty">当前条件下没有设备记录。</div> : <div className="device-list detailed">{devices.data?.items.map((device) => <article key={`${device.activation_id}:${device.device_id}`}>
             <span className="device-icon">{device.platform?.toLowerCase().includes('win') ? <Laptop /> : <Smartphone />}</span>
             <div className="device-main"><strong>{device.display_name || '未命名设备'}</strong><small>{device.platform || '未知平台'} {device.os_version || ''} · {device.activation_status}</small><code>{device.device_id}</code><div><span>活跃会话 {device.active_session_count}</span><span>风险分 {device.risk_score}</span><span>最近验证 {formatDate(device.last_verified_at)}</span></div><details><summary>查看设备安全信息</summary><pre>{JSON.stringify({ fingerprint_hash: device.fingerprint_hash, public_key_fingerprint: device.device_public_key_fingerprint, first_seen_at: device.first_seen_at, last_seen_at: device.last_seen_at, blocked_at: device.blocked_at, block_reason: device.block_reason }, null, 2)}</pre></details></div>
             <span className={`badge ${device.blocked ? 'revoked' : device.activation_status === 'ACTIVE' ? 'active' : 'disabled'}`}>{device.blocked ? '已封禁' : device.activation_status}</span>
             <div className="device-actions">{canUnbind && <button title="强制解绑" disabled={action.isPending || device.activation_status !== 'ACTIVE'} onClick={() => setConfirmAction({ kind: 'unbind', deviceId: device.device_id, deviceName: device.display_name || device.device_id })}><XCircle /></button>}{canBlock && <button title={device.blocked ? '解封设备' : '封禁设备'} disabled={action.isPending} onClick={() => setConfirmAction({ kind: device.blocked ? 'unblock' : 'block', deviceId: device.device_id, deviceName: device.display_name || device.device_id })}>{device.blocked ? <Check /> : <ShieldAlert />}</button>}</div>
           </article>)}</div>}
-          {canReadDevices && <Pagination offset={deviceOffset} limit={DEVICE_PAGE_SIZE} itemCount={devices.data?.items.length ?? 0} busy={devices.isFetching} onChange={setDeviceOffset} />}
+          {canReadDevices && !devices.isError && <Pagination offset={deviceOffset} limit={DEVICE_PAGE_SIZE} itemCount={devices.data?.items.length ?? 0} total={devices.data?.total} busy={devices.isFetching} onChange={setDeviceOffset} />}
         </section>
       </div>}
     </Drawer>

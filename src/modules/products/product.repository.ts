@@ -1,5 +1,6 @@
 import type { ProductStatus } from './domain/product.js';
 import type { LicenseType } from '../licenses/domain/license-key.js';
+import type { PageResult } from '../../shared/pagination/page-result.js';
 
 export type ProductVersionStatus = 'ACTIVE' | 'BLOCKED' | 'DEPRECATED';
 export type FeatureDefinitionStatus = 'ACTIVE' | 'DISABLED';
@@ -130,7 +131,7 @@ export type UpdateLicensePolicyInput = Partial<
 export interface ProductRepository {
   createProduct(input: CreateProductInput): Promise<ManagedProduct>;
   findProduct(tenantId: string, productId: string): Promise<ManagedProduct | null>;
-  listProducts(tenantId: string, page: PageInput): Promise<readonly ManagedProduct[]>;
+  listProducts(tenantId: string, page: PageInput): Promise<PageResult<ManagedProduct>>;
   updateProduct(tenantId: string, productId: string, input: UpdateProductInput): Promise<ManagedProduct | null>;
 
   createVersion(input: CreateProductVersionInput): Promise<ProductVersion>;
@@ -143,6 +144,6 @@ export interface ProductRepository {
 
   createPolicy(input: CreateLicensePolicyInput): Promise<LicensePolicy>;
   findPolicy(tenantId: string, policyId: string): Promise<LicensePolicy | null>;
-  listPolicies(tenantId: string, productId: string | undefined, page: PageInput): Promise<readonly LicensePolicy[]>;
+  listPolicies(tenantId: string, productId: string | undefined, page: PageInput): Promise<PageResult<LicensePolicy>>;
   updatePolicy(tenantId: string, policyId: string, input: UpdateLicensePolicyInput): Promise<LicensePolicy | null>;
 }

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Clipboard, Filter, RotateCcw, ScrollText, Search, ShieldCheck } from 'lucide-react';
 import { api, queryString } from '../api/client';
@@ -6,7 +6,7 @@ import type { AuditItem, LicenseEvent, Page } from '../api/types';
 import { formatDate, Pagination, PermissionNotice } from '../components/AdminForms';
 import { useAuth } from '../auth/AuthProvider';
 import { useToast } from '../components/Toast';
-import { Drawer, Empty, SkeletonRows } from '../components/Ui';
+import { Drawer, Empty, QueryError, SkeletonRows } from '../components/Ui';
 
 const PAGE_SIZE = 50;
 type Tab = 'audit' | 'events';
@@ -46,6 +46,12 @@ export function AuditPage() {
   const items = current.data?.items ?? [];
   const draft = tab === 'audit' ? auditDraft : eventDraft;
   const setDraft = tab === 'audit' ? setAuditDraft : setEventDraft;
+  useEffect(() => {
+    const total = current.data?.total;
+    if (total === undefined) return;
+    if (total === 0 && offset !== 0) setOffset(0);
+    else if (total > 0 && offset >= total) setOffset(Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE);
+  }, [current.data?.total, offset]);
 
   function changeTab(next: Tab) {
     setTab(next);
@@ -97,7 +103,7 @@ export function AuditPage() {
 
       <section className="panel table-panel">
         {current.isLoading ? <SkeletonRows /> : current.isError ? (
-          <Empty icon={<Activity />} title="读取失败" text={current.error instanceof Error ? current.error.message : '无法读取审计数据'} />
+          <QueryError title="审计数据读取失败" error={current.error} onRetry={() => void current.refetch()} />
         ) : items.length === 0 ? (
           <Empty icon={<ScrollText />} title="暂无记录" text="当前筛选条件下没有真实审计数据。" />
         ) : tab === 'audit' ? (
@@ -105,7 +111,7 @@ export function AuditPage() {
         ) : (
           <EventList items={items as LicenseEvent[]} onOpen={setSelectedEvent} />
         )}
-        <Pagination offset={offset} limit={PAGE_SIZE} itemCount={items.length} busy={current.isFetching} onChange={setOffset} />
+        {!current.isError && <Pagination offset={offset} limit={PAGE_SIZE} itemCount={items.length} total={current.data?.total} busy={current.isFetching} onChange={setOffset} />}
       </section>
 
       <AuditDrawer item={selectedAudit} onClose={() => setSelectedAudit(null)} />

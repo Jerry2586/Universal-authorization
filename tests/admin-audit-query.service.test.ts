@@ -18,14 +18,14 @@ class FakeRepository implements AdminAuditQueryRepository {
   public auditInput?: AuditLogQueryInput;
   public licenseInput?: LicenseEventQueryInput;
 
-  public async listAuditLogs(input: AuditLogQueryInput): Promise<readonly AdminAuditLogRecord[]> {
+  public async listAuditLogs(input: AuditLogQueryInput): Promise<{ items: readonly AdminAuditLogRecord[]; total: number }> {
     this.auditInput = input;
-    return [auditRecord];
+    return { items: [auditRecord], total: 1 };
   }
 
-  public async listLicenseEvents(input: LicenseEventQueryInput): Promise<readonly AdminLicenseEventRecord[]> {
+  public async listLicenseEvents(input: LicenseEventQueryInput): Promise<{ items: readonly AdminLicenseEventRecord[]; total: number }> {
     this.licenseInput = input;
-    return [licenseEvent];
+    return { items: [licenseEvent], total: 1 };
   }
 }
 
@@ -49,7 +49,7 @@ describe('AdminAuditQueryService', () => {
       offset: 0,
     });
 
-    expect(result).toEqual([auditRecord]);
+    expect(result).toEqual({ items: [auditRecord], total: 1 });
     expect(repository.auditInput).toEqual({
       tenantId,
       action: 'device.block',
@@ -82,7 +82,7 @@ describe('AdminAuditQueryService', () => {
       offset: 10,
     });
 
-    expect(result).toEqual([licenseEvent]);
+    expect(result).toEqual({ items: [licenseEvent], total: 1 });
     expect(repository.licenseInput).toMatchObject({
       tenantId,
       licenseId: licenseEvent.licenseId,

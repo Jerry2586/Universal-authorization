@@ -15,6 +15,38 @@ show_logs_and_exit() {
   exit 1
 }
 
+verify_endpoint() {
+  ENDPOINT_PATH=$1
+  EXPECTED_KIND=$2
+
+  if ! docker compose exec -T app node -e '
+const [endpointPath, expectedKind] = process.argv.slice(1);
+const port = process.env.PORT || "3000";
+const url = "http://127.0.0.1:" + port + endpointPath;
+fetch(url)
+  .then(async (response) => {
+    const body = await response.text();
+    if (response.status !== 200) {
+      throw new Error(endpointPath + " 返回 HTTP " + response.status);
+    }
+    if (expectedKind === "html") {
+      const contentType = response.headers.get("content-type") || "";
+      const looksLikeHtml = contentType.toLowerCase().includes("text/html") || /<!doctype html|<html/i.test(body);
+      if (!looksLikeHtml) {
+        throw new Error(endpointPath + " 没有返回管理后台 HTML");
+      }
+    }
+    console.log("验收通过：" + endpointPath + " -> HTTP " + response.status);
+  })
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+' "$ENDPOINT_PATH" "$EXPECTED_KIND"; then
+    show_logs_and_exit "部署验收失败：${ENDPOINT_PATH} 不可用。"
+  fi
+}
+
 step '检查 Docker 环境'
 if ! command -v docker >/dev/null 2>&1; then
   echo '没有找到 Docker。请先安装并启动 Docker，然后重新运行本脚本。'
@@ -64,6 +96,11 @@ done
 
 [ "$ATTEMPT" -le 90 ] || show_logs_and_exit '等待授权服务器启动超时。'
 
+step '真实验收健康、就绪和 Web 管理后台'
+verify_endpoint '/health' 'json'
+verify_endpoint '/ready' 'json'
+verify_endpoint '/admin/' 'html'
+
 PORT=$(grep '^PORT=' .env | head -n 1 | cut -d '=' -f 2- || true)
 PORT=${PORT:-3000}
 SERVER_IP=${PUBLIC_HOST:-}
@@ -76,9 +113,10 @@ chmod +x show-admin-login.sh
 PUBLIC_HOST="$SERVER_IP" ./show-admin-login.sh --write
 
 printf '\033[32m  登录信息已保存：%s/admin-login.txt\n' "$PROJECT_DIRECTORY"
+printf '  后台地址：http://%s:%s/admin/\n' "$SERVER_IP" "$PORT"
+printf '  健康检查：http://%s:%s/health\n' "$SERVER_IP" "$PORT"
+printf '  就绪检查：http://%s:%s/ready\n' "$SERVER_IP" "$PORT"
 printf '  随时重新查看：cd %s && ./show-admin-login.sh\n' "$PROJECT_DIRECTORY"
-printf '  健康检查：http://127.0.0.1:%s/health\n' "$PORT"
-printf '  就绪检查：http://127.0.0.1:%s/ready\n' "$PORT"
 printf '  查看日志：docker compose logs -f app\n'
 printf '  停止服务：docker compose down\n'
 printf '==================================================\033[0m\n'

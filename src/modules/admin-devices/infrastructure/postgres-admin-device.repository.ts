@@ -65,18 +65,23 @@ interface BlockRow extends QueryResultRow {
   blocked_at: Date;
 }
 
+interface CountRow extends QueryResultRow {
+  count: string;
+}
+
 export class PostgresAdminDeviceRepository implements AdminDeviceRepository {
   public constructor(private readonly database: PostgresDatabase) {}
 
-  public async listLicenseDevices(input: DeviceBindingListInput): Promise<readonly ManagedDeviceBinding[]> {
+  public async listLicenseDevices(input: DeviceBindingListInput): Promise<{ items: readonly ManagedDeviceBinding[]; total: number }> {
     const license = await this.database.query(
       'SELECT 1 FROM license_keys WHERE tenant_id=$1 AND id=$2',
       [input.tenantId, input.licenseId],
     );
     if ((license.rowCount ?? 0) === 0) throw notFound('LICENSE_NOT_FOUND', '授权不存在');
 
-    const result = await this.database.query<DeviceBindingRow>(
-      `SELECT d.id AS device_id, d.tenant_id, a.license_key_id AS license_id,
+    const [itemsResult, countResult] = await Promise.all([
+      this.database.query<DeviceBindingRow>(
+        `SELECT d.id AS device_id, d.tenant_id, a.license_key_id AS license_id,
               a.id AS activation_id, d.status AS device_status, a.status AS activation_status,
               d.platform, d.os_version, d.display_name, d.device_public_key_fingerprint,
               d.fingerprint_hash, d.risk_score, d.first_seen_at, d.last_seen_at,
@@ -98,9 +103,17 @@ export class PostgresAdminDeviceRepository implements AdminDeviceRepository {
           AND ($3::varchar IS NULL OR a.status=$3)
         ORDER BY a.activated_at DESC, a.id DESC
         LIMIT $4 OFFSET $5`,
-      [input.tenantId, input.licenseId, input.activationStatus ?? null, input.limit, input.offset],
-    );
-    return result.rows.map(mapBinding);
+        [input.tenantId, input.licenseId, input.activationStatus ?? null, input.limit, input.offset],
+      ),
+      this.database.query<CountRow>(
+        `SELECT COUNT(*)::text AS count
+           FROM activations a
+          WHERE a.tenant_id=$1 AND a.license_key_id=$2
+            AND ($3::varchar IS NULL OR a.status=$3)`,
+        [input.tenantId, input.licenseId, input.activationStatus ?? null],
+      ),
+    ]);
+    return { items: itemsResult.rows.map(mapBinding), total: Number(countResult.rows[0]?.count ?? 0) };
   }
 
   public async forceUnbind(input: ForceUnbindDeviceInput): Promise<ForceUnbindDeviceResult> {

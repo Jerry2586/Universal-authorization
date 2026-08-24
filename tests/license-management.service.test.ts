@@ -47,7 +47,10 @@ class MemoryLicenseRepository implements LicenseRepository {
     });
   }
   public async findById(_tenantId: string, licenseId: string): Promise<ManagedLicenseKey | null> { return this.licenses.get(licenseId) ?? null; }
-  public async list(_input: LicenseListInput): Promise<readonly ManagedLicenseKey[]> { return [...this.licenses.values()]; }
+  public async list(_input: LicenseListInput): Promise<{ items: readonly ManagedLicenseKey[]; total: number }> {
+    const items = [...this.licenses.values()];
+    return { items, total: items.length };
+  }
   public async changeStatus(
     _tenantId: string, licenseId: string, expected: readonly LicenseStatus[], status: LicenseStatus,
     changes: { suspendedFromStatus?: LicenseStatus | null; revokedAt?: Date | null; expiresAt?: Date | null } = {},

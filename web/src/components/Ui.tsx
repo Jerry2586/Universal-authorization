@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { CircleAlert, RefreshCw, X } from 'lucide-react';
 
 let openLayerCount = 0;
 let previousBodyOverflow = '';
@@ -136,6 +136,41 @@ export function Empty({
       {action}
     </div>
   );
+}
+
+export function queryErrorMessage(error: unknown, fallback = '数据读取失败'): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+export function QueryError({
+  title,
+  error,
+  onRetry,
+  compact = false,
+}: {
+  title: string;
+  error: unknown;
+  onRetry?(): void;
+  compact?: boolean;
+}) {
+  const message = queryErrorMessage(error);
+  const retry = onRetry ? (
+    <button type="button" className="ghost" onClick={onRetry}>
+      <RefreshCw />重新读取
+    </button>
+  ) : undefined;
+
+  if (compact) {
+    return (
+      <div className="data-error query-error-compact" role="alert">
+        <CircleAlert />
+        <div><strong>{title}</strong><span>{message}</span></div>
+        {retry}
+      </div>
+    );
+  }
+
+  return <Empty icon={<CircleAlert />} title={title} text={message} action={retry} />;
 }
 
 export function SkeletonRows() {

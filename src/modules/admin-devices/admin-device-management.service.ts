@@ -2,6 +2,7 @@ import type { Clock } from '../challenges/challenge.service.js';
 import type { AuditLogPort } from '../audit/audit-log.port.js';
 import type { ManagementRequestContext } from '../identity/admin-principal.js';
 import type { OnlineSessionStore } from '../sessions/online-session.store.js';
+import type { PageResult } from '../../shared/pagination/page-result.js';
 import type {
   ActivationStatus,
   AdminDeviceRepository,
@@ -64,7 +65,7 @@ export class AdminDeviceManagementService {
     context: ManagementRequestContext,
     licenseId: string,
     input: ListLicenseDevicesInput,
-  ): Promise<readonly ManagedDeviceBinding[]> {
+  ): Promise<PageResult<ManagedDeviceBinding>> {
     const repositoryInput: DeviceBindingListInput = {
       tenantId: context.tenantId,
       licenseId,

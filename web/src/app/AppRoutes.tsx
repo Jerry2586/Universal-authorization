@@ -9,6 +9,9 @@ import { PoliciesPage } from '../pages/PoliciesPage';
 import { KeysPage } from '../pages/KeysPage';
 import { AuditPage } from '../pages/AuditPage';
 import { ApiCenterPage } from '../pages/ApiCenterPage';
+import { AdminUsersPage } from '../pages/AdminUsersPage';
+import { ProfilePage } from '../pages/ProfilePage';
+import { SettingsPage } from '../pages/SettingsPage';
 
 function Protected() {
   const { status } = useAuth();
@@ -17,9 +20,11 @@ function Protected() {
   return <AppShell />;
 }
 
-function PermissionGate({ permission, children }: { permission: string; children: React.ReactNode }) {
+function PermissionGate({ permission, anyOf, children }: { permission?: string; anyOf?: string[]; children: React.ReactNode }) {
   const { has } = useAuth();
-  return has(permission) ? children : <PermissionNotice>当前账号没有 {permission} 权限，此页面不会发起越权 API 请求。</PermissionNotice>;
+  const allowed = permission !== undefined ? has(permission) : anyOf?.some(has) === true;
+  const required = permission ?? anyOf?.join(' 或 ') ?? '所需';
+  return allowed ? children : <PermissionNotice>当前账号没有 {required} 权限，此页面不会发起越权 API 请求。</PermissionNotice>;
 }
 
 export function AppRoutes() {
@@ -31,6 +36,9 @@ export function AppRoutes() {
       <Route path="policies" element={<PermissionGate permission="licenses.read"><PoliciesPage /></PermissionGate>} />
       <Route path="keys" element={<PermissionGate permission="licenses.read"><KeysPage /></PermissionGate>} />
       <Route path="audit" element={<PermissionGate permission="audit.read"><AuditPage /></PermissionGate>} />
+      <Route path="admin-users" element={<PermissionGate anyOf={['admin.users.manage', 'admin.roles.manage']}><AdminUsersPage /></PermissionGate>} />
+      <Route path="profile" element={<ProfilePage />} />
+      <Route path="settings" element={<PermissionGate permission="tenant.settings.manage"><SettingsPage /></PermissionGate>} />
       <Route path="api-center" element={<ApiCenterPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />

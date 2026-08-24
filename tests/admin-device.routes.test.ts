@@ -17,7 +17,7 @@ afterEach(async () => { if (app !== undefined) { await app.close(); app = undefi
 describe('seventh-stage admin device routes', () => {
   it('requires devices.read before listing a Key devices', async () => {
     let called = false;
-    app = buildApp({ adminDevices: dependencies(new Set(), { listLicenseDevices: async () => { called = true; return []; } }) });
+    app = buildApp({ adminDevices: dependencies(new Set(), { listLicenseDevices: async () => { called = true; return { items: [], total: 0 }; } }) });
     const response = await app.inject({ method: 'GET', url: `/admin/v1/license-keys/${licenseId}/devices`, headers: adminHeaders() });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({ success: false, code: 'ADMIN_FORBIDDEN' });
@@ -26,7 +26,7 @@ describe('seventh-stage admin device routes', () => {
 
   it('lists device history with devices.read', async () => {
     app = buildApp({ adminDevices: dependencies(new Set([PERMISSIONS.DEVICES_READ]), {
-      listLicenseDevices: async () => [binding()],
+      listLicenseDevices: async () => ({ items: [binding()], total: 7 }),
     }) });
     const response = await app.inject({ method: 'GET', url: `/admin/v1/license-keys/${licenseId}/devices?activation_status=ACTIVE`, headers: adminHeaders() });
     expect(response.statusCode).toBe(200);
