@@ -36,7 +36,88 @@
 - 不接受 Key 明文作为搜索条件
 - 不修改、不删除任何旧审计日志或授权事件
 
-## 傻瓜式启动
+## 真正一键搭建（推荐）
+
+Windows 只需安装并启动 Docker Desktop；Linux 测试服务器可以用远程安装器自动安装 Docker。脚本会自动完成：
+
+1. 生成安全的 `.env` 配置
+2. 生成管理令牌、Key Pepper 和数据库密码
+3. 生成 Ed25519 服务端签名私钥
+4. 构建授权服务器 Docker 镜像
+5. 启动 PostgreSQL、Redis 和授权服务器
+6. 自动执行全部数据库迁移
+7. 等待健康检查通过并显示访问地址
+
+### Windows 一键搭建
+
+最简单的方法：直接双击源码目录里的 `一键搭建.bat`。
+
+也可以在源码目录打开 PowerShell，执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+### Linux 服务器一键拉取并安装（主要方式）
+
+SSH 登录 Linux 服务器后，只运行这一行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh | sudo bash
+```
+
+如果服务器没有 `curl`，可以使用：
+
+```bash
+wget -qO- https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh | sudo bash
+```
+
+这条命令会自动安装或检查 Git、Docker Engine 和 Docker Compose，拉取最新源码到 `/opt/universal-authorization`，生成安全配置，构建镜像、迁移数据库并启动服务。
+
+自定义安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh \
+  | sudo bash -s -- --dir /data/universal-authorization
+```
+
+已经下载源码时，也可以在项目目录内执行：
+
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+搭建完成后的常用命令：
+
+```bash
+# 查看运行状态
+docker compose ps
+
+# 查看服务端实时日志
+docker compose logs -f app
+
+# 停止服务（保留数据库数据）
+docker compose down
+
+# 再次启动或升级源码后重新构建
+docker compose up -d --build
+```
+
+默认访问地址：
+
+```text
+健康检查：http://127.0.0.1:3000/health
+就绪检查：http://127.0.0.1:3000/ready
+```
+
+> `.env` 包含私钥和管理令牌，已被 `.gitignore` 排除。不要上传、转发或提交该文件。
+
+完整说明请看：`09-一键部署设计与使用.md`。
+
+> 云服务器还需要在安全组或防火墙中放行授权服务端口，默认是 TCP `3000`。不要把 PostgreSQL `5432` 和 Redis `6379` 开放到公网。
+
+## 手动启动
 
 ### 第 1 步：复制配置
 
