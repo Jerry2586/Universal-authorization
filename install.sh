@@ -228,15 +228,18 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   fi
 
   git remote set-url origin "$REPOSITORY_URL"
-  git fetch --prune origin "$BRANCH"
+  git fetch --prune origin "refs/heads/$BRANCH"
+  FETCHED_COMMIT=$(git rev-parse --verify FETCH_HEAD)
 
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH"
   else
-    git checkout -b "$BRANCH" --track "origin/$BRANCH"
+    git checkout -b "$BRANCH" "$FETCHED_COMMIT"
+    git config "branch.$BRANCH.remote" origin
+    git config "branch.$BRANCH.merge" "refs/heads/$BRANCH"
   fi
 
-  git merge --ff-only "origin/$BRANCH"
+  git merge --ff-only "$FETCHED_COMMIT"
 elif [ -e "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
   print_error "安装目录已经存在且不是 Git 仓库：${INSTALL_DIR}"
   exit 1
@@ -257,8 +260,12 @@ PUBLIC_HOST="$SERVER_IP" ./deploy.sh
 PORT=$(grep '^PORT=' .env | head -n 1 | cut -d '=' -f 2- || true)
 PORT=${PORT:-3000}
 
-printf '\033[32m  Linux 一键拉取和安装已经完成\n'
-printf '  安装目录：%s\n' "$INSTALL_DIR"
+printf '\n\033[32m  Linux 一键拉取和安装已经完成\033[0m\n'
+printf '  安装目录：%s\n\n' "$INSTALL_DIR"
+
+# 安装器必须在最终成功区直接显示可登录的真实凭据，用户无需再执行其他命令。
+PUBLIC_HOST="$SERVER_IP" ./show-admin-login.sh --show
+
 printf '  登录信息文件：%s/admin-login.txt\n' "$INSTALL_DIR"
 printf '  随时查看账号密码：sudo cat %s/admin-login.txt\n' "$INSTALL_DIR"
 printf '  或执行：cd %s && sudo ./show-admin-login.sh\n' "$INSTALL_DIR"
