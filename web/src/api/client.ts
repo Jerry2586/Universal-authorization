@@ -41,3 +41,15 @@ export function queryString(values: Record<string, string | number | undefined>)
   const text = params.toString();
   return text ? `?${text}` : '';
 }
+
+export async function fetchAllPages<T>(path: string, values: Record<string, string | number | undefined> = {}): Promise<T[]> {
+  const limit = 100;
+  let offset = 0;
+  const all: T[] = [];
+  for (;;) {
+    const page = await api<{ items: T[]; limit: number; offset: number }>(`${path}${queryString({ ...values, limit, offset })}`);
+    all.push(...page.items);
+    if (page.items.length < limit) return all;
+    offset += limit;
+  }
+}
