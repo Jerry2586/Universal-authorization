@@ -9,6 +9,9 @@ export interface AdminPrincipal {
 export interface AdminPrincipalRequest {
   authorization?: string;
   adminUserId?: string;
+  sessionToken?: string;
+  csrfToken?: string;
+  csrfRequired?: boolean;
 }
 
 export interface AdminPrincipalResolver {
@@ -18,6 +21,14 @@ export interface AdminPrincipalResolver {
 export interface ManagementRequestContext {
   principal: AdminPrincipal;
   tenantId: string;
+  requestId: string;
+  sourceIp?: string;
+  userAgent?: string;
+}
+
+export interface AuthenticatedAdminRequestContext {
+  principal: AdminPrincipal;
+  tenantId: string | null;
   requestId: string;
   sourceIp?: string;
   userAgent?: string;

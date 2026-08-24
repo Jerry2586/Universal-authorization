@@ -29,6 +29,37 @@ describe('management routes', () => {
     expect(response.json()).toMatchObject({ success: true, data: { id: product.id, code: 'designer-pro', status: 'ACTIVE' } });
   });
 
+  it('returns database totals for product and policy pagination', async () => {
+    app = buildApp({
+      management: dependencies(new Set([PERMISSIONS.PRODUCTS_READ, PERMISSIONS.LICENSES_READ]), {
+        listProducts: async () => ({ items: [product], total: 37 }),
+        listPolicies: async () => ({ items: [], total: 12 }),
+      }),
+    });
+
+    const productsResponse = await app.inject({
+      method: 'GET',
+      url: '/admin/v1/products?limit=20&offset=20',
+      headers: adminHeaders(),
+    });
+    expect(productsResponse.statusCode).toBe(200);
+    expect(productsResponse.json()).toMatchObject({
+      success: true,
+      data: { items: [{ id: product.id }], total: 37, limit: 20, offset: 20 },
+    });
+
+    const policiesResponse = await app.inject({
+      method: 'GET',
+      url: '/admin/v1/license-policies?limit=10&offset=10',
+      headers: adminHeaders(),
+    });
+    expect(policiesResponse.statusCode).toBe(200);
+    expect(policiesResponse.json()).toMatchObject({
+      success: true,
+      data: { items: [], total: 12, limit: 10, offset: 10 },
+    });
+  });
+
   it('keeps client modules disabled when their dependencies are not supplied', async () => {
     app = buildApp({ management: dependencies(new Set([PERMISSIONS.LICENSES_WRITE])) });
     for (const url of ['/api/v1/activate', '/api/v1/licenses/verify', '/api/v1/heartbeat', '/admin/v1/tokens']) {
@@ -38,11 +69,11 @@ describe('management routes', () => {
   });
 });
 
-function dependencies(permissions: ReadonlySet<string>) {
+function dependencies(permissions: ReadonlySet<string>, productOverrides: Record<string, unknown> = {}) {
   const principalResolver: AdminPrincipalResolver = { resolve: async () => ({
     userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', tenantId: '11111111-1111-4111-8111-111111111111', permissions,
   }) };
-  const productService = { createProduct: async () => product } as unknown as ProductManagementService;
+  const productService = { createProduct: async () => product, ...productOverrides } as unknown as ProductManagementService;
   const licenseService = {} as LicenseManagementService;
   return { principalResolver, productService, licenseService };
 }

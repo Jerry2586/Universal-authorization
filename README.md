@@ -2,6 +2,26 @@
 
 当前版本：`0.8.0`
 
+
+
+## Web 管理后台
+
+本项目现已内置同源 Web 管理后台，完成部署后访问：
+
+```text
+http://服务器IP:3000/admin/
+```
+
+后台支持产品、版本、功能、授权策略、Key、绑定设备、审计日志、授权事件、管理员账号、角色权限、个人中心和工作区设置管理。全部页面连接真实 API 和 PostgreSQL/Redis，不包含 Mock；浏览器使用 HttpOnly Cookie + Redis 会话 + CSRF 防护，不会接触 `MANAGEMENT_GATEWAY_TOKEN`。
+
+当前服务端共登记 `52` 个真实路由：`7` 个客户端授权接口、`39` 个管理业务接口、`6` 个认证与状态接口。管理员分页返回真实总数，账号状态、密码重置和角色边界均由服务端校验。详细成熟化说明见 `16-管理后台成熟化第一阶段设计与使用.md`。
+
+Linux 一键部署会自动创建默认工作区和首个管理员，并在安装完成后显示登录邮箱、工作区代码和随机初始密码。详细说明见：
+
+```text
+14-Web管理后台开发与使用.md
+```
+
 ## 已完成阶段
 
 - 第一步：需求与授权协议设计
@@ -41,12 +61,13 @@
 Windows 只需安装并启动 Docker Desktop；Linux 测试服务器可以用远程安装器自动安装 Docker。脚本会自动完成：
 
 1. 生成安全的 `.env` 配置
-2. 生成管理令牌、Key Pepper 和数据库密码
+2. 生成管理令牌、Key Pepper、数据库密码和管理员随机初始密码
 3. 生成 Ed25519 服务端签名私钥
 4. 构建授权服务器 Docker 镜像
 5. 启动 PostgreSQL、Redis 和授权服务器
-6. 自动执行全部数据库迁移
-7. 等待健康检查通过并显示访问地址
+6. 自动执行全部数据库迁移并创建首个管理员
+7. 等待健康检查通过，显示后台地址、管理员账号、工作区代码和初始密码
+8. 将登录信息保存到 `admin-login.txt`（Linux 自动设置为 `600` 权限）
 
 ### Windows 一键搭建
 
@@ -74,6 +95,31 @@ wget -qO- https://raw.githubusercontent.com/Jerry2586/Universal-authorization/ma
 
 这条命令会自动安装或检查 Git、Docker Engine 和 Docker Compose，拉取最新源码到 `/opt/universal-authorization`，生成安全配置，构建镜像、迁移数据库并启动服务。
 
+安装成功后，终端会直接显示真实的后台登录信息，格式如下：
+
+```text
+后台登录地址（远程）：http://服务器IP:3000/admin/
+管理员账号：admin@example.com
+工作区代码：default
+管理员初始密码：安装时随机生成
+```
+
+登录信息同时保存到：
+
+```text
+/opt/universal-authorization/admin-login.txt
+```
+
+以后忘记账号或初始密码，执行下面任意一条命令即可重新查看：
+
+```bash
+sudo cat /opt/universal-authorization/admin-login.txt
+# 或
+cd /opt/universal-authorization && sudo ./show-admin-login.sh
+```
+
+> `admin-login.txt` 权限为 `600`，只允许文件所有者读取。这里保存的是 `.env` 中的管理员引导密码；管理员已存在时，重新部署不会擅自重置数据库中的密码。
+
 自定义安装目录：
 
 ```bash
@@ -94,6 +140,9 @@ chmod +x deploy.sh
 # 查看运行状态
 docker compose ps
 
+# 查看后台登录地址、管理员账号和初始密码
+sudo ./show-admin-login.sh
+
 # 查看服务端实时日志
 docker compose logs -f app
 
@@ -107,11 +156,12 @@ docker compose up -d --build
 默认访问地址：
 
 ```text
+Web 管理后台：http://服务器IP:3000/admin/
 健康检查：http://127.0.0.1:3000/health
 就绪检查：http://127.0.0.1:3000/ready
 ```
 
-> `.env` 包含私钥和管理令牌，已被 `.gitignore` 排除。不要上传、转发或提交该文件。
+> `.env` 包含私钥和管理令牌，`admin-login.txt` 包含管理员初始密码；二者都已被 `.gitignore` 排除。不要上传、转发或提交这些文件。
 
 完整说明请看：`09-一键部署设计与使用.md`。
 
@@ -248,6 +298,22 @@ POST /admin/v1/devices/{deviceId}/unblock
 
 GET  /admin/v1/audit-logs
 GET  /admin/v1/license-events
+
+GET   /admin/v1/admin-users
+POST  /admin/v1/admin-users
+PATCH /admin/v1/admin-users/{adminId}
+POST  /admin/v1/admin-users/{adminId}/reset-password
+
+PATCH /admin/v1/profile
+POST  /admin/v1/profile/change-password
+
+GET   /admin/v1/admin-roles
+GET   /admin/v1/admin-permissions
+POST  /admin/v1/admin-roles
+PATCH /admin/v1/admin-roles/{roleId}
+
+GET /admin/v1/settings/tenant
+PUT /admin/v1/settings/tenant
 ```
 
 管理请求头：
@@ -289,21 +355,29 @@ X-Tenant-Id: <平台管理员操作目标租户时提供>
 - 不删除设备、绑定、封禁和会话历史。
 - 管理员设备操作不修改 Key 到期时间。
 - 审计与授权事件接口只读历史，所有 SQL 强制租户条件并参数化。
+- 管理员停用、禁用、密码重置和修改密码会递增 `session_version`，旧 Cookie 会话立即失效。
+- 管理员不能停用自己、修改自己的角色或通过管理员列表重置自己的密码。
+- 最后一名启用状态的 `owner` 受事务级并发锁保护，不能被并发操作同时移除。
+- 租户角色不会获得平台专属权限；迁移会清理历史错误授权，引导脚本也不会重新授予这些权限。
+- 平台管理员个人中心不需要指定目标租户，资料和密码操作只针对当前登录账号。
+- 新增管理员不默认勾选 `owner`，必须由操作者明确选择至少一个角色。
+- 工作区设置真实写入 PostgreSQL `system_settings`，不是浏览器本地数据。
+- 管理员、角色、密码和工作区设置变更全部写入审计日志。
 - 读取敏感历史本身会追加读取审计，不修改或删除旧记录。
 - 吊销不可恢复。
 - 已应用的旧迁移文件不得修改。
 
-## 第八步边界
+## 当前尚未实现的扩展模块
 
 当前仍然没有实现：
 
 - 删除、修改或文件导出审计记录
 - 支付和订单接口
 - 代理商接口
-- 管理后台页面
-- 签名密钥管理接口
-- 系统设置管理接口
-- 第九步及以后功能
+- 多因素认证（MFA）验证流程
+- 邮件、短信和 Webhook 到期通知任务
+- 签名密钥轮换管理页面与接口
+- 平台级多租户运营控制台
 
 ## 设计文档
 
@@ -315,3 +389,24 @@ X-Tenant-Id: <平台管理员操作目标租户时提供>
 - `06-会话心跳释放与设备自助解绑设计.md`
 - `07-管理员设备查询解绑封禁与解封设计.md`
 - `08-管理员审计日志与授权事件查询设计.md`
+- `14-Web管理后台开发与使用.md`
+- `15-Web管理后台全接口真实对接说明.md`
+- `16-管理后台成熟化第一阶段设计与使用.md`
+
+### 全接口真实对接
+
+当前后台已对接服务端全部现有管理业务接口，所有列表、详情、创建、修改、状态操作、设备操作、筛选、分页和审计查询均使用真实 API 与数据库数据，不包含 Mock 或演示数据。完整覆盖说明见：
+
+```text
+15-Web管理后台全接口真实对接说明.md
+```
+
+## 第二至第四阶段成熟化整改
+
+- 列表接口失败会显示真实错误和真实重试，不再伪装成“暂无数据”。
+- 产品、策略、Key、设备、审计日志和授权事件已经返回 PostgreSQL 真实 `total`。
+- 前端分页会根据真实总数自动修正删除、筛选后的越界页。
+- Linux 部署在宣布成功前会真实验收 `/health`、`/ready` 和 `/admin/`。
+- 安装成功区会直接显示后台地址、管理员账号、工作区代码和随机初始密码。
+
+傻瓜式说明见 `17-管理后台成熟化第二至第四阶段设计与使用.md`。

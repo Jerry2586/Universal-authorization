@@ -1,5 +1,6 @@
 import type { LicenseStatus, LicenseType } from './domain/license-key.js';
 import type { LicensePolicy } from '../products/product.repository.js';
+import type { PageResult } from '../../shared/pagination/page-result.js';
 
 export interface LicenseFeatureGrant {
   code: string;
@@ -83,7 +84,7 @@ export interface LicenseRepository {
   getGenerationContext(tenantId: string, productId: string, policyId: string): Promise<LicenseGenerationContext | null>;
   createBatch(input: CreateLicenseBatchInput): Promise<readonly ManagedLicenseKey[]>;
   findById(tenantId: string, licenseId: string): Promise<ManagedLicenseKey | null>;
-  list(input: LicenseListInput): Promise<readonly ManagedLicenseKey[]>;
+  list(input: LicenseListInput): Promise<PageResult<ManagedLicenseKey>>;
   changeStatus(
     tenantId: string,
     licenseId: string,

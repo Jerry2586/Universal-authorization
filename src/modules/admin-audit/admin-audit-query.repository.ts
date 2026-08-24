@@ -1,3 +1,5 @@
+import type { PageResult } from '../../shared/pagination/page-result.js';
+
 export type AuditActorType = 'ADMIN_USER' | 'SYSTEM' | 'API_CLIENT';
 export type EventResult = 'SUCCESS' | 'FAILURE';
 
@@ -69,6 +71,6 @@ export interface LicenseEventQueryInput {
 }
 
 export interface AdminAuditQueryRepository {
-  listAuditLogs(input: AuditLogQueryInput): Promise<readonly AdminAuditLogRecord[]>;
-  listLicenseEvents(input: LicenseEventQueryInput): Promise<readonly AdminLicenseEventRecord[]>;
+  listAuditLogs(input: AuditLogQueryInput): Promise<PageResult<AdminAuditLogRecord>>;
+  listLicenseEvents(input: LicenseEventQueryInput): Promise<PageResult<AdminLicenseEventRecord>>;
 }

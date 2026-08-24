@@ -34,7 +34,8 @@ export function registerAdminDeviceRoutes(app: FastifyInstance, dependencies: Ad
       ...(query.activation_status === undefined ? {} : { activationStatus: query.activation_status }),
     });
     return successResponse(request.id, {
-      items: devices.map(deviceResponse),
+      items: devices.items.map(deviceResponse),
+      total: devices.total,
       limit: query.limit,
       offset: query.offset,
     }, '设备绑定列表读取成功');

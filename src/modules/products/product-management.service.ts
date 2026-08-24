@@ -1,5 +1,6 @@
 import { AppError } from '../../shared/errors/app-error.js';
 import type { AuditLogPort } from '../audit/audit-log.port.js';
+import type { PageResult } from '../../shared/pagination/page-result.js';
 import type { ManagementRequestContext } from '../identity/admin-principal.js';
 import type {
   CreateFeatureDefinitionInput,
@@ -37,7 +38,7 @@ export class ProductManagementService {
     return this.requireProduct(context.tenantId, productId);
   }
 
-  public async listProducts(context: ManagementRequestContext, page: PageInput): Promise<readonly ManagedProduct[]> {
+  public async listProducts(context: ManagementRequestContext, page: PageInput): Promise<PageResult<ManagedProduct>> {
     return this.repository.listProducts(context.tenantId, page);
   }
 
@@ -129,7 +130,7 @@ export class ProductManagementService {
     context: ManagementRequestContext,
     productId: string | undefined,
     page: PageInput,
-  ): Promise<readonly LicensePolicy[]> {
+  ): Promise<PageResult<LicensePolicy>> {
     if (productId !== undefined) await this.requireProduct(context.tenantId, productId);
     return this.repository.listPolicies(context.tenantId, productId, page);
   }

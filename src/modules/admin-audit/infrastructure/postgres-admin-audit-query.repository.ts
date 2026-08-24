@@ -43,10 +43,14 @@ interface LicenseEventRow extends QueryResultRow {
   occurred_at: Date;
 }
 
+interface CountRow extends QueryResultRow {
+  count: string;
+}
+
 export class PostgresAdminAuditQueryRepository implements AdminAuditQueryRepository {
   public constructor(private readonly database: PostgresDatabase) {}
 
-  public async listAuditLogs(input: AuditLogQueryInput): Promise<readonly AdminAuditLogRecord[]> {
+  public async listAuditLogs(input: AuditLogQueryInput): Promise<{ items: readonly AdminAuditLogRecord[]; total: number }> {
     const query = buildQuery(
       `SELECT id, tenant_id, actor_type, actor_id, action, resource_type, resource_id,
               request_id, source_ip::text AS source_ip, user_agent, result,
@@ -64,11 +68,14 @@ export class PostgresAdminAuditQueryRepository implements AdminAuditQueryReposit
       ],
       input,
     );
-    const result = await this.database.query<AuditLogRow>(query.text, query.values);
-    return result.rows.map(mapAuditLog);
+    const [itemsResult, countResult] = await Promise.all([
+      this.database.query<AuditLogRow>(query.listText, query.listValues),
+      this.database.query<CountRow>(query.countText, query.filterValues),
+    ]);
+    return { items: itemsResult.rows.map(mapAuditLog), total: Number(countResult.rows[0]?.count ?? 0) };
   }
 
-  public async listLicenseEvents(input: LicenseEventQueryInput): Promise<readonly AdminLicenseEventRecord[]> {
+  public async listLicenseEvents(input: LicenseEventQueryInput): Promise<{ items: readonly AdminLicenseEventRecord[]; total: number }> {
     const query = buildQuery(
       `SELECT id, tenant_id, product_id, license_key_id, device_id, activation_id,
               session_id, event_type, result, reason_code, request_id,
@@ -88,8 +95,11 @@ export class PostgresAdminAuditQueryRepository implements AdminAuditQueryReposit
       ],
       input,
     );
-    const result = await this.database.query<LicenseEventRow>(query.text, query.values);
-    return result.rows.map(mapLicenseEvent);
+    const [itemsResult, countResult] = await Promise.all([
+      this.database.query<LicenseEventRow>(query.listText, query.listValues),
+      this.database.query<CountRow>(query.countText, query.filterValues),
+    ]);
+    return { items: itemsResult.rows.map(mapLicenseEvent), total: Number(countResult.rows[0]?.count ?? 0) };
   }
 }
 
@@ -101,37 +111,38 @@ function buildQuery(
   tenantId: string,
   filters: readonly FilterEntry[],
   input: QueryInput,
-): { text: string; values: unknown[] } {
+): { listText: string; countText: string; filterValues: unknown[]; listValues: unknown[] } {
   const conditions = ['tenant_id = $1'];
-  const values: unknown[] = [tenantId];
+  const filterValues: unknown[] = [tenantId];
 
   for (const [property, column] of filters) {
     const value = (input as unknown as Record<string, unknown>)[property];
     if (value === undefined) continue;
-    values.push(value);
-    conditions.push(`${column} = $${values.length}`);
+    filterValues.push(value);
+    conditions.push(`${column} = $${filterValues.length}`);
   }
 
   if (input.occurredFrom !== undefined) {
-    values.push(input.occurredFrom);
-    conditions.push(`occurred_at >= $${values.length}`);
+    filterValues.push(input.occurredFrom);
+    conditions.push(`occurred_at >= $${filterValues.length}`);
   }
   if (input.occurredTo !== undefined) {
-    values.push(input.occurredTo);
-    conditions.push(`occurred_at <= $${values.length}`);
+    filterValues.push(input.occurredTo);
+    conditions.push(`occurred_at <= $${filterValues.length}`);
   }
 
-  values.push(input.limit);
-  const limitPlaceholder = `$${values.length}`;
-  values.push(input.offset);
-  const offsetPlaceholder = `$${values.length}`;
+  const listValues = [...filterValues, input.limit, input.offset];
+  const limitPlaceholder = `$${filterValues.length + 1}`;
+  const offsetPlaceholder = `$${filterValues.length + 2}`;
+  const whereSql = `WHERE ${conditions.join(' AND ')}`;
 
   return {
-    text: `${selectSql}\nWHERE ${conditions.join(' AND ')}\nORDER BY occurred_at DESC, id DESC\nLIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`,
-    values,
+    listText: `${selectSql}\n${whereSql}\nORDER BY occurred_at DESC, id DESC\nLIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`,
+    countText: `SELECT COUNT(*)::text AS count FROM (${selectSql}\n${whereSql}) filtered`,
+    filterValues,
+    listValues,
   };
 }
-
 function mapAuditLog(row: AuditLogRow): AdminAuditLogRecord {
   return {
     id: String(row.id),

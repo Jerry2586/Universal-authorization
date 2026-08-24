@@ -10,6 +10,8 @@ import { CompactTokenIssuer } from './modules/cryptography/compact-token-issuer.
 import { CompactTokenVerifier } from './modules/cryptography/compact-token-verifier.js';
 import { AdminDeviceManagementService } from './modules/admin-devices/admin-device-management.service.js';
 import { AdminAuditQueryService } from './modules/admin-audit/admin-audit-query.service.js';
+import { AdminAuthService } from './modules/admin-auth/admin-auth.service.js';
+import { AdminConsoleService } from './modules/admin-console/admin-console.service.js';
 
 loadLocalEnvFile();
 const config = loadConfig();
@@ -29,6 +31,16 @@ const adminAuditQueryService = new AdminAuditQueryService(
   infrastructure.adminAuditQueryRepository,
   infrastructure.auditLog,
 );
+const adminAuthService = new AdminAuthService(
+  infrastructure.adminAuthRepository,
+  infrastructure.adminSessionStore,
+  infrastructure.auditLog,
+);
+const adminConsoleService = new AdminConsoleService(
+  infrastructure.adminConsoleRepository,
+  infrastructure.adminSessionStore,
+  infrastructure.auditLog,
+);
 const signingProvider = new Ed25519FileSigningKeyProvider(
   config.licenseSigningKeyId,
   config.licenseSigningPrivateKeyPemBase64,
@@ -40,6 +52,17 @@ const app = buildApp({
   challengeStore: infrastructure.challengeStore,
   challengeTtlSeconds: config.challengeTtlSeconds,
   readinessCheck: () => infrastructure.readiness(),
+  adminAuth: {
+    service: adminAuthService,
+    secureCookie: config.adminCookieSecure,
+    sessionTtlSeconds: config.adminSessionTtlSeconds,
+  },
+  adminWebRoot: config.adminWebRoot,
+  adminConsole: {
+    principalResolver: infrastructure.adminPrincipalResolver,
+    service: adminConsoleService,
+    secureCookie: config.adminCookieSecure,
+  },
   management: {
     principalResolver: infrastructure.adminPrincipalResolver,
     productService,

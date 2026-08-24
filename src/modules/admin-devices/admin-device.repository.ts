@@ -1,3 +1,5 @@
+import type { PageResult } from '../../shared/pagination/page-result.js';
+
 export type DeviceStatus = 'ACTIVE' | 'BLOCKED' | 'DISABLED';
 export type ActivationStatus = 'ACTIVE' | 'UNBOUND' | 'BLOCKED' | 'REPLACED';
 
@@ -93,7 +95,7 @@ export interface UnblockDeviceResult {
 }
 
 export interface AdminDeviceRepository {
-  listLicenseDevices(input: DeviceBindingListInput): Promise<readonly ManagedDeviceBinding[]>;
+  listLicenseDevices(input: DeviceBindingListInput): Promise<PageResult<ManagedDeviceBinding>>;
   forceUnbind(input: ForceUnbindDeviceInput): Promise<ForceUnbindDeviceResult>;
   block(input: AdminDeviceActionInput): Promise<BlockDeviceResult>;
   unblock(input: AdminDeviceActionInput): Promise<UnblockDeviceResult>;

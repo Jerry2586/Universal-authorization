@@ -218,6 +218,12 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+print_step "检查远端分支：${BRANCH}"
+if ! git ls-remote --exit-code --heads "$REPOSITORY_URL" "refs/heads/$BRANCH" >/dev/null 2>&1; then
+  print_error "远端分支不存在或当前无法访问：$BRANCH"
+  exit 1
+fi
+
 print_step "拉取授权服务器源码到 ${INSTALL_DIR}"
 if [ -d "$INSTALL_DIR/.git" ]; then
   cd "$INSTALL_DIR"
@@ -228,15 +234,18 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   fi
 
   git remote set-url origin "$REPOSITORY_URL"
-  git fetch --prune origin "$BRANCH"
+  git fetch --prune origin "refs/heads/$BRANCH"
+  FETCHED_COMMIT=$(git rev-parse --verify FETCH_HEAD)
 
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH"
   else
-    git checkout -b "$BRANCH" --track "origin/$BRANCH"
+    git checkout -b "$BRANCH" "$FETCHED_COMMIT"
+    git config "branch.$BRANCH.remote" origin
+    git config "branch.$BRANCH.merge" "refs/heads/$BRANCH"
   fi
 
-  git merge --ff-only "origin/$BRANCH"
+  git merge --ff-only "$FETCHED_COMMIT"
 elif [ -e "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
   print_error "安装目录已经存在且不是 Git 仓库：${INSTALL_DIR}"
   exit 1
@@ -246,21 +255,29 @@ else
 fi
 
 cd "$INSTALL_DIR"
-chmod +x deploy.sh scripts/docker-entrypoint.sh
+chmod +x deploy.sh show-admin-login.sh scripts/docker-entrypoint.sh
 
-print_step '开始构建并启动通用 Key 授权服务器'
-./deploy.sh
-
-PORT=$(grep '^PORT=' .env | head -n 1 | cut -d '=' -f 2- || true)
-PORT=${PORT:-3000}
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 SERVER_IP=${SERVER_IP:-服务器IP}
 
-printf '\n\033[32m==================================================\n'
-printf '  Linux 一键拉取和安装已经完成\n'
-printf '  安装目录：%s\n' "$INSTALL_DIR"
-printf '  本机检查：http://127.0.0.1:%s/health\n' "$PORT"
-printf '  远程检查：http://%s:%s/health\n' "$SERVER_IP" "$PORT"
+print_step '开始构建并启动通用 Key 授权服务器'
+PUBLIC_HOST="$SERVER_IP" ./deploy.sh
+
+PORT=$(grep '^PORT=' .env | head -n 1 | cut -d '=' -f 2- || true)
+PORT=${PORT:-3000}
+
+printf '\n\033[32m  Linux 一键拉取和安装已经完成\033[0m\n'
+printf '  安装目录：%s\n\n' "$INSTALL_DIR"
+
+# 安装器必须在最终成功区直接显示可登录的真实凭据，用户无需再执行其他命令。
+PUBLIC_HOST="$SERVER_IP" ./show-admin-login.sh --show
+
+printf '  登录信息文件：%s/admin-login.txt\n' "$INSTALL_DIR"
+printf '  随时查看账号密码：sudo cat %s/admin-login.txt\n' "$INSTALL_DIR"
+printf '  或执行：cd %s && sudo ./show-admin-login.sh\n' "$INSTALL_DIR"
+printf '  后台地址：http://%s:%s/admin/\n' "$SERVER_IP" "$PORT"
+printf '  健康检查：http://%s:%s/health\n' "$SERVER_IP" "$PORT"
+printf '  就绪检查：http://%s:%s/ready\n' "$SERVER_IP" "$PORT"
 printf '  查看日志：cd %s && docker compose logs -f app\n' "$INSTALL_DIR"
 printf '  更新程序：重新执行同一条一键安装命令\n'
 printf '==================================================\033[0m\n'

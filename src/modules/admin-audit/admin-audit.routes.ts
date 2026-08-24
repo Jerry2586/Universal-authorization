@@ -5,6 +5,7 @@ import { requireManagementContext } from '../../shared/management/management-con
 import type { AdminPrincipalResolver } from '../identity/admin-principal.js';
 import { PERMISSIONS } from '../identity/domain/permissions.js';
 import type { AdminAuditQueryService } from './admin-audit-query.service.js';
+import type { AdminAuditLogRecord, AdminLicenseEventRecord } from './admin-audit-query.repository.js';
 
 export interface AdminAuditRouteDependencies {
   principalResolver: AdminPrincipalResolver;
@@ -45,7 +46,7 @@ export function registerAdminAuditRoutes(app: FastifyInstance, dependencies: Adm
   app.get('/admin/v1/audit-logs', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, [PERMISSIONS.AUDIT_READ]);
     const query = auditQuerySchema.parse(request.query);
-    const items = await dependencies.auditQueryService.listAuditLogs(context, {
+    const page = await dependencies.auditQueryService.listAuditLogs(context, {
       limit: query.limit,
       offset: query.offset,
       ...(query.actor_type === undefined ? {} : { actorType: query.actor_type }),
@@ -59,7 +60,8 @@ export function registerAdminAuditRoutes(app: FastifyInstance, dependencies: Adm
       ...(query.occurred_to === undefined ? {} : { occurredTo: query.occurred_to }),
     });
     return successResponse(request.id, {
-      items: items.map(auditLogResponse),
+      items: page.items.map(auditLogResponse),
+      total: page.total,
       limit: query.limit,
       offset: query.offset,
     }, '管理员审计日志读取成功');
@@ -68,7 +70,7 @@ export function registerAdminAuditRoutes(app: FastifyInstance, dependencies: Adm
   app.get('/admin/v1/license-events', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, [PERMISSIONS.AUDIT_READ]);
     const query = licenseEventQuerySchema.parse(request.query);
-    const items = await dependencies.auditQueryService.listLicenseEvents(context, {
+    const page = await dependencies.auditQueryService.listLicenseEvents(context, {
       limit: query.limit,
       offset: query.offset,
       ...(query.product_id === undefined ? {} : { productId: query.product_id }),
@@ -84,7 +86,8 @@ export function registerAdminAuditRoutes(app: FastifyInstance, dependencies: Adm
       ...(query.occurred_to === undefined ? {} : { occurredTo: query.occurred_to }),
     });
     return successResponse(request.id, {
-      items: items.map(licenseEventResponse),
+      items: page.items.map(licenseEventResponse),
+      total: page.total,
       limit: query.limit,
       offset: query.offset,
     }, '授权事件读取成功');
@@ -97,7 +100,7 @@ function validTimeRange(value: { occurred_from?: Date | undefined; occurred_to?:
     || value.occurred_from.getTime() <= value.occurred_to.getTime();
 }
 
-function auditLogResponse(item: Awaited<ReturnType<AdminAuditQueryService['listAuditLogs']>>[number]) {
+function auditLogResponse(item: AdminAuditLogRecord) {
   return {
     id: item.id,
     tenant_id: item.tenantId,
@@ -117,7 +120,7 @@ function auditLogResponse(item: Awaited<ReturnType<AdminAuditQueryService['listA
   };
 }
 
-function licenseEventResponse(item: Awaited<ReturnType<AdminAuditQueryService['listLicenseEvents']>>[number]) {
+function licenseEventResponse(item: AdminLicenseEventRecord) {
   return {
     id: item.id,
     tenant_id: item.tenantId,

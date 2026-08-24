@@ -24,6 +24,7 @@ interface LicenseRow extends QueryResultRow {
 interface FeatureRow extends QueryResultRow {
   license_key_id: string; code: string; allowed: boolean; limits: Record<string, unknown>; expires_at: Date | null;
 }
+interface CountRow extends QueryResultRow { count: string; }
 interface FeatureDefinitionRow extends QueryResultRow { id: string; code: string; }
 interface GenerationRow extends QueryResultRow {
   product_status: 'ACTIVE' | 'DISABLED'; id: string; tenant_id: string; product_id: string | null;
@@ -107,15 +108,26 @@ export class PostgresLicenseRepository implements LicenseRepository {
     return mapLicense(row, features.get(row.id) ?? []);
   }
 
-  public async list(input: LicenseListInput): Promise<readonly ManagedLicenseKey[]> {
-    const result = await this.database.query<LicenseRow>(
-      `SELECT * FROM license_keys
-       WHERE tenant_id=$1 AND ($2::uuid IS NULL OR product_id=$2) AND ($3::varchar IS NULL OR status=$3)
-       ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5`,
-      [input.tenantId, input.productId ?? null, input.status ?? null, input.limit, input.offset],
-    );
-    const features = await this.loadGrants(result.rows.map((row) => row.id));
-    return result.rows.map((row) => mapLicense(row, features.get(row.id) ?? []));
+  public async list(input: LicenseListInput): Promise<{ items: readonly ManagedLicenseKey[]; total: number }> {
+    const filterValues = [input.tenantId, input.productId ?? null, input.status ?? null] as const;
+    const [itemsResult, countResult] = await Promise.all([
+      this.database.query<LicenseRow>(
+        `SELECT * FROM license_keys
+         WHERE tenant_id=$1 AND ($2::uuid IS NULL OR product_id=$2) AND ($3::varchar IS NULL OR status=$3)
+         ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5`,
+        [...filterValues, input.limit, input.offset],
+      ),
+      this.database.query<CountRow>(
+        `SELECT COUNT(*)::text AS count FROM license_keys
+         WHERE tenant_id=$1 AND ($2::uuid IS NULL OR product_id=$2) AND ($3::varchar IS NULL OR status=$3)`,
+        [...filterValues],
+      ),
+    ]);
+    const features = await this.loadGrants(itemsResult.rows.map((row) => row.id));
+    return {
+      items: itemsResult.rows.map((row) => mapLicense(row, features.get(row.id) ?? [])),
+      total: Number(countResult.rows[0]?.count ?? 0),
+    };
   }
 
   public async changeStatus(

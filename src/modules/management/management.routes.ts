@@ -70,7 +70,7 @@ export function registerManagementRoutes(app: FastifyInstance, dependencies: Man
   app.get('/admin/v1/products', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, readProducts); const page = pageSchema.parse(request.query);
     const products = await dependencies.productService.listProducts(context, page);
-    return successResponse(request.id, { items: products.map(productResponse), ...page }, '产品查询成功');
+    return successResponse(request.id, { items: products.items.map(productResponse), total: products.total, ...page }, '产品查询成功');
   });
   app.get('/admin/v1/products/:productId', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, readProducts); const params = idParams.parse(request.params);
@@ -125,7 +125,7 @@ export function registerManagementRoutes(app: FastifyInstance, dependencies: Man
     const context = await requireManagementContext(request, dependencies.principalResolver, readLicenses);
     const query = pageSchema.extend({ product_id: uuid.optional() }).parse(request.query);
     const policies = await dependencies.productService.listPolicies(context, query.product_id, query);
-    return successResponse(request.id, { items: policies.map(policyResponse), limit: query.limit, offset: query.offset }, '授权策略查询成功');
+    return successResponse(request.id, { items: policies.items.map(policyResponse), total: policies.total, limit: query.limit, offset: query.offset }, '授权策略查询成功');
   });
   app.patch('/admin/v1/license-policies/:policyId', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, writeLicenses);
@@ -150,9 +150,9 @@ export function registerManagementRoutes(app: FastifyInstance, dependencies: Man
   app.get('/admin/v1/license-keys', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, readLicenses);
     const query = pageSchema.extend({ product_id: uuid.optional(), status: z.enum(['CREATED','ACTIVE','SUSPENDED','EXPIRED','REVOKED','DISABLED']).optional() }).parse(request.query);
-    const items = await dependencies.licenseService.list(context, { ...(query.product_id === undefined ? {} : { productId: query.product_id }),
+    const page = await dependencies.licenseService.list(context, { ...(query.product_id === undefined ? {} : { productId: query.product_id }),
       ...(query.status === undefined ? {} : { status: query.status }), limit: query.limit, offset: query.offset });
-    return successResponse(request.id, { items: items.map(licenseResponse), limit: query.limit, offset: query.offset }, 'Key 查询成功');
+    return successResponse(request.id, { items: page.items.map(licenseResponse), total: page.total, limit: query.limit, offset: query.offset }, 'Key 查询成功');
   });
   app.get('/admin/v1/license-keys/:licenseId', async (request) => {
     const context = await requireManagementContext(request, dependencies.principalResolver, readLicenses); const params = z.object({ licenseId: uuid }).parse(request.params);

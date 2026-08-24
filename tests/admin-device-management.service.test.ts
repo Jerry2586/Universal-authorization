@@ -32,9 +32,9 @@ class FakeRepository implements AdminDeviceRepository {
   public blockInput?: AdminDeviceActionInput;
   public unblockInput?: AdminDeviceActionInput;
 
-  public async listLicenseDevices(input: DeviceBindingListInput): Promise<readonly ManagedDeviceBinding[]> {
+  public async listLicenseDevices(input: DeviceBindingListInput): Promise<{ items: readonly ManagedDeviceBinding[]; total: number }> {
     this.listInput = input;
-    return [binding];
+    return { items: [binding], total: 1 };
   }
   public async forceUnbind(input: ForceUnbindDeviceInput): Promise<ForceUnbindDeviceResult> {
     this.forceInput = input;
@@ -66,7 +66,7 @@ describe('AdminDeviceManagementService', () => {
     const repository = new FakeRepository();
     const service = new AdminDeviceManagementService(repository, new AuditCollector(), new InMemoryOnlineSessionStore(), () => now);
     const result = await service.listLicenseDevices(context(), licenseId, { activationStatus: 'ACTIVE', limit: 20, offset: 0 });
-    expect(result).toHaveLength(1);
+    expect(result).toEqual({ items: [binding], total: 1 });
     expect(repository.listInput).toEqual({ tenantId, licenseId, activationStatus: 'ACTIVE', limit: 20, offset: 0 });
   });
 
