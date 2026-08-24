@@ -59,12 +59,13 @@ Linux 一键部署会自动创建默认工作区和首个管理员，并在安�
 Windows 只需安装并启动 Docker Desktop；Linux 测试服务器可以用远程安装器自动安装 Docker。脚本会自动完成：
 
 1. 生成安全的 `.env` 配置
-2. 生成管理令牌、Key Pepper 和数据库密码
+2. 生成管理令牌、Key Pepper、数据库密码和管理员随机初始密码
 3. 生成 Ed25519 服务端签名私钥
 4. 构建授权服务器 Docker 镜像
 5. 启动 PostgreSQL、Redis 和授权服务器
-6. 自动执行全部数据库迁移
-7. 等待健康检查通过并显示访问地址
+6. 自动执行全部数据库迁移并创建首个管理员
+7. 等待健康检查通过，显示后台地址、管理员账号、工作区代码和初始密码
+8. 将登录信息保存到 `admin-login.txt`（Linux 自动设置为 `600` 权限）
 
 ### Windows 一键搭建
 
@@ -92,6 +93,31 @@ wget -qO- https://raw.githubusercontent.com/Jerry2586/Universal-authorization/ma
 
 这条命令会自动安装或检查 Git、Docker Engine 和 Docker Compose，拉取最新源码到 `/opt/universal-authorization`，生成安全配置，构建镜像、迁移数据库并启动服务。
 
+安装成功后，终端会直接显示真实的后台登录信息，格式如下：
+
+```text
+后台登录地址（远程）：http://服务器IP:3000/admin/
+管理员账号：admin@example.com
+工作区代码：default
+管理员初始密码：安装时随机生成
+```
+
+登录信息同时保存到：
+
+```text
+/opt/universal-authorization/admin-login.txt
+```
+
+以后忘记账号或初始密码，执行下面任意一条命令即可重新查看：
+
+```bash
+sudo cat /opt/universal-authorization/admin-login.txt
+# 或
+cd /opt/universal-authorization && sudo ./show-admin-login.sh
+```
+
+> `admin-login.txt` 权限为 `600`，只允许文件所有者读取。这里保存的是 `.env` 中的管理员引导密码；管理员已存在时，重新部署不会擅自重置数据库中的密码。
+
 自定义安装目录：
 
 ```bash
@@ -112,6 +138,9 @@ chmod +x deploy.sh
 # 查看运行状态
 docker compose ps
 
+# 查看后台登录地址、管理员账号和初始密码
+sudo ./show-admin-login.sh
+
 # 查看服务端实时日志
 docker compose logs -f app
 
@@ -125,11 +154,12 @@ docker compose up -d --build
 默认访问地址：
 
 ```text
+Web 管理后台：http://服务器IP:3000/admin/
 健康检查：http://127.0.0.1:3000/health
 就绪检查：http://127.0.0.1:3000/ready
 ```
 
-> `.env` 包含私钥和管理令牌，已被 `.gitignore` 排除。不要上传、转发或提交该文件。
+> `.env` 包含私钥和管理令牌，`admin-login.txt` 包含管理员初始密码；二者都已被 `.gitignore` 排除。不要上传、转发或提交这些文件。
 
 完整说明请看：`09-一键部署设计与使用.md`。
 

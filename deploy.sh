@@ -66,15 +66,19 @@ done
 
 PORT=$(grep '^PORT=' .env | head -n 1 | cut -d '=' -f 2- || true)
 PORT=${PORT:-3000}
+SERVER_IP=${PUBLIC_HOST:-}
+if [ -z "$SERVER_IP" ]; then
+  SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+fi
+SERVER_IP=${SERVER_IP:-服务器IP}
 
-printf '\n\033[32m========================================\n'
-printf '  通用 Key 授权服务器搭建成功\n'
-printf '  Web 管理后台：http://127.0.0.1:%s/admin/\n' "$PORT"
-printf '  管理员邮箱：%s\n' "$(grep '^ADMIN_BOOTSTRAP_EMAIL=' .env | cut -d '=' -f 2-)"
-printf '  工作区代码：%s\n' "$(grep '^ADMIN_BOOTSTRAP_TENANT_CODE=' .env | cut -d '=' -f 2-)"
-printf '  初始管理员密码：%s\n' "$(grep '^ADMIN_BOOTSTRAP_PASSWORD=' .env | cut -d '=' -f 2-)"
+chmod +x show-admin-login.sh
+PUBLIC_HOST="$SERVER_IP" ./show-admin-login.sh --write
+
+printf '\033[32m  登录信息已保存：%s/admin-login.txt\n' "$PROJECT_DIRECTORY"
+printf '  随时重新查看：cd %s && ./show-admin-login.sh\n' "$PROJECT_DIRECTORY"
 printf '  健康检查：http://127.0.0.1:%s/health\n' "$PORT"
 printf '  就绪检查：http://127.0.0.1:%s/ready\n' "$PORT"
 printf '  查看日志：docker compose logs -f app\n'
 printf '  停止服务：docker compose down\n'
-printf '========================================\033[0m\n'
+printf '==================================================\033[0m\n'

@@ -68,13 +68,43 @@ if (-not $Healthy) {
   Stop-WithLogs '等待授权服务器启动超时。'
 }
 
-$PortLine = Get-Content -LiteralPath '.env' | Where-Object { $_ -match '^PORT=' } | Select-Object -First 1
-$Port = if ($PortLine) { ($PortLine -split '=', 2)[1].Trim() } else { '3000' }
+function Get-EnvValue([string]$Name, [string]$DefaultValue = '') {
+  $Line = Get-Content -LiteralPath '.env' | Where-Object { $_ -match "^$([regex]::Escape($Name))=" } | Select-Object -First 1
+  if (-not $Line) { return $DefaultValue }
+  return ($Line -split '=', 2)[1].Trim()
+}
 
-Write-Host "`n========================================" -ForegroundColor Green
-Write-Host '  通用 Key 授权服务器搭建成功' -ForegroundColor Green
+$Port = Get-EnvValue -Name 'PORT' -DefaultValue '3000'
+$AdminEmail = Get-EnvValue -Name 'ADMIN_BOOTSTRAP_EMAIL' -DefaultValue 'admin@example.com'
+$TenantCode = Get-EnvValue -Name 'ADMIN_BOOTSTRAP_TENANT_CODE' -DefaultValue 'default'
+$AdminPassword = Get-EnvValue -Name 'ADMIN_BOOTSTRAP_PASSWORD'
+if (-not $AdminPassword) {
+  throw '.env 中没有 ADMIN_BOOTSTRAP_PASSWORD，无法显示管理员初始密码。'
+}
+
+$LoginFile = Join-Path $ProjectDirectory 'admin-login.txt'
+$LoginInfo = @"
+==================================================
+通用 Key 授权服务器后台登录信息
+
+后台登录地址：http://127.0.0.1:$Port/admin/
+管理员账号：$AdminEmail
+工作区代码：$TenantCode
+管理员初始密码：$AdminPassword
+
+重要说明：
+1. 第一次登录请使用上面的账号、工作区代码和初始密码。
+2. 请妥善保管此随机初始密码，并限制凭据文件的访问权限。
+3. 管理员已存在时，重新部署不会重置数据库密码；如果密码曾被运维重置，请使用重置后的密码。
+4. 此文件包含敏感信息，不要上传、转发或提交到 Git。
+==================================================
+"@
+[System.IO.File]::WriteAllText($LoginFile, $LoginInfo, [System.Text.UTF8Encoding]::new($false))
+
+Write-Host "`n$LoginInfo" -ForegroundColor Green
+Write-Host "  登录信息已保存：$LoginFile" -ForegroundColor Green
 Write-Host "  健康检查：http://127.0.0.1:$Port/health" -ForegroundColor Green
 Write-Host "  就绪检查：http://127.0.0.1:$Port/ready" -ForegroundColor Green
 Write-Host '  查看日志：docker compose logs -f app' -ForegroundColor Green
 Write-Host '  停止服务：docker compose down' -ForegroundColor Green
-Write-Host '========================================' -ForegroundColor Green
+Write-Host '==================================================' -ForegroundColor Green

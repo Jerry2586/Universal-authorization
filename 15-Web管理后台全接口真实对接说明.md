@@ -10,6 +10,18 @@
 http://服务器IP:3000/admin/
 ```
 
+Linux 一键部署完成时会直接显示真实管理员账号、工作区代码和随机初始密码，并保存到：
+
+```text
+/opt/universal-authorization/admin-login.txt
+```
+
+重新查看命令：
+
+```bash
+sudo cat /opt/universal-authorization/admin-login.txt
+```
+
 登录成功后，浏览器使用服务端签发的 HttpOnly Cookie 建立管理员会话；所有写操作都会携带当前会话的 CSRF 令牌。页面上的权限来自 `GET /admin/auth/me` 返回的真实权限列表。
 
 ## 2. 页面与真实功能
@@ -123,10 +135,12 @@ audit.read
 curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh | sudo bash
 ```
 
-完成后访问：
+完成后访问并查看登录信息：
 
-```text
-http://服务器IP:3000/admin/
+```bash
+sudo cat /opt/universal-authorization/admin-login.txt
 ```
+
+凭据文件会列出后台 URL、管理员账号、工作区代码和首次安装初始密码。
 
 如果浏览器仍显示旧页面，执行强制刷新；Chrome/Edge 可使用 `Ctrl + F5`。
