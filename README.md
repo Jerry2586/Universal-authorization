@@ -66,7 +66,7 @@ var/                 本地数据库、密钥、上传源包和构建成品
 
 `setup.ps1` 会生成 `.env`、随机安全凭证和管理员密码；`.env` 已被 Git 忽略。已有 `.env` 时不会覆盖。
 
-Linux、Docker Compose 和服务器面板部署见 `docs/deployment.md`。
+Linux、Docker Compose 和服务器面板部署见 `docs/deployment.md`；完整的宝塔、1Panel 和纯 Docker 操作步骤见 `docs/宝塔-1Panel-Docker部署教程.md`。
 
 也可以直接启动分层版本：
 
