@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <title>运营管理后台 · APPGOG</title>
+  <link rel="stylesheet" href="/assets/site.css">
+  <script src="/assets/portal.js" defer></script>
+</head>
+<body data-portal="admin">
+  <section id="login-view" class="auth-shell admin-auth">
+    <div class="auth-brand-panel">
+      <a class="wordmark wordmark-light" href="/"><span class="wordmark-mark">A</span><span>APPGOG</span></a>
+      <div class="auth-brand-copy">
+        <span class="overline overline-light">LICENSE OPERATIONS</span>
+        <h1>集中管理授权、版本、构建与激活。</h1>
+        <p>从签发固定 Key 到追踪最终安装环境，每个关键操作都进入同一套运营与审计系统。</p>
+        <div class="admin-feature-list"><div><span>✓</span> 授权生命周期管理</div><div><span>✓</span> 官方版本安全发布</div><div><span>✓</span> 构建与激活追踪</div></div>
+      </div>
+      <div class="auth-brand-footer"><span class="live-dot"></span> 管理服务已就绪</div>
+    </div>
+    <div class="auth-form-panel">
+      <div class="auth-card">
+        <div class="auth-card-head"><span class="overline">ADMIN CONSOLE</span><h2>登录运营后台</h2><p>此入口仅供授权运营人员使用。管理会话与客户会话完全隔离。</p></div>
+        <form id="login-form" class="form-stack">
+          <label class="field"><span>管理员账号</span><input name="username" autocomplete="username" required placeholder="输入管理员账号"></label>
+          <label class="field"><span>管理员密码</span><input name="password" type="password" autocomplete="current-password" required placeholder="输入管理员密码"></label>
+          <button class="button button-primary button-wide" type="submit"><span>安全登录</span><span>→</span></button>
+        </form>
+        <div class="security-note"><span class="security-icon">⌁</span><div><strong>受保护的管理入口</strong><p>写操作需要服务端会话和 CSRF 双重校验。</p></div></div>
+        <a class="back-link" href="/">← 返回平台首页</a>
+      </div>
+    </div>
+  </section>
+
+  <div id="dashboard-view" class="saas-shell" hidden>
+    <aside class="app-sidebar">
+      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><span class="wordmark-mark">A</span><span>APPGOG</span></a><span class="workspace-badge">运营后台</span></div>
+      <nav class="app-nav" aria-label="运营后台导航">
+        <button class="nav-item active" type="button" data-view="overview" data-title="运营总览"><span class="nav-icon">⌂</span><span>总览</span></button>
+        <button class="nav-item" type="button" data-view="licenses" data-title="授权管理"><span class="nav-icon">◇</span><span>授权管理</span></button>
+        <button class="nav-item" type="button" data-view="versions" data-title="版本发布"><span class="nav-icon">▦</span><span>主题版本</span></button>
+        <button class="nav-item" type="button" data-view="builds" data-title="构建任务"><span class="nav-icon">▤</span><span>构建任务</span></button>
+        <button class="nav-item" type="button" data-view="activations" data-title="激活站点"><span class="nav-icon">◎</span><span>激活站点</span></button>
+        <button class="nav-item" type="button" data-view="members" data-title="成员权限"><span class="nav-icon">♙</span><span>成员权限</span></button>
+        <button class="nav-item" type="button" data-view="audit" data-title="审计记录"><span class="nav-icon">≡</span><span>审计记录</span></button>
+      </nav>
+      <div class="sidebar-meta">
+        <div class="service-state"><span class="live-dot"></span><div><strong>系统在线</strong><span>Operator console</span></div></div>
+        <button id="logout" class="sidebar-logout" type="button">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="header-left"><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">授权运营后台</span><h1 id="page-title">运营总览</h1></div></div>
+        <div class="header-actions"><span class="operator-chip"><span class="operator-avatar">A</span><span><strong>Administrator</strong><small>系统管理员</small></span></span><button id="refresh-admin" class="icon-button" type="button" title="刷新数据">↻</button></div>
+      </header>
+
+      <div class="workspace-content">
+        <section class="page-view active" data-page="overview">
+          <div class="welcome-row"><div><span class="overline">OPERATIONS OVERVIEW</span><h2>授权业务运行状态</h2><p>以下数据来自当前授权数据库与构建队列，不包含演示指标。</p></div><button class="button button-primary" type="button" data-go-view="licenses">＋ 签发授权</button></div>
+          <div class="stats-grid stats-grid-four">
+            <article class="stat-card"><div class="stat-icon stat-blue">◇</div><div><span>授权总数</span><strong id="stat-licenses">—</strong><small>累计签发</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>正常授权</span><strong id="stat-active">—</strong><small>允许登录与构建</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>今日构建</span><strong id="stat-builds">—</strong><small>今日任务请求</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-amber">◎</div><div><span>有效激活</span><strong id="stat-activations">—</strong><small>当前安装站点</small></div></article>
+          </div>
+          <div class="admin-overview-grid">
+            <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">RECENT BUILDS</span><h3>最近构建</h3></div><button class="text-action" type="button" data-go-view="builds">全部任务 →</button></div><div class="table-scroll"><table><thead><tr><th>版本</th><th>域名</th><th>状态</th><th>进度</th></tr></thead><tbody id="overview-build-list"><tr><td colspan="4" class="empty-cell">暂无构建任务</td></tr></tbody></table></div></section>
+            <section class="surface activity-card"><div class="surface-head"><div><span class="overline">SYSTEM STATUS</span><h3>服务状态</h3></div><span class="status-pill status-success">运行中</span></div><div class="service-list"><div><span>授权 API</span><strong><i class="live-dot"></i> 正常</strong></div><div><span>构建 Worker</span><strong id="worker-status"><i class="live-dot"></i> 正常</strong></div><div><span>等待队列</span><strong id="stat-queued">—</strong></div><div><span>已发布版本</span><strong id="stat-versions">—</strong></div></div></section>
+          </div>
+          <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">RECENT LICENSES</span><h3>最近授权</h3></div><button class="text-action" type="button" data-go-view="licenses">管理授权 →</button></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>绑定域名</th><th>状态</th><th>构建次数</th><th>签发时间</th></tr></thead><tbody id="overview-license-list"><tr><td colspan="5" class="empty-cell">暂无授权</td></tr></tbody></table></div></section>
+        </section>
+
+        <section class="page-view" data-page="licenses">
+          <div class="page-heading"><div><span class="overline">LICENSE MANAGEMENT</span><h2>授权管理</h2><p>签发、暂停、恢复、换绑域名和轮换客户固定 Key。</p></div></div>
+          <div class="management-grid">
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">ISSUE LICENSE</span><h3>签发新授权</h3></div><span class="surface-number">01</span></div><form id="license-form" class="form-stack form-compact"><label class="field"><span>客户 / 订单编号</span><input name="customer_ref" required placeholder="例如 ORDER-10001"></label><label class="field"><span>授权域名</span><input name="domain" required placeholder="panel.example.com"></label><div class="form-columns"><label class="field"><span>更新到期日</span><input name="update_until" type="date"></label><label class="field"><span>每日构建上限</span><input name="max_builds_per_day" type="number" min="1" max="50" value="3"></label></div><button class="button button-primary button-wide" type="submit"><span>创建并生成固定 Key</span><span>→</span></button></form></section>
+            <section class="surface table-surface grow-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="license-search" placeholder="搜索订单、域名或 Key 前缀"></label><select id="license-status-filter" class="filter-select"><option value="">全部状态</option><option value="active">正常</option><option value="suspended">已暂停</option><option value="revoked">已撤销</option></select></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>Key 前缀</th><th>授权域名</th><th>状态</th><th>构建</th><th>激活</th><th>操作</th></tr></thead><tbody id="license-list"><tr><td colspan="7" class="empty-cell">暂无授权</td></tr></tbody></table></div></section>
+          </div>
+        </section>
+
+        <section class="page-view" data-page="versions">
+          <div class="page-heading"><div><span class="overline">RELEASE CATALOG</span><h2>主题版本</h2><p>上传经过审核的 Xboard 可安装 ZIP，安全检查通过后立即开放客户构建。</p></div></div>
+          <div class="management-grid version-grid">
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">PUBLISH VERSION</span><h3>发布主题版本</h3></div><span class="surface-number">02</span></div><form id="version-form" class="form-stack form-compact"><div class="form-columns"><label class="field"><span>版本号</span><input name="version" required placeholder="例如 1.18.0"></label><label class="field"><span>版本名称</span><input name="display_name" placeholder="例如 APPGOG 1.18.0"></label></div><div class="form-columns"><label class="field"><span>发布渠道</span><select name="channel"><option value="stable">正式版</option><option value="beta">测试版</option><option value="preview">预览版</option></select></label><label class="field"><span>发布类型</span><select name="release_kind"><option value="feature">功能更新</option><option value="security">安全更新</option><option value="hotfix">问题修复</option></select></label></div><label class="field"><span>更新公告</span><textarea name="release_notes" rows="4" placeholder="向客户说明新增功能、修复内容和升级注意事项"></textarea></label><div class="form-columns"><label class="field"><span>最低 Xboard 版本</span><input name="min_xboard_version" placeholder="例如 1.7.0"></label><label class="field"><span>最低升级来源版本</span><input name="min_upgrade_version" placeholder="例如 1.16.0"></label></div><div class="form-columns"><label class="field"><span>允许生成回滚包</span><select name="rollback_allowed"><option value="true">允许</option><option value="false">不允许</option></select></label><label class="field"><span>推荐回滚版本</span><input name="rollback_to" placeholder="例如 1.17.1"></label></div><label class="upload-field"><input name="source_zip" type="file" accept=".zip,application/zip" required><span class="upload-icon">⇧</span><strong>选择可安装主题 ZIP</strong><small>最大 128 MB，仅接受安全检查通过的 Xboard 主题包</small></label><button class="button button-primary button-wide" type="submit"><span>安全检查并发布</span><span>→</span></button></form></section>
+            <section class="surface grow-surface"><div class="surface-head"><div><span class="overline">PUBLISHED VERSIONS</span><h3>版本目录</h3></div><span class="status-pill">真实源包</span></div><div id="version-list" class="release-list"><div class="empty-state"><span>▦</span><strong>尚未发布版本</strong><p>上传第一个正式主题包后，客户才能创建构建。</p></div></div></section>
+          </div>
+        </section>
+
+        <section class="page-view" data-page="builds">
+          <div class="page-heading"><div><span class="overline">BUILD OPERATIONS</span><h2>构建任务</h2><p>查看所有客户构建的队列状态、版本、域名与处理结果。</p></div></div>
+          <section class="surface table-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="admin-build-search" placeholder="搜索版本、域名或 Build ID"></label><select id="build-status-filter" class="filter-select"><option value="">全部状态</option><option value="queued">排队中</option><option value="processing">构建中</option><option value="succeeded">成功</option><option value="failed">失败</option></select></div><div class="table-scroll"><table><thead><tr><th>Build ID</th><th>版本</th><th>授权域名</th><th>状态</th><th>进度</th><th>状态信息</th><th>创建时间</th></tr></thead><tbody id="admin-build-list"><tr><td colspan="7" class="empty-cell">暂无构建任务</td></tr></tbody></table></div></section>
+        </section>
+
+        <section class="page-view" data-page="activations">
+          <div class="page-heading"><div><span class="overline">ACTIVATED INSTALLATIONS</span><h2>激活站点</h2><p>追踪已经绑定的域名、Xboard 后台地址、安装身份和最后在线时间。</p></div></div>
+          <section class="surface table-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="activation-search" placeholder="搜索客户、域名或后台地址"></label></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>版本</th><th>授权域名</th><th>后台地址</th><th>状态</th><th>最后在线</th><th>激活时间</th></tr></thead><tbody id="activation-list"><tr><td colspan="7" class="empty-cell">暂无激活站点</td></tr></tbody></table></div></section>
+        </section>
+
+        <section class="page-view" data-page="members">
+          <div class="page-heading"><div><span class="overline">TEAM ACCESS</span><h2>成员权限</h2><p>为每位运营人员创建独立账号，按角色分配权限并保留登录与操作记录。</p></div><span class="status-pill">独立管理员会话</span></div>
+          <div class="management-grid member-grid">
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">CREATE MEMBER</span><h3>添加管理员</h3><p>账号创建后即可使用自己的凭证登录运营后台。</p></div><span class="surface-number">03</span></div><form id="admin-form" class="form-stack form-compact"><label class="field"><span>登录账号</span><input name="username" autocomplete="off" required placeholder="例如 operator.li"></label><label class="field"><span>显示名称</span><input name="display_name" required placeholder="例如 李明"></label><label class="field"><span>初始密码</span><input name="password" type="password" autocomplete="new-password" minlength="12" required placeholder="至少 12 位强密码"></label><label class="field"><span>角色</span><select name="role" required><option value="license_ops">授权运营</option><option value="release_manager">版本管理员</option><option value="support">客服管理员</option><option value="auditor">审计员</option></select></label><button class="button button-primary button-wide" type="submit"><span>创建管理员</span><span>→</span></button></form></section>
+            <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">ADMIN MEMBERS</span><h3>管理员列表</h3></div><span class="status-pill" id="admin-count">0 位成员</span></div><div class="table-scroll"><table><thead><tr><th>成员</th><th>登录账号</th><th>角色</th><th>状态</th><th>最后登录</th><th>操作</th></tr></thead><tbody id="admin-list"><tr><td colspan="6" class="empty-cell">暂无管理员数据</td></tr></tbody></table></div></section>
+          </div>
+        </section>
+
+        <section class="page-view" data-page="audit">
+          <div class="page-heading"><div><span class="overline">AUDIT TRAIL</span><h2>审计记录</h2><p>授权签发、构建、激活、换绑与 Key 轮换等关键操作记录。</p></div></div>
+          <section class="surface table-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="audit-search" placeholder="搜索事件、操作者或对象"></label></div><div class="table-scroll"><table><thead><tr><th>事件</th><th>操作者类型</th><th>操作者</th><th>对象类型</th><th>对象 ID</th><th>发生时间</th></tr></thead><tbody id="audit-list"><tr><td colspan="6" class="empty-cell">暂无审计记录</td></tr></tbody></table></div></section>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div id="message" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

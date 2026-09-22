@@ -1,317 +1,120 @@
-# 通用 Key 授权服务端
+# APPGOG 主题授权与打包系统
 
-当前版本：`0.8.0`
+这是一个可以本地直接运行的 APPGOG/Xboard 主题授权、打包和激活平台。默认按三个进程运行：授权中心 CMS、客户打包中心、构建 Worker。授权中心持有 SQLite 与签名私钥，Worker 只共享成品目录；客户站只通过内部代理使用客户接口。当前为单机部署架构，跨机器扩容仍需要数据库、队列和对象存储适配。
 
-## 已完成阶段
+## 已完成的闭环
 
-- 第一步：需求与授权协议设计
-- 第二步：基础架构与数据库设计
-- 第三步：产品、授权策略与 Key 管理
-- 第四步：Key 激活、设备登记绑定、设备签名和短期授权令牌
-- 第五步：在线授权验证、双令牌验签、防重放和幂等令牌刷新
-- 第六步：会话心跳、Redis 在线状态、主动释放和受策略限制的设备自助解绑
-- 第七步：管理员设备查询、强制解绑、设备封禁与解封
-- 第八步：管理员审计日志与授权事件只读查询
+1. 卖家在 `/admin` 上传一个已经可以安装到 Xboard 的主题 ZIP，并发布版本。
+2. 卖家给客户签发长期固定 License Key，并绑定一个域名。
+3. 客户在 `/build` 使用固定 Key 登录，选择版本并提交打包。
+4. 每次打包生成独立的 Build ID、Package ID、Package Secret 和一次性 Install Key。
+5. 独立 Worker 检查 ZIP 安全性、注入激活运行时和构建清单，并生成客户专属 ZIP。
+6. 客户下载安装包，并在主题激活页输入本次 Install Key、长期固定 Key 和 Xboard 后台地址。
+7. 授权服务器校验包身份、域名和安装环境，签发 Ed25519 激活凭证。
+8. 更新或重装时，客户继续使用长期固定 Key 重新打包，得到新的 ZIP 和新的 Install Key。
 
-## 技术栈
+## 当前能力
 
-- Node.js 22+
-- TypeScript
-- Fastify
-- PostgreSQL 16
-- Redis 7
-- Ed25519
-- Vitest
+- 长期固定 License Key、域名绑定、换域名、暂停、恢复、撤销和 Key 轮换。
+- 每次构建独立身份和一次性 Install Key，Install Key 激活成功后不能重复使用。
+- 激活凭证绑定域名、Xboard 后台 Origin、Installation ID、Build 和 Package。
+- Ed25519 数字签名与本地验签；固定 Key、安装 Key、刷新 Secret 等只保存 HMAC 摘要。
+- 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；客户和管理员独立 HttpOnly Cookie 与 CSRF 防护，成员可停用并撤销会话。
+- 客户打包站只接收固定 Key，不暴露内部客户编号、订单号或授权记录 ID；授权中心可审计成员操作。
+- 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。
+- 版本公告由服务端签名，客户可在有效更新期内下载更新包或按策略重新构建历史版本回滚包。
+- 管理后台可上传/发布主题 ZIP、签发授权、查看构建、激活和审计记录。
+- 客户中心可查看授权、创建构建、查看进度、显示 Install Key 和下载成品。
+- 安全 ZIP 解析：阻止目录穿越、加密 ZIP、压缩炸弹、符号链接、可执行文件和普通 PHP。
+- 自动验证 Xboard 主题的 `config.json` 以及 `index.html` 或 `dashboard.blade.php`。
+- 构建完成前验证实际成品 SHA-256 和 ZIP 结构。
+- 授权中心只公开管理页面和授权 API；客户打包中心只公开客户页面并通过独立内部凭证代理客户接口。
+- 独立 Worker 只领取构建任务和上报结果，不持有 Ed25519 签名私钥或管理员凭证。
+- SQLite、本地文件存储和独立 Worker；均有可替换接口，便于以后迁移 PostgreSQL、S3 和容器 Worker。
+- 26 个自动测试覆盖完整打包激活、双 Key、离线宽限、角色和会话隔离、版本签名、跨进程构建、队列租约和失败回滚。
 
-## 第八步新增能力
+## 目录
 
-- `GET /admin/v1/audit-logs` 分页查询管理员和系统敏感操作审计
-- `GET /admin/v1/license-events` 分页查询 Key、设备、激活和会话授权事件
-- 两个接口统一使用 `audit.read` 权限
-- 支持按主体、动作、资源、结果、请求 ID、业务 UUID 和时间范围过滤
-- 所有查询强制携带当前管理上下文的租户 ID
-- 查询 SQL 全部参数化，按 `occurred_at DESC, id DESC` 稳定分页
-- 单页最多返回 100 条，避免无上限拉取历史
-- 查询审计历史本身会写入 `audit-log.read` 或 `license-event.read` 审计
-- 不接受 Key 明文作为搜索条件
-- 不修改、不删除任何旧审计日志或授权事件
+```text
+apps/
+  license-api/       HTTP 服务、授权状态机、会话和管理/客户业务
+  build-center/      独立客户入口与受限内部代理
+  build-worker/      ZIP 检查、运行时注入与独立 Worker
+  web/               首页、客户打包中心和管理员后台
+packages/
+  core/              Key、签名、加密、域名规范化与 ZIP 实现
+  appgog-sdk/        激活凭证本地验签 SDK
+  contracts/         跨模块数据契约
+  ports/             BuildQueue、ArtifactStore、BuildEngine 接口
+  adapters/          SQLite 队列与本地文件存储
+docs/                架构、API、拆分边界和开发计划
+scripts/             一键配置、启动和演示主题生成脚本
+tests/               自动化测试
+var/                 本地数据库、密钥、上传源包和构建成品
+```
 
-## 真正一键搭建（推荐）
+## 本地启动
 
-Windows 只需安装并启动 Docker Desktop；Linux 测试服务器可以用远程安装器自动安装 Docker。脚本会自动完成：
+要求 Node.js 24 或更高版本，不依赖第三方 npm 包。
 
-1. 生成安全的 `.env` 配置
-2. 生成管理令牌、Key Pepper 和数据库密码
-3. 生成 Ed25519 服务端签名私钥
-4. 构建授权服务器 Docker 镜像
-5. 启动 PostgreSQL、Redis 和授权服务器
-6. 自动执行全部数据库迁移
-7. 等待健康检查通过并显示访问地址
-
-### Windows 一键搭建
-
-最简单的方法：直接双击源码目录里的 `一键搭建.bat`。
-
-也可以在源码目录打开 PowerShell，执行：
+首次运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+.\scripts\setup.ps1
+.\scripts\start.ps1
 ```
 
-### Linux 服务器一键拉取并安装（主要方式）
+`setup.ps1` 会生成 `.env`、随机安全凭证和管理员密码；`.env` 已被 Git 忽略。已有 `.env` 时不会覆盖。
 
-SSH 登录 Linux 服务器后，只运行这一行：
+Linux、Docker Compose 和服务器面板部署见 `docs/deployment.md`。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh | sudo bash
-```
-
-如果服务器没有 `curl`，可以使用：
-
-```bash
-wget -qO- https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh | sudo bash
-```
-
-这条命令会自动安装或检查 Git、Docker Engine 和 Docker Compose，拉取最新源码到 `/opt/universal-authorization`，生成安全配置，构建镜像、迁移数据库并启动服务。
-
-自定义安装目录：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install.sh \
-  | sudo bash -s -- --dir /data/universal-authorization
-```
-
-已经下载源码时，也可以在项目目录内执行：
-
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
-
-搭建完成后的常用命令：
-
-```bash
-# 查看运行状态
-docker compose ps
-
-# 查看服务端实时日志
-docker compose logs -f app
-
-# 停止服务（保留数据库数据）
-docker compose down
-
-# 再次启动或升级源码后重新构建
-docker compose up -d --build
-```
-
-默认访问地址：
-
-```text
-健康检查：http://127.0.0.1:3000/health
-就绪检查：http://127.0.0.1:3000/ready
-```
-
-> `.env` 包含私钥和管理令牌，已被 `.gitignore` 排除。不要上传、转发或提交该文件。
-
-完整说明请看：`09-一键部署设计与使用.md`。
-
-> 云服务器还需要在安全组或防火墙中放行授权服务端口，默认是 TCP `3000`。不要把 PostgreSQL `5432` 和 Redis `6379` 开放到公网。
-
-## 手动启动
-
-### 第 1 步：复制配置
+也可以直接启动分层版本：
 
 ```powershell
-Copy-Item .env.example .env
+npm run start:split
 ```
 
-### 第 2 步：修改安全值
+页面地址：
 
-打开 `.env`，修改：
+- 卖家管理后台：`http://127.0.0.1:8787/admin`
+- 授权中心健康检查：`http://127.0.0.1:8787/health`
+- 客户打包中心：`http://127.0.0.1:8788/build`
+- 打包中心健康检查：`http://127.0.0.1:8788/health`
 
-```text
-MANAGEMENT_GATEWAY_TOKEN
-LICENSE_KEY_PEPPER
-```
+`npm start` 仍可运行兼容单体模式；分别部署时使用 `npm run start:license`、`npm run start:build` 和 `npm run start:worker`。独立服务必须共享相同的 `INTERNAL_SERVICE_TOKEN`，Worker 使用另一个 `WORKER_TOKEN`。
 
-两个值都要至少 32 个字符，而且不能相同。
+管理员用户名和密码来自 `.env` 的 `ADMIN_USERNAME`、`ADMIN_PASSWORD`。`ADMIN_TOKEN` 只用于自动化管理 API，不用于网页登录。
 
-### 第 3 步：生成开发签名私钥
+## 第一次使用
+
+1. 打开 `/admin` 并使用管理员账号密码登录。
+2. 上传一个可安装的 Xboard 主题 ZIP，填写版本号后发布。
+3. 签发授权，填写客户标识、授权域名、更新截止时间和每日构建额度。
+4. 保存只显示一次的长期固定 License Key。
+5. 打开打包中心 `http://127.0.0.1:8788/build`，使用固定 Key 登录并创建构建。
+6. 等待任务完成，保存一次性 Install Key 并下载专属 ZIP。
+7. 把 ZIP 安装到 Xboard，在主题激活页填写本次 Install Key、固定 Key 和后台地址。
+
+生成演示主题：
 
 ```powershell
-pnpm signing-key:generate
+npm run demo-theme
 ```
 
-把输出的这一整行复制到 `.env`：
+默认输出到 `var/demo/APPGOG-demo-theme.zip`。
 
-```text
-LICENSE_SIGNING_PRIVATE_KEY_PEM_BASE64=很长的一串Base64
-```
-
-私钥不能发给客户端，也不能提交到代码仓库。
-
-### 第 4 步：启动基础设施并迁移
+## 验证
 
 ```powershell
-pnpm infra:up
-pnpm db:migrate
-pnpm db:status
+npm test
 ```
 
-### 第 5 步：启动服务
+## 准确的产品边界
 
-```powershell
-pnpm dev
-```
+当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、随机包身份注入、激活保护和重新打包；尚未对全部 JS/CSS 实施源码混淆或任意目录乱序。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令。当前独立 Worker 使用共享本地成品目录，因此适合单机三进程部署；多机部署前需替换对象存储、数据库和队列。
 
-### 第 6 步：检查代码
+如果要直接上传 APPGOG 的原始 Vue 工程并自动编译，需要提供真实源码、依赖版本、构建命令和最终 Xboard 安装目录结构，再在现有 `BuildEngine` 接口后接入隔离容器构建适配器。网站、授权、Key、队列和激活流程无需推倒重做。
 
-```powershell
-pnpm typecheck
-pnpm test
-pnpm build
-```
+浏览器端保护可以增加普通复制和批量滥用的成本，但客户控制自己的服务器，不能承诺“绝对无法破解”或在同域名环境迁移时可靠识别服务器变化。高价值设置接口、主题启用按钮和服务端环境指纹仍需取得真实 APPGOG/Xboard 项目后对接服务端授权守卫。历史版本回滚包目前是重新构建旧版本，并不是自动备份/恢复 Xboard 数据。
 
-## 当前公开接口
-
-```text
-GET  /health
-GET  /ready
-POST /api/v1/challenges
-POST /api/v1/licenses/activate
-POST /api/v1/licenses/verify
-POST /api/v1/licenses/refresh
-POST /api/v1/sessions/heartbeat
-POST /api/v1/sessions/release
-POST /api/v1/devices/unbind
-```
-
-验证、刷新、心跳、释放和解绑请求头：
-
-```http
-X-Product-Code
-X-Client-Version
-X-Timestamp
-X-Client-Nonce
-X-Device-Id
-X-Key-Id
-X-Signature
-```
-
-刷新、释放和自助解绑额外需要：
-
-```http
-Idempotency-Key
-```
-
-公开接口完整请求体和设备签名顺序请看：
-
-```text
-04-激活设备与授权令牌设计.md
-05-在线验证与令牌刷新设计.md
-06-会话心跳释放与设备自助解绑设计.md
-```
-
-## 当前管理接口
-
-```text
-POST  /admin/v1/products
-GET   /admin/v1/products
-GET   /admin/v1/products/{productId}
-PATCH /admin/v1/products/{productId}
-
-POST  /admin/v1/products/{productId}/versions
-GET   /admin/v1/products/{productId}/versions
-PATCH /admin/v1/products/{productId}/versions/{versionId}
-
-POST  /admin/v1/products/{productId}/features
-GET   /admin/v1/products/{productId}/features
-PATCH /admin/v1/products/{productId}/features/{featureId}
-
-POST  /admin/v1/license-policies
-GET   /admin/v1/license-policies
-PATCH /admin/v1/license-policies/{policyId}
-
-POST /admin/v1/license-keys
-POST /admin/v1/license-keys/batch
-GET  /admin/v1/license-keys
-GET  /admin/v1/license-keys/{licenseId}
-POST /admin/v1/license-keys/{licenseId}/suspend
-POST /admin/v1/license-keys/{licenseId}/resume
-POST /admin/v1/license-keys/{licenseId}/renew
-POST /admin/v1/license-keys/{licenseId}/revoke
-
-GET  /admin/v1/license-keys/{licenseId}/devices
-POST /admin/v1/devices/{deviceId}/unbind
-POST /admin/v1/devices/{deviceId}/block
-POST /admin/v1/devices/{deviceId}/unblock
-
-GET  /admin/v1/audit-logs
-GET  /admin/v1/license-events
-```
-
-管理请求头：
-
-```http
-Authorization: Bearer <MANAGEMENT_GATEWAY_TOKEN>
-X-Admin-User-Id: <管理员 UUID>
-X-Tenant-Id: <平台管理员操作目标租户时提供>
-```
-
-第七步设备接口请看：
-
-```text
-07-管理员设备查询解绑封禁与解封设计.md
-```
-
-第八步审计与授权事件查询、过滤参数、响应和架构图请看：
-
-```text
-08-管理员审计日志与授权事件查询设计.md
-```
-
-## 安全约束
-
-- 数据库不保存完整明文 Key。
-- Key 使用带服务端 Pepper 的 HMAC-SHA-256 摘要。
-- Key 明文只在生成响应中返回一次。
-- 设备私钥永远不上传。
-- PostgreSQL 不保存服务端签名私钥。
-- 服务端没有签名私钥时安全拒绝签发，不使用默认私钥。
-- 客户端授权请求使用设备 Ed25519 签名；管理员设备接口使用独立的管理认证和 RBAC，二者不混用。
-- 激活挑战使用 Redis 原子 `GETDEL`。
-- 在线请求随机数使用 Redis 原子 `SET NX EX`。
-- 激活、刷新、会话释放和设备自助解绑使用 PostgreSQL 幂等记录。
-- 管理员设备状态修改通过 PostgreSQL 事务和行锁执行。
-- 强制解绑和封禁会撤销有效会话并清理 Redis 在线键。
-- 解封不会恢复旧绑定和旧会话。
-- 授权状态以 PostgreSQL 实时结果为准，不能只信任令牌快照或 Redis 在线标记。
-- 不删除设备、绑定、封禁和会话历史。
-- 管理员设备操作不修改 Key 到期时间。
-- 审计与授权事件接口只读历史，所有 SQL 强制租户条件并参数化。
-- 读取敏感历史本身会追加读取审计，不修改或删除旧记录。
-- 吊销不可恢复。
-- 已应用的旧迁移文件不得修改。
-
-## 第八步边界
-
-当前仍然没有实现：
-
-- 删除、修改或文件导出审计记录
-- 支付和订单接口
-- 代理商接口
-- 管理后台页面
-- 签名密钥管理接口
-- 系统设置管理接口
-- 第九步及以后功能
-
-## 设计文档
-
-- `01-需求与授权协议设计.md`
-- `02-基础架构与数据库设计.md`
-- `03-产品与Key管理设计.md`
-- `04-激活设备与授权令牌设计.md`
-- `05-在线验证与令牌刷新设计.md`
-- `06-会话心跳释放与设备自助解绑设计.md`
-- `07-管理员设备查询解绑封禁与解封设计.md`
-- `08-管理员审计日志与授权事件查询设计.md`
+详细规则见 [系统架构](docs/architecture.md)、[API 契约](docs/api-contract.md)、[拆分边界](docs/modular-boundaries.md) 和 [开发计划](docs/development-plan.md)。

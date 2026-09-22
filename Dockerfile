@@ -1,22 +1,16 @@
-FROM node:22-alpine
-
-RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
+FROM node:24-bookworm-slim
 
 WORKDIR /app
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
-
-COPY tsconfig.json tsconfig.build.json vitest.config.ts ./
-COPY database ./database
-COPY scripts ./scripts
-COPY src ./src
-
-RUN pnpm build
-
 ENV NODE_ENV=production
-EXPOSE 3000
 
-RUN chmod +x /app/scripts/docker-entrypoint.sh
+COPY package.json ./
+COPY apps ./apps
+COPY packages ./packages
+COPY scripts ./scripts
 
-ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
+RUN mkdir -p /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads \
+    && chown -R node:node /app
+
+USER node
+EXPOSE 8787 8788
+CMD ["node", "apps/license-api/src/server.js"]

@@ -1,9 +1,7 @@
-.git
-.gitignore
 .env
+.git
 node_modules
-dist
-coverage
+var
 *.log
-.vscode
-.idea
+tests
+docs

@@ -1,40 +1,20 @@
 {
-  "name": "universal-license-server",
-  "version": "0.8.0",
+  "name": "appgog-licensing-platform",
+  "version": "0.1.0",
   "private": true,
-  "description": "模块化通用 Key 授权服务端",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js",
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "db:migrate": "tsx scripts/migrate.ts",
-    "db:status": "tsx scripts/migration-status.ts",
-    "infra:up": "docker compose up -d postgres redis",
-    "infra:down": "docker compose down",
-    "signing-key:generate": "tsx scripts/generate-dev-signing-key.ts"
-  },
-  "dependencies": {
-    "fastify": "5.12.1",
-    "pg": "8.23.0",
-    "redis": "6.2.1",
-    "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@types/node": "26.2.0",
-    "@types/pg": "8.23.1",
-    "tsx": "4.23.12",
-    "typescript": "7.0.2",
-    "vitest": "4.1.11"
-  },
-  "packageManager": "pnpm@11.19.0"
+    "start": "node scripts/start-combined.js",
+    "start:license": "node scripts/start-license.js",
+    "start:build": "node apps/build-center/src/server.js",
+    "start:worker": "node apps/build-worker/src/server.js",
+    "start:split": "node scripts/start-split.js",
+    "dev": "node --watch apps/license-api/src/server.js",
+    "test": "node --test",
+    "keygen": "node apps/license-api/src/keygen.js",
+    "demo-theme": "node scripts/create-demo-theme.js"
+  }
 }
-
-
-
