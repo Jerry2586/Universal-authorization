@@ -2,7 +2,7 @@
 
 日期：2026-09-23。
 
-APPGOG打包授权系统 v1.0.0 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.0.1 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -17,17 +17,17 @@ APPGOG打包授权系统 v1.0.0 的正式生产路线只有统一 Docker Compose
 
 ## 2. 单文件自动安装（推荐）
 
-本机执行 npm run cms:package，将生成的 dist/APPGOG-Packaging-Licensing-System-1.0.0.run 上传到服务器 /root/，执行：
+本机执行 npm run cms:package，将生成的 dist/APPGOG-Packaging-Licensing-System-1.0.1.run 上传到服务器 /root/，执行：
 
 ```sh
-sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.0.run
+sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.1.run
 ```
 
 无需手动安装 unzip、解压或进入源码目录。安装文件包含源码和 SHA-256 校验，自动检查并补齐系统工具、Docker Engine、Compose v2.24+ 和 Buildx，自动构建并启动唯一的 appgog 容器。首次提示输入两个真实域名；重复运行从已有 .env 读取配置，保留数据与签名身份，并在更新前创建加密备份。
 
 默认安装到 /opt/appgog，安装全局 appgog 管理命令。要求 x86_64/amd64 或 aarch64/arm64、至少 4 GiB 可用磁盘、可联网的软件源和镜像仓库。已有 Docker 会复用，缺失插件从其已配置软件源补齐，无法获得受支持版本时明确报错。
 
-仓库是私有的，匿名 raw 下载会返回 404；必须先上传 .run 或经认证获取源码。源码方式只需在仓库根目录执行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。本机 dist 不随 Git 推送上传。
+仓库是私有的，匿名 raw 下载会返回 404；必须先上传 .run 或经认证获取源码。源码方式只需在仓库根目录执行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。正式版本的源码 ZIP、`.run` 和 SHA-256 文件随同版本 GitHub Release 上传。
 
 ## 3. 手动 Docker 安装
 
@@ -98,7 +98,7 @@ sh scripts/docker.sh rollback
 sh scripts/docker.sh backup
 ```
 
-备份包含 SQLite 数据库及 WAL、Ed25519 签名密钥、内部凭证、主题源码、构建成品、上传文件和 Caddy 证书状态。v1.0.0 使用 OpenSSL AES-256-CBC + PBKDF2（200,000 次迭代）输出 `.tar.gz.enc`，首次备份会生成权限为 600 的 `/opt/appgog/.backup-key`。备份文件与恢复密钥必须分别离线保存；只持有其中一项无法恢复。
+备份包含 SQLite 数据库及 WAL、Ed25519 签名密钥、内部凭证、主题源码、构建成品、上传文件和 Caddy 证书状态。当前版本使用 OpenSSL AES-256-CBC + PBKDF2（200,000 次迭代）输出 `.tar.gz.enc`，首次备份会生成权限为 600 的 `/opt/appgog/.backup-key`。备份文件与恢复密钥必须分别离线保存；只持有其中一项无法恢复。
 
 在新空服务器上准备同版本代码和 `.env` 后，先恢复、不要先安装：
 
@@ -125,7 +125,7 @@ build-center ── BUILD_CENTER_NODE_TOKEN ──→ license-center
 build-worker ── WORKER_NODE_TOKEN ────────→ license-center
 ```
 
-当前授权中心使用单机 SQLite。多个授权中心并行写入、自动数据库高可用、对象存储和分布式队列不属于 v1.0.0 已验证能力。
+当前授权中心使用单机 SQLite。多个授权中心并行写入、自动数据库高可用、对象存储和分布式队列不属于当前版本已验证能力。
 
 ## 8. 故障诊断
 

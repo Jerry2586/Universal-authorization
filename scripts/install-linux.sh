@@ -19,7 +19,7 @@ usage() {
 APPGOG Linux 一键安装器
 
   sudo sh scripts/install-linux.sh
-  sudo sh APPGOG-Packaging-Licensing-System-1.0.0.run
+  sudo sh APPGOG-Packaging-Licensing-System-<版本>.run
   重复运行会保留配置并检查、补齐缺失依赖。
 
 参数：
@@ -294,8 +294,10 @@ write_env() {
     log '保留已有 .env；域名修改请使用 appgog config'
     return
   fi
+  package_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$INSTALL_DIR/package.json" | head -n 1)
+  [ -n "$package_version" ] || fail 'package.json 缺少版本号。'
   umask 077
-  printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=1.0.0\n' "$AUTH_DOMAIN" "$BUILD_DOMAIN" > "$INSTALL_DIR/.env"
+  printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=%s\n' "$AUTH_DOMAIN" "$BUILD_DOMAIN" "$package_version" > "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
 }
 

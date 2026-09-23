@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.0.0
+# APPGOG打包授权系统 v1.0.1
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -6,17 +6,17 @@
 
 默认只运行 **一个 appgog Docker 容器**，包含 Node.js、SQLite、授权中心、打包中心、Worker 和 Caddy HTTPS。宿主机不需要额外配置 Node.js、数据库或反向代理。
 
-本机执行 npm run cms:package，会生成 dist/APPGOG-Packaging-Licensing-System-1.0.0.run。把这个自解压文件上传到服务器 /root/，然后只执行：
+本机执行 npm run cms:package，会生成 dist/APPGOG-Packaging-Licensing-System-1.0.1.run。把这个自解压文件上传到服务器 /root/，然后只执行：
 
 ```sh
-sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.0.run
+sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.1.run
 ```
 
 安装文件自带完整源码和 SHA-256 校验，自动补齐解压工具、系统工具、Docker、Compose 和 Buildx；已有组件会复用。首次按提示填两个真实域名（提前设置 DNS A 记录），安装器自动生成密钥和管理员密码、启动容器并检查公网 HTTPS。
 
 重复执行同一命令会保留原 .env、数据库、签名密钥和备份，先构建镜像、备份已有数据，再更新。默认路径为 /opt/appgog。安装需要联网下载系统包和基础镜像；现有 Docker 的软件源无法提供缺失插件时会明确报错，不会强行替换引擎。端口占用、DNS 未生效也会给出错误。
 
-仓库是私有的，匿名 raw 地址不能下载。先上传 .run 文件，或在已认证获取的源码目录运行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。Git 推送不包含本机 dist 制品。
+仓库是私有的，匿名 raw 地址不能下载。先上传 .run 文件，或在已认证获取的源码目录运行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。每次 `v*` 标签发布都会同时更新 Git 源码、GitHub Release、源码 ZIP、自解压 `.run` 安装器及 SHA-256 校验文件。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -113,7 +113,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.0.0 安装 ZIP（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.0.1 安装 ZIP（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 npm run cms:package
