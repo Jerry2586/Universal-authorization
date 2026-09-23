@@ -24,6 +24,10 @@ require_config() {
     exit 1
   fi
 }
+prepare_update_control() {
+  compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c \
+    'mkdir -p /app/var/update-control/requests && chown -R 1000:1000 /app/var/update-control && chmod 770 /app/var/update-control /app/var/update-control/requests'
+}
 project_containers() {
   docker ps "$@" --filter "label=com.docker.compose.project=${APPGOG_PROJECT:-appgog}" --format '{{.ID}} {{.Label "com.docker.compose.service"}}' |
     awk '$2 ~ /^(appgog|initialize|license-center|build-center|build-worker|caddy)$/ { print $1 }'
@@ -117,7 +121,8 @@ deploy() (
     runtime_backup=$runtime_candidate
   fi
   # Old Caddy ran as root. Only this short maintenance helper owns elevated capabilities.
-  compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c     'chown -R 1000:1000 /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads /app/runtime/license /app/runtime/build /app/runtime/worker /app/runtime/caddy-data /app/runtime/caddy-config'
+  compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c \
+    'mkdir -p /app/var/update-control/requests && chown -R 1000:1000 /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads /app/var/update-control /app/runtime/license /app/runtime/build /app/runtime/worker /app/runtime/caddy-data /app/runtime/caddy-config && chmod 770 /app/var/update-control /app/var/update-control/requests'
   if ! compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 appgog; then
     compose stop appgog || true
     if [ -n "$previous_image" ]; then
@@ -311,6 +316,7 @@ case "${1:-help}" in
   start)
     require_docker
     require_config
+    prepare_update_control
     compose up -d --no-build --pull never --wait --wait-timeout 180
     ;;
   stop)
@@ -321,6 +327,7 @@ case "${1:-help}" in
   restart)
     require_docker
     require_config
+    prepare_update_control
     compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
     ;;
 
@@ -331,6 +338,7 @@ case "${1:-help}" in
     image_name=$(compose config --images | head -n 1)
     backup
     docker tag appgog-platform:rollback "$image_name"
+    prepare_update_control
     compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
     ;;
   backup) require_docker; require_config; backup ;;
@@ -341,6 +349,7 @@ case "${1:-help}" in
     archive=$(CDPATH= cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")
     [ -z "$(compose ps --status running -q)" ] || { echo '恢复只能在未启动服务的新部署执行；现有数据不会被覆盖。' >&2; exit 1; }
     compose build
+    prepare_update_control
     case "$archive" in
       *.enc)
         command -v openssl >/dev/null 2>&1 || fail '恢复加密备份需要 OpenSSL。'

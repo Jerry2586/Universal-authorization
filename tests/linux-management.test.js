@@ -112,6 +112,10 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /appgog-platform:rollback/);
   assert.match(docker, /diagnostics\(\)/);
   assert.match(docker, /repair_permissions\(\)/);
+  assert.match(docker, /prepare_update_control\(\)/);
+  assert.match(docker, /mkdir -p \/app\/var\/update-control\/requests/);
+  assert.match(docker, /chown -R 1000:1000[\s\S]*\/app\/var\/update-control/);
+  assert.match(docker, /chmod 770 \/app\/var\/update-control \/app\/var\/update-control\/requests/);
   assert.match(docker, /docker image prune -f/);
   assert.match(docker, /compose stop appgog/);
   assert.match(docker, /aes-256-cbc/);
