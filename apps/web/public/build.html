@@ -2,68 +2,73 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <link rel="icon" type="image/png" href="/assets/logo.png">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#0b1020">
-  <title>客户交付中心 · APPGOG</title>
+  <title>打包中心 · APPGOG</title>
   <link rel="stylesheet" href="/assets/site.css">
+  <link rel="stylesheet" href="/assets/admin-login.css">
+  <link rel="stylesheet" href="/assets/build-center.css">
   <script src="/assets/portal.js" defer></script>
 </head>
 <body data-portal="customer">
-  <section id="login-view" class="auth-shell">
-    <div class="auth-brand-panel">
-      <a class="wordmark wordmark-light" href="/"><span class="wordmark-mark">A</span><span>APPGOG</span></a>
-      <div class="auth-brand-copy">
-        <span class="overline overline-light">SECURE DELIVERY CLOUD</span>
-        <h1>把每一次主题交付，变成可追踪的正式发行。</h1>
-        <p>专属构建、域名绑定、一次性安装凭证与签名激活，在同一个交付流程中完成。</p>
-        <div class="auth-proof-grid">
-          <div><strong>01</strong><span>授权身份验证</span></div>
-          <div><strong>02</strong><span>安全构建与注入</span></div>
-          <div><strong>03</strong><span>安装环境激活</span></div>
+  <section id="login-view" class="admin-entry build-entry" aria-labelledby="build-login-title">
+    <header class="admin-entry-header">
+      <a class="wordmark" href="/" aria-label="APPGOG 平台首页"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a>
+      <span class="admin-entry-caption">主题打包平台</span>
+      <a class="admin-entry-home" href="/">返回首页 <span aria-hidden="true">↗</span></a>
+    </header>
+    <div class="admin-entry-main">
+      <div class="admin-entry-card">
+        <aside class="admin-entry-aside" aria-label="管理范围">
+          <span class="admin-entry-eyebrow">APPGOG DELIVERY</span>
+          <div class="admin-entry-intro"><h2>你的主题，<br>从这里交付。</h2><p>选择版本，打包下载，安装激活。</p></div>
+          <div class="admin-entry-capabilities">
+            <div><span aria-hidden="true">01</span><span>验证授权 Key</span></div>
+            <div><span aria-hidden="true">02</span><span>生成专属安装包</span></div>
+            <div><span aria-hidden="true">03</span><span>下载并完成激活</span></div>
+          </div>
+          <span class="admin-entry-aside-footer">YOUR LICENSE. YOUR DELIVERY.</span>
+        </aside>
+        <div class="admin-entry-form">
+          <div class="admin-entry-heading"><span class="admin-entry-badge">KEY ACCESS</span><h1 id="build-login-title">进入打包中心</h1><p>输入购买时收到的固定授权 Key，无需注册账号。</p></div>
+          <form id="login-form" class="form-stack">
+            <label class="field"><span>固定授权 Key</span><input name="license_key" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required placeholder="粘贴你的固定授权 Key" aria-describedby="key-help"></label>
+            <p id="key-help" class="build-key-help">请使用固定 Key，不是安装时的一次性 Key。</p>
+            <p id="login-error" class="admin-entry-error" role="alert" hidden></p>
+            <button class="button button-primary button-wide" type="submit"><span id="login-submit-label">验证并进入</span><span aria-hidden="true">→</span></button>
+          </form>
+          <p class="admin-entry-help">没有 Key 或授权已过期？请联系卖家。</p>
+          <div class="admin-entry-notice"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8 12 3 3 5-6"/></svg><span>固定 Key 不会写入主题安装包</span></div>
         </div>
       </div>
-      <div class="auth-brand-footer"><span class="live-dot"></span> 授权与构建服务运行中</div>
     </div>
-    <div class="auth-form-panel">
-      <div class="auth-card">
-        <div class="auth-card-head">
-          <span class="overline">CUSTOMER PORTAL</span>
-          <h2>进入交付中心</h2>
-          <p>使用购买后收到的长期授权 Key 登录。每次构建会生成独立的安装凭证。</p>
-        </div>
-        <form id="login-form" class="form-stack">
-          <label class="field"><span>固定授权 Key</span><input name="license_key" type="password" autocomplete="off" required placeholder="APPGOG-XXXX-XXXX-XXXX-XXXX"></label>
-          <button class="button button-primary button-wide" type="submit"><span>验证授权</span><span aria-hidden="true">→</span></button>
-        </form>
-        <div class="security-note"><span class="security-icon">✓</span><div><strong>凭证安全</strong><p>固定 Key 仅用于进入交付中心，不会写入最终主题包。</p></div></div>
-        <a class="back-link" href="/">← 返回平台首页</a>
-      </div>
-    </div>
+    <footer class="admin-entry-footer"><span>APPGOG · 主题交付</span><span>打包中心 / Delivery</span></footer>
   </section>
 
   <div id="dashboard-view" class="saas-shell" hidden>
     <aside class="app-sidebar">
-      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><span class="wordmark-mark">A</span><span>APPGOG</span></a><span class="workspace-badge">客户中心</span></div>
+      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a><span class="workspace-badge">打包中心</span></div>
       <nav class="app-nav" aria-label="客户中心导航">
         <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon">⌂</span><span>工作台</span></button>
         <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon">▤</span><span>构建任务</span></button>
         <button class="nav-item" type="button" data-view="license" data-title="授权信息"><span class="nav-icon">◇</span><span>我的授权</span></button>
       </nav>
       <div class="sidebar-meta">
-        <div class="service-state"><span class="live-dot"></span><div><strong>服务正常</strong><span>License API online</span></div></div>
+        <div class="service-state"><span class="live-dot"></span><div><strong>专属交付空间</strong><span>使用固定 Key 识别授权</span></div></div>
         <button id="logout" class="sidebar-logout" type="button">退出登录</button>
       </div>
     </aside>
 
     <main class="workspace">
       <header class="workspace-header">
-        <div class="header-left"><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">客户交付中心</span><h1 id="page-title">交付工作台</h1></div></div>
+        <div class="header-left"><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">主题打包中心</span><h1 id="page-title">交付工作台</h1></div></div>
         <div class="header-actions"><span class="header-domain" id="header-domain">未绑定域名</span><button id="refresh-customer" class="icon-button" type="button" title="刷新数据">↻</button></div>
       </header>
 
       <div class="workspace-content">
         <section class="page-view active" data-page="overview">
-          <div class="welcome-row"><div><span class="overline">DELIVERY OVERVIEW</span><h2>版本更新与安全交付</h2><p>平台只使用固定 Key 识别授权，不展示客户、订单或内部授权编号。</p></div><span class="date-chip" id="current-date">—</span></div>
+          <div class="welcome-row"><div><span class="overline">DELIVERY OVERVIEW</span><h2>选择版本，生成安装包</h2><p>选择可用版本打包，完成后下载 ZIP 和一次性安装 Key。</p></div><span class="date-chip" id="current-date">—</span></div>
 
           <div class="stats-grid stats-grid-three">
             <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>授权状态</span><strong id="license-status">—</strong><small>实时验证</small></div></article>
@@ -81,7 +86,7 @@
               <div class="surface-head"><div><span class="overline">DELIVERY FLOW</span><h3>交付流程</h3></div></div>
               <ol class="process-list">
                 <li class="done"><span>1</span><div><strong>验证授权身份</strong><small>确认 Key、域名与更新权限</small></div></li>
-                <li><span>2</span><div><strong>生成独立构建</strong><small>注入包身份与授权运行时</small></div></li>
+                <li><span>2</span><div><strong>生成独立构建</strong><small>为本次安装生成专属凭证</small></div></li>
                 <li><span>3</span><div><strong>下载安装包</strong><small>获取 ZIP 与一次性安装 Key</small></div></li>
                 <li><span>4</span><div><strong>绑定安装环境</strong><small>在 Xboard 后台完成激活</small></div></li>
               </ol>
@@ -95,7 +100,7 @@
         </section>
 
         <section class="page-view" data-page="builds">
-          <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>构建与下载</h2><p>查看真实构建进度，完成后获取安装 Key 和受保护主题 ZIP。</p></div><button class="button button-secondary" type="button" data-go-view="overview">＋ 新建构建</button></div>
+          <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>构建与下载</h2><p>查看打包进度，下载主题 ZIP 和本次安装 Key。</p></div><button class="button button-secondary" type="button" data-go-view="overview">＋ 新建构建</button></div>
           <section class="surface table-surface">
             <div class="toolbar"><label class="search-box"><span>⌕</span><input id="customer-build-search" placeholder="搜索版本或域名"></label><span class="toolbar-note">自动每 5 秒刷新进行中的任务</span></div>
             <div class="table-scroll"><table><thead><tr><th>版本</th><th>授权域名</th><th>状态</th><th>构建进度</th><th>创建时间</th><th>交付</th></tr></thead><tbody id="build-list"><tr><td colspan="6" class="empty-cell">暂无构建记录</td></tr></tbody></table></div>
@@ -106,7 +111,7 @@
           <div class="page-heading"><div><span class="overline">LICENSE PROFILE</span><h2>授权信息</h2><p>当前固定 Key 的产品权限、绑定域名与更新服务状态。</p></div><span class="status-pill status-success">授权已验证</span></div>
           <div class="license-layout">
             <section class="surface license-profile">
-              <div class="license-product-mark">AG</div>
+              <img class="license-product-mark brand-product-logo" src="/assets/logo.png" alt="APPGOG" width="64" height="64">
               <div><span class="overline">LICENSED PRODUCT</span><h3 id="license-product">—</h3><p>授权身份已通过固定 Key 安全验证</p></div>
             </section>
             <section class="surface detail-surface"><dl class="details"><div><dt>固定 Key 前缀</dt><dd id="license-prefix">—</dd></div><div><dt>授权域名</dt><dd id="license-domain-detail">—</dd></div><div><dt>更新服务有效期</dt><dd id="update-until">—</dd></div></dl></section>

@@ -2,41 +2,52 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <link rel="icon" type="image/png" href="/assets/logo.png">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#0b1020">
   <title>运营管理后台 · APPGOG</title>
   <link rel="stylesheet" href="/assets/site.css">
+  <link rel="stylesheet" href="/assets/admin-login.css">
   <script src="/assets/portal.js" defer></script>
 </head>
 <body data-portal="admin">
-  <section id="login-view" class="auth-shell admin-auth">
-    <div class="auth-brand-panel">
-      <a class="wordmark wordmark-light" href="/"><span class="wordmark-mark">A</span><span>APPGOG</span></a>
-      <div class="auth-brand-copy">
-        <span class="overline overline-light">LICENSE OPERATIONS</span>
-        <h1>集中管理授权、版本、构建与激活。</h1>
-        <p>从签发固定 Key 到追踪最终安装环境，每个关键操作都进入同一套运营与审计系统。</p>
-        <div class="admin-feature-list"><div><span>✓</span> 授权生命周期管理</div><div><span>✓</span> 官方版本安全发布</div><div><span>✓</span> 构建与激活追踪</div></div>
+  <section id="login-view" class="admin-entry" aria-labelledby="admin-login-title">
+    <header class="admin-entry-header">
+      <a class="wordmark" href="/" aria-label="APPGOG 平台首页"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a>
+      <span class="admin-entry-caption">授权管理平台</span>
+      <a class="admin-entry-home" href="/">返回首页 <span aria-hidden="true">↗</span></a>
+    </header>
+    <div class="admin-entry-main">
+      <div class="admin-entry-card">
+        <aside class="admin-entry-aside" aria-label="管理范围">
+          <span class="admin-entry-eyebrow">APPGOG CONSOLE</span>
+          <div class="admin-entry-intro"><h2>一个后台，<br>管理产品授权。</h2><p>授权、发布与交付，集中处理。</p></div>
+          <div class="admin-entry-capabilities">
+            <div><span aria-hidden="true">01</span><span>授权与站点</span></div>
+            <div><span aria-hidden="true">02</span><span>版本与构建</span></div>
+            <div><span aria-hidden="true">03</span><span>团队与节点</span></div>
+          </div>
+          <span class="admin-entry-aside-footer">ADMINISTRATOR WORKSPACE</span>
+        </aside>
+        <div class="admin-entry-form">
+          <div class="admin-entry-heading"><span class="admin-entry-badge">管理员入口</span><h1 id="admin-login-title">登录管理后台</h1><p>使用管理员账号，进入你的工作空间。</p></div>
+          <form id="login-form" class="form-stack">
+            <label class="field"><span>账号</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="输入管理员账号"></label>
+            <label class="field"><span>密码</span><input name="password" type="password" autocomplete="current-password" required placeholder="输入密码"></label>
+            <p id="login-error" class="admin-entry-error" role="alert" hidden></p>
+            <button class="button button-primary button-wide" type="submit"><span id="login-submit-label">登录后台</span><span aria-hidden="true">→</span></button>
+          </form>
+          <p class="admin-entry-help">无法登录？请联系平台负责人。</p>
+          <div class="admin-entry-notice"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8 12 3 3 5-6"/></svg><span>仅限授权管理员访问</span></div>
+        </div>
       </div>
-      <div class="auth-brand-footer"><span class="live-dot"></span> 管理服务已就绪</div>
     </div>
-    <div class="auth-form-panel">
-      <div class="auth-card">
-        <div class="auth-card-head"><span class="overline">ADMIN CONSOLE</span><h2>登录运营后台</h2><p>此入口仅供授权运营人员使用。管理会话与客户会话完全隔离。</p></div>
-        <form id="login-form" class="form-stack">
-          <label class="field"><span>管理员账号</span><input name="username" autocomplete="username" required placeholder="输入管理员账号"></label>
-          <label class="field"><span>管理员密码</span><input name="password" type="password" autocomplete="current-password" required placeholder="输入管理员密码"></label>
-          <button class="button button-primary button-wide" type="submit"><span>安全登录</span><span>→</span></button>
-        </form>
-        <div class="security-note"><span class="security-icon">⌁</span><div><strong>受保护的管理入口</strong><p>写操作需要服务端会话和 CSRF 双重校验。</p></div></div>
-        <a class="back-link" href="/">← 返回平台首页</a>
-      </div>
-    </div>
+    <footer class="admin-entry-footer"><span>APPGOG · 授权管理平台</span><span>管理后台 / Console</span></footer>
   </section>
 
   <div id="dashboard-view" class="saas-shell" hidden>
     <aside class="app-sidebar">
-      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><span class="wordmark-mark">A</span><span>APPGOG</span></a><span class="workspace-badge">运营后台</span></div>
+      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a><span class="workspace-badge">运营后台</span></div>
       <nav class="app-nav" aria-label="运营后台导航">
         <button class="nav-item active" type="button" data-view="overview" data-title="运营总览"><span class="nav-icon">⌂</span><span>总览</span></button>
         <button class="nav-item" type="button" data-view="licenses" data-title="授权管理"><span class="nav-icon">◇</span><span>授权管理</span></button>

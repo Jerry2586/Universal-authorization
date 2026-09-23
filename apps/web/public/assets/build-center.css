@@ -1,0 +1,22 @@
+/* Customer-only refinements. Authentication and build controls stay shared. */
+.build-entry .admin-entry-aside { background: #163331; }
+.build-entry .admin-entry-eyebrow, .build-entry .admin-entry-aside-footer { color: #a3c4be; }
+.build-entry .admin-entry-intro p { color: #bbd2cd; }
+.build-entry .admin-entry-capabilities > div { color: #d6e7e3; }
+.build-entry .admin-entry-capabilities > div > span:first-child { color: #94b9b0; }
+.build-entry .admin-entry-form { align-self: center; }
+.build-key-help { margin-top: -10px; color: #74808c; font-size: 11px; line-height: 1.7; }
+body[data-portal="customer"] .workspace { background: #f5f6f8; }
+body[data-portal="customer"] .app-sidebar { background: #18283d; }
+body[data-portal="customer"] .workspace-content { max-width: 1440px; margin-inline: auto; }
+body[data-portal="customer"] .welcome-row h2 { font-size: 27px; letter-spacing: -.6px; }
+body[data-portal="customer"] .welcome-row p { max-width: 580px; line-height: 1.8; }
+body[data-portal="customer"] .surface, body[data-portal="customer"] .stat-card { box-shadow: 0 2px 8px #16283d03; border-color: #e2e6ec; border-radius: 12px; }
+body[data-portal="customer"] .surface-number { color: #8b96a6; background: #f5f6f8; }
+body[data-portal="customer"] .process-card { background: #fafbfc; }
+body[data-portal="customer"] .table-title { padding-block: 22px; }
+body[data-portal="customer"] .service-state { color: #b6c2d4; }
+@media (max-width: 760px) {
+  body[data-portal="customer"] .welcome-row h2 { font-size: 24px; }
+  body[data-portal="customer"] .field input, body[data-portal="customer"] .field select { font-size: 16px; }
+}

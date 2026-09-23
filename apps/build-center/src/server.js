@@ -10,6 +10,9 @@ const files = new Map([
   ['/', ['build.html', 'text/html; charset=utf-8']],
   ['/build', ['build.html', 'text/html; charset=utf-8']],
   ['/assets/site.css', ['assets/site.css', 'text/css; charset=utf-8']],
+  ['/assets/logo.png', ['assets/logo.png', 'image/png']],
+  ['/assets/admin-login.css', ['assets/admin-login.css', 'text/css; charset=utf-8']],
+  ['/assets/build-center.css', ['assets/build-center.css', 'text/css; charset=utf-8']],
   ['/assets/portal.js', ['assets/portal.js', 'text/javascript; charset=utf-8']],
 ]);
 const proxyPaths = /^\/web\/(?:customer(?:\/|$)|session$|logout$)/;

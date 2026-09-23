@@ -481,6 +481,11 @@ $('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const submit = form.querySelector('[type="submit"]');
+  const loginError = $('login-error');
+  const submitLabel = $('login-submit-label');
+  if (loginError) { loginError.hidden = true; loginError.textContent = ''; }
+  if (submitLabel) submitLabel.textContent = mode === 'customer' ? '正在验证…' : '正在登录…';
+  form.setAttribute('aria-busy', 'true');
   submit.disabled = true;
   try {
     const fields = new FormData(form);
@@ -492,8 +497,15 @@ $('login-form').addEventListener('submit', async (event) => {
     setView(true);
     selectView('overview');
     await refresh();
-  } catch (error) { notify(error.message, true); }
-  finally { submit.disabled = false; }
+  } catch (error) {
+    if (loginError && !$('login-view').hidden) { loginError.textContent = error.message; loginError.hidden = false; }
+    else notify(error.message, true);
+  }
+  finally {
+    submit.disabled = false;
+    form.removeAttribute('aria-busy');
+    if (submitLabel) submitLabel.textContent = mode === 'customer' ? '验证并进入' : '登录后台';
+  }
 });
 $('logout').addEventListener('click', async () => {
   try { await request(`/web/logout?actor=${mode}`, { method: 'POST' }); }
