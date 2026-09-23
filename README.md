@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.1.0
+# APPGOG打包授权系统 v1.1.1
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -6,26 +6,26 @@
 
 默认只运行 **一个 appgog Docker 容器**，包含 Node.js、SQLite、授权中心、打包中心、Worker 和 Caddy HTTPS。宿主机不需要额外配置 Node.js、数据库或反向代理。
 
-本机执行 npm run cms:package，会生成 dist/APPGOG-Packaging-Licensing-System-1.1.0.run。把这个自解压文件上传到服务器 /root/，然后只执行：
+进入服务器的 root 终端，只复制下面这一条固定命令。首次执行自动安装，今后发布新版本后仍然逐字执行同一句命令自动升级：
 
 ```sh
-sudo sh /root/APPGOG-Packaging-Licensing-System-1.1.0.run
+sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
 ```
 
-安装文件自带完整源码、SHA-256 和 Ed25519 签名校验，自动补齐解压工具、系统工具、Docker、Compose 和 Buildx；已有组件会复用。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
+引导器识别 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora 和 Oracle Linux 以及 amd64/arm64，自动补齐 CA、OpenSSL、系统工具、Docker、Compose 和 Buildx。它获取最新正式 Release，先验证 Ed25519 清单签名，再校验 `.run` 的 SHA-256，最后下载安装包并部署。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
 
-国内服务器无法连接 GitHub 时，可将同一组签名发布文件同步到国内对象存储/CDN，并使用 `--source auto --china-base https://你的国内发布地址`。安装器先验证签名清单，再校验 ZIP SHA-256；国内源失败后才尝试 GitHub。也可直接上传完整 `.run` 离线包，不依赖 GitHub。传入一次性 `--cloudflare-token` 后，安装器可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
+默认使用 jsDelivr 获取固定引导器；引导器下载正式包时依次尝试配置的国内源、GitHub Release 和两个 GitHub 代理地址。无论来自哪个源，签名或哈希不匹配都会拒绝执行。自有国内对象存储可通过 `APPGOG_CHINA_RELEASE_BASE=https://你的国内地址` 配置。完全断网时仍可上传版本化 `.run` 离线安装。传入一次性 `--cloudflare-token` 后可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
 
-重复执行同一命令会保留原 .env、数据库、签名密钥和备份，先构建镜像、备份已有数据，再更新。默认路径为 /opt/appgog。安装需要联网下载系统包和基础镜像；现有 Docker 的软件源无法提供缺失插件时会明确报错，不会强行替换引擎。端口占用、DNS 未生效也会给出错误。
+重复执行同一命令时，引导器读取 `/opt/appgog/package.json`：版本相同则安全退出；发现更高正式版本时下载并验签，然后保留原 `.env`、数据库、签名密钥、管理员身份和备份，先构建镜像并创建完整备份，再切换服务；默认拒绝自动降级。默认安装路径为 `/opt/appgog`。
 
-仓库是私有的，匿名 raw 地址不能下载。先上传 .run 文件，或在已认证获取的源码目录运行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。每次 `v*` 标签发布都会同时更新 Git 源码、GitHub Release、源码 ZIP、自解压 `.run` 安装器及 SHA-256 校验文件。
+仓库为公开仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
 ```sh
 appgog status
 appgog logs build-worker
-appgog update
+appgog update          # 仅用服务器上已经存在的代码重建；跨版本升级请重跑上面的固定命令
 appgog rollback
 appgog backup
 appgog doctor
@@ -33,13 +33,13 @@ appgog doctor
 
 安装器会确认 80/443 未被其他服务占用、检查两个域名的 DNS A 记录是否指向当前服务器，并在支持的系统中开放防火墙端口。随后由 Compose 内置 Caddy 自动申请和续期 HTTPS 证书，并分别代理授权中心与打包中心。正式生产路线不再依赖服务器面板、外部 Nginx/OpenResty 或手工证书流程。
 
-## Docker 一体部署：只填写两个域名
+## 高级维护：手动 Docker 部署
 
 一个容器包含 Node.js 运行环境、SQLite 数据库、授权中心、打包中心、Worker 和 Caddy。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。手动 Docker 安装要求 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
 
 完整安装、更新、回滚、备份和恢复步骤见 [Docker/Linux 部署说明](docs/deployment.md)。
 
-全新安装：解压正式发布 ZIP 或下载私有仓库到 `/opt/appgog`，然后执行：
+只有需要离线维护或二次开发时才使用本节。标准首装和跨版本升级始终使用上方固定的一行命令。手动方式先解压正式发布 ZIP 或克隆公开仓库到 `/opt/appgog`，然后执行：
 
 ```sh
 cd /opt/appgog
@@ -67,7 +67,7 @@ sh scripts/docker.sh credentials
 | AUTH_DOMAIN | 容器内 127.0.0.1:8787 | `https://AUTH_DOMAIN/admin` |
 | BUILD_DOMAIN | 容器内 127.0.0.1:8788 | `https://BUILD_DOMAIN/build` |
 
-以后覆盖代码并保留 .env，然后执行：
+手动更新必须先自行把服务器源码更新到目标版本并保留 `.env`，然后执行：
 
 ```sh
 # 构建新代码 → 完整备份 → 重建服务 → 健康检查
@@ -115,7 +115,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.1.0 安装 ZIP（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.1.1 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'

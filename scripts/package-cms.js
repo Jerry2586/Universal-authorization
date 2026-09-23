@@ -66,6 +66,7 @@ console.log('一体安装文件：' + installerPath);
 const installerSha256 = createHash('sha256').update(installer).digest('hex');
 const manifestPath = join(outputDirectory, 'release-manifest.json');
 const signaturePath = manifestPath + '.sig';
+const bootstrapPath = join(outputDirectory, 'install.sh');
 rmSync(signaturePath, { force: true });
 const manifestBody = Buffer.from(JSON.stringify({
   schema: 1,
@@ -77,6 +78,8 @@ const manifestBody = Buffer.from(JSON.stringify({
   run_sha256: installerSha256,
 }, null, 2) + '\n');
 writeFileSync(manifestPath, manifestBody, { mode: 0o600 });
+writeFileSync(bootstrapPath, readFileSync(join(root, 'install-docker.sh'), 'utf8').replaceAll('\r\n', '\n'), { mode: 0o700 });
+console.log(`稳定一键安装入口：${bootstrapPath}`);
 if (signingKeyPath) {
   const signature = sign(null, manifestBody, privateKey);
   writeFileSync(signaturePath, signature, { mode: 0o600 });

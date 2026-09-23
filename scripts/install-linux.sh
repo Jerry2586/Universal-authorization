@@ -452,13 +452,22 @@ download_source() {
 }
 
 write_env() {
-  if [ -f "$INSTALL_DIR/.env" ]; then
-    chmod 600 "$INSTALL_DIR/.env"
-    log '保留已有 .env；域名修改请使用 appgog config'
-    return
-  fi
   package_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$INSTALL_DIR/package.json" | head -n 1)
   [ -n "$package_version" ] || fail 'package.json 缺少版本号。'
+  if [ -f "$INSTALL_DIR/.env" ]; then
+    env_temp=$(mktemp)
+    if grep -q '^APPGOG_VERSION=' "$INSTALL_DIR/.env"; then
+      sed "s/^APPGOG_VERSION=.*/APPGOG_VERSION=$package_version/" "$INSTALL_DIR/.env" > "$env_temp"
+    else
+      cp "$INSTALL_DIR/.env" "$env_temp"
+      printf 'APPGOG_VERSION=%s\n' "$package_version" >> "$env_temp"
+    fi
+    cat "$env_temp" > "$INSTALL_DIR/.env"
+    rm -f "$env_temp"
+    chmod 600 "$INSTALL_DIR/.env"
+    log "保留已有 .env 并同步版本号为 $package_version；域名修改请使用 appgog config"
+    return
+  fi
   umask 077
   printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=%s\nAPPGOG_NODE_IMAGE=%s\nAPPGOG_CADDY_IMAGE=%s\nLICENSE_SERVICE_ENABLED=true\nCUSTOMER_LOGIN_ENABLED=true\nBUILD_CENTER_ENABLED=true\nNEW_BUILDS_ENABLED=true\nWORKER_ENABLED=true\n' \
     "$AUTH_DOMAIN" "$BUILD_DOMAIN" "$package_version" "$NODE_IMAGE" "$CADDY_IMAGE" > "$INSTALL_DIR/.env"

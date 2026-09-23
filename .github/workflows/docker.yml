@@ -45,6 +45,7 @@ jobs:
             dist/*.zip.sha256
             dist/*.run
             dist/*.run.sha256
+            dist/install.sh
             dist/release-manifest.json
             dist/release-manifest.json.sig
           retention-days: 30

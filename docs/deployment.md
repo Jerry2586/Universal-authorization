@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-09-24。
+日期：2026-09-23。
 
-APPGOG打包授权系统 v1.1.0 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.1.1 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -11,35 +11,34 @@ APPGOG打包授权系统 v1.1.0 的正式生产路线只有统一 Docker Compose
 - 两个不同域名，例如 `auth.example.com` 与 `build.example.com`；
 - 两个 DNS A 记录均已指向服务器公网 IPv4；
 - TCP 80、TCP 443、UDP 443 可由公网访问，且没有其他程序占用 80/443；
-- 自解压 .run 安装文件或具备授权访问权限的源码仓库。
+- 服务器至少能访问 jsDelivr、GitHub Release、配置的国内发布源或内置备用代理之一。
 
 安装器会检查端口、公网 IPv4 与 DNS。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
 
-## 2. 单文件自动安装（推荐）
+## 2. 一条命令安装与升级（唯一推荐入口）
 
-在可信发布机设置 `APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH` 后执行 `npm run cms:package`，将生成的 dist/APPGOG-Packaging-Licensing-System-1.1.0.run 上传到服务器 /root/，执行：
+进入服务器 root 终端，执行：
 
 ```sh
-sudo sh /root/APPGOG-Packaging-Licensing-System-1.1.0.run
+sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
 ```
 
-无需手动安装 unzip、解压或进入源码目录。安装文件包含源码、SHA-256 和 Ed25519 签名校验，自动检查并补齐系统工具、Docker Engine、Compose v2.24+ 和 Buildx，自动构建并启动唯一的 appgog 容器。首次提示输入两个真实域名；重复运行同一命令即进入升级流程，从已有 .env 读取配置，保留 runtime、数据、签名密钥和备份，并在切换前创建加密备份。
+这条命令长期不变。首次运行时，引导器识别系统和 CPU，补齐 CA、OpenSSL、下载与校验工具，获取最新正式 Release，验证 Ed25519 清单签名及 `.run` SHA-256，再由正式安装器补齐 Docker Engine、Compose v2.24+ 和 Buildx，提示输入两个真实域名并启动唯一的 appgog 容器。
+
+今后发布更高版本后逐字重跑同一句命令：引导器读取 `/opt/appgog/package.json`，版本相同则安全退出；目标版本更高则下载、验签、创建完整备份并升级，保留 `.env`、runtime、数据库、业务签名密钥、管理员身份和历史备份；目标版本更低时默认拒绝降级。升级完成后同步 `.env` 中的 `APPGOG_VERSION`。
 
 默认安装到 /opt/appgog，安装全局 appgog 管理命令。要求 x86_64/amd64 或 aarch64/arm64、至少 4 GiB 可用磁盘、可联网的软件源和镜像仓库。已有 Docker 会复用，缺失插件从其已配置软件源补齐，无法获得受支持版本时明确报错。
 
-仓库是私有的，匿名 raw 下载会返回 404；必须先上传 `.run`、从已授权位置获取源码，或使用已经同步的签名发布源。源码方式可在仓库根目录执行 `sudo sh install-docker.sh`。正式版本同时发布源码 ZIP、`.run`、两份 SHA-256、`release-manifest.json` 和 Ed25519 清单签名。
+仓库是公开的。固定入口通过 jsDelivr 获取；正式版本同时发布源码 ZIP、版本化 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定 `install.sh`。引导器不信任下载站返回的文件名或哈希，只接受通过仓库内置公钥验证的签名清单。
 
-国内服务器无法连接 GitHub 时，把整套 Release 附件原样同步到国内对象存储/CDN，然后执行：
+下载正式包时默认依次尝试自有国内源、GitHub Release、`ghfast.top` 和 `gh-proxy.com`。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo sh scripts/install-linux.sh \
-  --auth-domain auth.example.com \
-  --build-domain build.example.com \
-  --source auto \
-  --china-base https://download.example.cn/appgog/v1.1.0
+curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.1.1 sh
 ```
 
-`auto` 会优先国内源，失败后尝试 GitHub；`china` 和 `github` 可强制指定单一来源。无论使用哪个来源，安装器都先用仓库内公钥验证 `release-manifest.json.sig`，再校验 ZIP SHA-256。完全断网时直接使用 `.run`。需要自动配置 Cloudflare DNS 时追加 `--cloudflare-token TOKEN`；Token 仅在当前进程内使用，不落盘。Docker Hub 不可达时可同时传 `--docker-registry-mirror`、`--node-image` 和 `--caddy-image` 指定可访问的国内镜像。
+完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。Docker Hub 不可达时同样可传 `--docker-registry-mirror`、`--node-image` 和 `--caddy-image`。
 
 ## 3. 手动 Docker 安装
 
@@ -83,20 +82,22 @@ appgog logs license-center
 appgog credentials
 appgog config
 appgog services
+appgog update
+appgog rollback
 appgog doctor
 ```
 
-不带参数执行 `appgog` 可打开交互式管理菜单。状态页应显示一个 appgog 容器及健康状态；日志以内部组件名为前缀。
+不带参数执行 `appgog` 可打开交互式管理菜单。`appgog update` 只使用服务器当前已有代码重新构建、备份和切换服务，不负责在线发现新版本；跨版本升级必须重跑第 2 节的固定一行命令。状态页应显示一个 appgog 容器及健康状态；日志以内部组件名为前缀。
 
 ## 5. 更新与回滚
 
-覆盖新版本代码时必须保留 `.env`、数据卷和 `backups` 目录，然后执行：
+正式跨版本更新直接重跑与首次安装完全相同的命令：
 
 ```sh
-sh scripts/docker.sh update
+sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
 ```
 
-更新流程会先构建新镜像并创建完整备份，再切换服务并执行健康检查。健康检查失败时会尝试恢复带有 `appgog-platform:rollback` 标签的上一镜像。需要手工回滚时执行：
+引导器只接受签名有效且版本更高的正式包。更新流程会先构建新镜像并创建完整备份，再切换服务并执行健康检查。健康检查失败时会尝试恢复带有 `appgog-platform:rollback` 标签的上一镜像。需要手工回滚时执行：
 
 ```sh
 sh scripts/docker.sh rollback
@@ -151,9 +152,10 @@ docker compose exec -T appgog node scripts/docker/health.js
 ```
 
 - Caddy 证书失败：确认两个 DNS A 记录、公网 80/443、系统时间和域名拼写；
-- 下载脚本返回 404：私有仓库需要认证，改用第 2 节的 ZIP 或已认证源码安装；
-- 新版 .run 会自动补齐 unzip；若工具安装失败，检查发行版软件源和网络，修复后重跑同一命令；
-- ZIP 文件不存在：检查是否已上传到 `/root/`，以及文件名是否一致；Git 推送不会上传本机 `dist`；
+- 固定入口下载失败：确认服务器可访问 jsDelivr；也可从最新 Release 下载 `install.sh` 后执行；
+- GitHub Release 不通：引导器会自动尝试内置代理；有自有国内源时设置 `APPGOG_CHINA_RELEASE_BASE`；
+- 签名或 SHA-256 失败：停止安装并检查发布源，不得跳过验证或手动执行可疑文件；
+- 系统工具安装失败：检查发行版软件源和 DNS，修复后重跑完全相同的固定命令；
 - 端口占用：停止原 Web 服务后重试，正式路线不与其他反向代理共享 80/443；
 - 初始化失败：检查 `.env` 是否仍是示例域名、旧密钥是否缺失；不要删除数据卷重试；
 - 任务排队：检查 Worker 日志和授权中心节点凭证；
@@ -161,4 +163,4 @@ docker compose exec -T appgog node scripts/docker/health.js
 
 ## 9. 真实环境验收边界
 
-仓库自动测试覆盖配置生成、凭证保留、备份恢复防护、Caddy Compose、两阶段授权和构建流程。真实公网 DNS 解析、ACME 证书签发、防火墙行为、不同 Linux 发行版包管理器和 VPS 网络环境仍必须在目标服务器上执行一次端到端验收，不能由本地 Windows 测试替代。
+仓库自动测试覆盖稳定引导器结构、签名与哈希校验入口、配置生成、凭证保留、备份恢复防护、Caddy Compose、两阶段授权和构建流程。正式发布验收还必须在全新 VPS 上执行固定命令完成首装，再在同一 VPS 上逐字重跑同一句命令完成跨版本升级，并确认相同版本重跑安全退出、旧版本被拒绝、业务数据和管理员身份不变。真实公网 DNS、ACME、防火墙、不同 Linux 包管理器和 VPS 网络仍需端到端验证，不能由本地 Windows 测试替代。

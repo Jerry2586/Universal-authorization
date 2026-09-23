@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const root = resolve(import.meta.dirname, '..');
 const scripts = {
+  bootstrap: join(root, 'install-docker.sh'),
   docker: join(root, 'scripts/docker.sh'),
   installer: join(root, 'scripts/install-linux.sh'),
   manager: join(root, 'scripts/appgog.sh'),
@@ -36,12 +37,28 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /copy_release_root "\$temp_dir\/repository"/);
   assert.match(installer, /\/opt\/appgog/);
   assert.match(installer, /保留已有 \.env/);
+  assert.match(installer, /APPGOG_VERSION=.*package_version/);
   assert.match(installer, /chmod 600 "\$INSTALL_DIR\/\.env"/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
   assert.match(installer, /DNS A 记录/);
   assert.match(installer, /Caddy 自动申请并续期 HTTPS/);
   assert.match(installer, /wait_public_https/);
+});
+
+test('stable bootstrap downloads, verifies, installs, upgrades, and rejects downgrade', () => {
+  const bootstrap = text(scripts.bootstrap);
+  assert.match(bootstrap, /releases\/latest\/download/);
+  assert.match(bootstrap, /release-manifest\.json\.sig/);
+  assert.match(bootstrap, /openssl pkeyutl -verify/);
+  assert.match(bootstrap, /run_name/);
+  assert.match(bootstrap, /run_sha256/);
+  assert.match(bootstrap, /sha256sum -c/);
+  assert.match(bootstrap, /ghfast\.top/);
+  assert.match(bootstrap, /gh-proxy\.com/);
+  assert.match(bootstrap, /已是最新正式版本/);
+  assert.match(bootstrap, /拒绝自动降级/);
+  assert.match(bootstrap, /sh "\$WORK_DIR\/installer\.run" "\$@"/);
 });
 
 test('management menu exposes safe lifecycle, logs, configuration, backup, restore, and diagnostics', () => {
