@@ -149,22 +149,27 @@ installed_version=''
 if [ -f "$DEFAULT_INSTALL_DIR/.env" ] && [ -f "$DEFAULT_INSTALL_DIR/package.json" ]; then
   installed_version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DEFAULT_INSTALL_DIR/package.json" | head -n 1)
 fi
-running_version=''
+running_env_version=''
+running_image_version=''
 running_health='missing'
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   running_container=$(docker ps -a --filter "label=com.docker.compose.project=${APPGOG_PROJECT:-appgog}" --filter 'label=com.docker.compose.service=appgog' --format '{{.ID}}' | head -n 1)
   if [ -n "$running_container" ]; then
-    running_version=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$running_container" 2>/dev/null | sed -n 's/^APPGOG_VERSION=//p' | tail -n 1)
+    running_env_version=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$running_container" 2>/dev/null | sed -n 's/^APPGOG_VERSION=//p' | tail -n 1)
     running_health=$(docker inspect --format '{{if .State.Running}}{{if .State.Health}}{{.State.Health.Status}}{{else}}running{{end}}{{else}}stopped{{end}}' "$running_container" 2>/dev/null || printf 'unknown')
+    running_package="$WORK_DIR/running-package.json"
+    if docker cp "$running_container:/app/package.json" "$running_package" >/dev/null 2>&1; then
+      running_image_version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$running_package" | head -n 1)
+    fi
   fi
 fi
 if [ -n "$installed_version" ]; then
   if [ "$installed_version" = "$TARGET_VERSION" ]; then
-    if [ "$running_version" = "$TARGET_VERSION" ] && { [ "$running_health" = healthy ] || [ "$running_health" = running ]; }; then
-      log "APPGOG v$TARGET_VERSION 源码与运行容器一致，且服务状态正常，无需重复部署。"
+    if [ "$running_image_version" = "$TARGET_VERSION" ] && { [ "$running_health" = healthy ] || [ "$running_health" = running ]; }; then
+      log "APPGOG v$TARGET_VERSION 源码与运行镜像一致，且服务状态正常，无需重复部署。"
       exit 0
     fi
-    log "磁盘源码已是 v$TARGET_VERSION，但运行容器版本为 ${running_version:-未知}、状态为 $running_health；将自动修复并重新部署。"
+    log "磁盘源码已是 v$TARGET_VERSION，但运行镜像版本为 ${running_image_version:-未知}、环境版本为 ${running_env_version:-未知}、状态为 $running_health；将自动修复并重新部署。"
   else
     highest=$(printf '%s\n%s\n' "$installed_version" "$TARGET_VERSION" | sort -V | tail -n 1)
     [ "$highest" = "$TARGET_VERSION" ] || fail "拒绝自动降级：已安装 v$installed_version，下载源提供 v$TARGET_VERSION。"

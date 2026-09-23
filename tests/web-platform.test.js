@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { join } from 'node:path';
@@ -75,6 +75,11 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   const page = await fetch(`${base}/build`);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /data-portal="customer"/);
+
+  const health = await fetch(`${base}/health`).then(response => response.json());
+  const packageVersion = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version;
+  assert.equal(health.version, packageVersion);
+  assert.notEqual(health.version, '1.0.0');
 
   const portalAsset = await fetch(`${base}/assets/portal.js`);
   assert.equal(portalAsset.status, 200);

@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -8,6 +8,7 @@ import { hashSecret } from '../../../packages/core/src/security.js';
 import { ADMIN_ROLES } from './admin-policy.js';
 
 const PUBLIC_ROOT = resolve(process.cwd(), 'apps/web/public');
+const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
 const SESSION_COOKIES = Object.freeze({ admin: 'appgog_admin_session', customer: 'appgog_customer_session' });
 
 const MIME = Object.freeze({
@@ -283,7 +284,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         return json(response, 200, {
           ok: true,
           service: 'appgog-license-api',
-          version: '1.0.0',
+          version: PACKAGE_VERSION,
           database: 'ok',
           queue: { pending: stats.queuedJobs },
         });
