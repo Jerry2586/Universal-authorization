@@ -82,7 +82,8 @@ deploy() (
   previous=$(compose ps -a -q appgog)
   previous_image=''
   if [ -n "$previous" ]; then previous_image=$(docker inspect --format '{{.Image}}' "$previous"); fi
-  compose build
+  if [ "${APPGOG_NO_CACHE:-false}" = true ]; then compose build --no-cache
+  else compose build; fi
   image_name=$(compose config --images | head -n 1)
   [ -z "$previous_image" ] || docker tag "$previous_image" appgog-platform:rollback
   existing=$(project_containers -a)

@@ -5,8 +5,8 @@ export function createRepository(database) {
     insertProduct: database.prepare(`INSERT INTO products (id, code, name, created_at) VALUES (?, ?, ?, ?)`),
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
     insertLicense: database.prepare(`
-      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, status, bound_domain, update_until, max_builds_per_day, max_activations, generation, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, key_encrypted, status, bound_domain, update_until, max_builds_per_day, max_activations, generation, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `),
     licenseByHash: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name
@@ -17,7 +17,7 @@ export function createRepository(database) {
       FROM licenses JOIN products ON products.id = licenses.product_id WHERE licenses.id = ?
     `),
     bindDomain: database.prepare(`UPDATE licenses SET bound_domain = ?, updated_at = ? WHERE id = ? AND bound_domain IS NULL`),
-    rotateLicense: database.prepare(`UPDATE licenses SET key_prefix = ?, key_hash = ?, generation = generation + 1, updated_at = ? WHERE id = ?`),
+    rotateLicense: database.prepare(`UPDATE licenses SET key_prefix = ?, key_hash = ?, key_encrypted = ?, generation = generation + 1, updated_at = ? WHERE id = ?`),
     insertTicket: database.prepare(`
       INSERT INTO build_tickets (id, license_id, token_hash, requested_version, requested_domain, status, expires_at, created_at)
       VALUES (?, ?, ?, ?, ?, 'created', ?, ?)
@@ -340,7 +340,7 @@ export function createRepository(database) {
     productByCode: (code) => queries.productByCode.get(code),
     createLicense(values) {
       queries.insertLicense.run(
-        values.id, values.productId, values.customerRef, values.keyPrefix, values.keyHash,
+        values.id, values.productId, values.customerRef, values.keyPrefix, values.keyHash, values.keyEncrypted ?? null,
         values.status, values.boundDomain ?? null, values.updateUntil ?? null,
         values.maxBuildsPerDay, values.maxActivations, values.now, values.now,
       );
@@ -352,8 +352,8 @@ export function createRepository(database) {
       queries.bindDomain.run(domain, now, id);
       return queries.licenseById.get(id);
     },
-    rotateLicense(id, prefix, hash, now) {
-      queries.rotateLicense.run(prefix, hash, now, id);
+    rotateLicense(id, prefix, hash, encrypted, now) {
+      queries.rotateLicense.run(prefix, hash, encrypted, now, id);
       return queries.licenseById.get(id);
     },
     createTicket(values) {

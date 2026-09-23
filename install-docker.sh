@@ -146,8 +146,12 @@ case "$SOURCE_MODE" in
 esac
 
 installed_version=''
-if [ -f "$DEFAULT_INSTALL_DIR/.env" ] && [ -f "$DEFAULT_INSTALL_DIR/package.json" ]; then
-  installed_version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DEFAULT_INSTALL_DIR/package.json" | head -n 1)
+installed_package="$DEFAULT_INSTALL_DIR/package.json"
+installed_env="$DEFAULT_INSTALL_DIR/.env"
+[ ! -f "$DEFAULT_INSTALL_DIR/current/package.json" ] || installed_package="$DEFAULT_INSTALL_DIR/current/package.json"
+[ ! -f "$DEFAULT_INSTALL_DIR/shared/.env" ] || installed_env="$DEFAULT_INSTALL_DIR/shared/.env"
+if [ -f "$installed_env" ] && [ -f "$installed_package" ]; then
+  installed_version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$installed_package" | head -n 1)
 fi
 running_env_version=''
 running_image_version=''
@@ -166,8 +170,11 @@ fi
 if [ -n "$installed_version" ]; then
   if [ "$installed_version" = "$TARGET_VERSION" ]; then
     if [ "$running_image_version" = "$TARGET_VERSION" ] && { [ "$running_health" = healthy ] || [ "$running_health" = running ]; }; then
-      log "APPGOG v$TARGET_VERSION 源码与运行镜像一致，且服务状态正常，无需重复部署。"
-      exit 0
+      if [ "${APPGOG_REPAIR_SOURCE:-false}" != true ]; then
+        log "APPGOG v$TARGET_VERSION 源码与运行镜像一致，且服务状态正常，无需重复部署。"
+        exit 0
+      fi
+      log "APPGOG v$TARGET_VERSION 状态正常，但已请求深度修复，将重新下载并无缓存构建。"
     fi
     log "磁盘源码已是 v$TARGET_VERSION，但运行镜像版本为 ${running_image_version:-未知}、环境版本为 ${running_env_version:-未知}、状态为 $running_health；将自动修复并重新部署。"
   else

@@ -10,6 +10,7 @@ const scripts = {
   docker: join(root, 'scripts/docker.sh'),
   installer: join(root, 'scripts/install-linux.sh'),
   manager: join(root, 'scripts/appgog.sh'),
+  updateHelper: join(root, 'scripts/update-helper.sh'),
 };
 
 function text(path) {
@@ -38,7 +39,14 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /\/opt\/appgog/);
   assert.match(installer, /保留已有 \.env/);
   assert.match(installer, /APPGOG_VERSION=.*package_version/);
-  assert.match(installer, /chmod 600 "\$INSTALL_DIR\/\.env"/);
+  assert.match(installer, /chmod 600 "\$SHARED_DIR\/\.env"/);
+  assert.match(installer, /RELEASES_DIR=.*releases/);
+  assert.match(installer, /CURRENT_LINK=.*current/);
+  assert.match(installer, /stage_release/);
+  assert.match(installer, /mv -Tf .*CURRENT_LINK/);
+  assert.match(installer, /appgog-update-helper\.service/);
+  assert.match(installer, /case "\$existing" in[\s\S]*"\$INSTALL_ROOT"\/\*/);
+  assert.doesNotMatch(installer, /ProtectSystem=strict/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
   assert.match(installer, /DNS A 记录/);
@@ -67,7 +75,7 @@ test('stable bootstrap downloads, verifies, installs, upgrades, and rejects down
 
 test('management menu exposes safe lifecycle, logs, configuration, backup, restore, and diagnostics', () => {
   const manager = text(scripts.manager);
-  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'services', 'credentials', 'update', 'rollback', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'cleanup']) {
+  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'services', 'credentials', 'update', 'rollback', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'repair-source', 'uninstall', 'cleanup']) {
     assert.ok(manager.includes(command), `管理脚本缺少 ${command}`);
   }
   assert.match(manager, /确认保存配置/);
@@ -79,6 +87,21 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
   assert.match(manager, /更新状态/);
   assert.match(manager, /Cloudflare API Token/);
   assert.match(manager, /LICENSE_SERVICE_ENABLED/);
+  assert.match(manager, /卸载系统（保留数据）/);
+  assert.match(manager, /run_signed_installer/);
+  assert.match(manager, /rm -rf "\$INSTALL_ROOT\/releases"/);
+});
+
+test('online update helper only accepts signed check, install, and repair actions', () => {
+  const helper = text(scripts.updateHelper);
+  assert.match(helper, /check-update\)/);
+  assert.match(helper, /install-version\)/);
+  assert.match(helper, /repair-current\)/);
+  assert.match(helper, /openssl pkeyutl -verify/);
+  assert.match(helper, /install-docker\.sh/);
+  assert.match(helper, /chmod 770 "\$CONTROL_DIR" "\$REQUEST_DIR"/);
+  assert.match(helper, /exec "\$CURRENT_LINK\/scripts\/update-helper\.sh" --daemon/);
+  assert.ok(!helper.includes('eval '));
 });
 
 test('Docker operations keep destructive volume removal out of the supported workflow', () => {

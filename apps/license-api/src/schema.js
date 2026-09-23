@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS licenses (
   customer_ref TEXT NOT NULL,
   key_prefix TEXT NOT NULL,
   key_hash TEXT NOT NULL UNIQUE,
+  key_encrypted TEXT,
   status TEXT NOT NULL,
   bound_domain TEXT,
   update_until TEXT,

@@ -8,7 +8,7 @@ function applyAdminPermissions(session) {
   if (mode !== 'admin') return;
   state.session = session;
   state.permissions = Array.isArray(session.permissions) ? session.permissions : [];
-  const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view', cms: 'system.manage' };
+  const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view', announcements: 'system.manage', cms: 'system.manage' };
   for (const [view, permission] of Object.entries(sections)) {
     const item = document.querySelector(`.nav-item[data-view="${view}"]`);
     if (item) item.hidden = !can(permission);
@@ -304,8 +304,6 @@ function customerVersionCard(version) {
   top.append(identity, element('span', version.eligible === false ? '当前授权不可用' : '可构建', `status-pill ${version.eligible === false ? '' : 'status-success'}`));
   const notes = element('p', version.release_notes || '本版本暂无更新说明。', 'version-notes');
   const meta = element('div', null, 'version-meta');
-  if (version.min_xboard_version) meta.append(element('span', `Xboard ≥ ${version.min_xboard_version}`));
-  if (version.min_upgrade_version) meta.append(element('span', `升级来源 ≥ ${version.min_upgrade_version}`));
   if (version.rollback_to) meta.append(element('span', `建议回滚至 ${version.rollback_to}`));
   const footer = element('div', null, 'version-card-footer');
   const eligible = version.eligible !== false;
@@ -386,7 +384,16 @@ async function showBuild(id) {
 
 function licenseRow(license) {
   const row = element('tr');
-  row.append(td(license.customer_ref), td(`${license.key_prefix}••••`, 'key-inline'), td(license.bound_domain), badge(license.status), td(license.build_count), td(license.active_activation_count));
+  const keyCell = element('td');
+  const keyWrap = element('div', null, 'key-preview');
+  keyWrap.append(element('code', `${license.key_prefix}••••`));
+  if (can('license.manage') && state.session?.is_owner) {
+    const reveal = button('查看', () => revealLicenseKey(license), 'key-reveal-button');
+    reveal.title = license.key_recoverable ? '重新验证密码后查看完整 Key' : '历史 Key 需要先轮换才能查看';
+    keyWrap.append(reveal);
+  }
+  keyCell.append(keyWrap);
+  row.append(td(license.customer_ref), keyCell, td(license.bound_domain), badge(license.status), td(license.build_count), td(license.active_activation_count));
   const action = element('td', null, 'actions');
   if (can('license.manage')) action.append(button('换域名', () => changeDomain(license)), button('轮换 Key', () => confirmAction(license, 'rotate')));
   if (can('license.manage') && license.status !== 'revoked') {
@@ -395,6 +402,33 @@ function licenseRow(license) {
   }
   row.append(action);
   return row;
+}
+function revealLicenseKey(license) {
+  dialog('查看完整固定 Key', license.key_recoverable ? '请输入当前管理员密码。完整 Key 显示后不会写入日志。' : '该历史 Key 只保存了不可逆哈希，必须先轮换 Key 才能查看。', (card, close) => {
+    if (!license.key_recoverable) {
+      const row = element('div', null, 'dialog-actions');
+      row.append(button('关闭', close, 'button button-secondary'));
+      card.append(row);
+      return;
+    }
+    const form = element('form', null, 'form-stack');
+    const label = element('label', null, 'field');
+    label.append(element('span', '当前管理员密码'));
+    const input = element('input'); input.type = 'password'; input.autocomplete = 'current-password'; input.required = true;
+    label.append(input); form.append(label);
+    const row = element('div', null, 'dialog-actions');
+    row.append(button('取消', close, 'button button-secondary'));
+    const submit = element('button', '验证并查看', 'button button-primary'); submit.type = 'submit'; row.append(submit); form.append(row);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault(); submit.disabled = true;
+      try {
+        const result = await request(`/web/admin/licenses/${encodeURIComponent(license.id)}/key`, { method: 'POST', body: { password: input.value } });
+        close(); setTimeout(() => showSecret('完整固定授权 Key', result.license_key, '查看操作已写入审计记录，审计中不会保存 Key 明文。'), 230);
+      } catch (error) { notify(error.message, true); }
+      finally { submit.disabled = false; }
+    });
+    card.append(form);
+  });
 }
 function migrationRow(requestItem) {
   const row = element('tr');
@@ -529,6 +563,7 @@ function renderAdmin(data) {
   if ($('migration-count')) $('migration-count').textContent = `${migrations.length} 条记录`;
   if ($('migration-list')) renderRows('migration-list', migrations, 7, migrationRow, '暂无域名迁移申请');
   const list = $('version-list');
+  if ($('version-count')) $('version-count').textContent = `${versions.length} 个版本`;
   list.replaceChildren();
   if (!versions.length) {
     const empty = element('div', null, 'empty-state');
@@ -536,15 +571,19 @@ function renderAdmin(data) {
     list.append(empty);
   }
   for (const version of versions) {
-    const item = element('div', null, 'release-item');
+    const item = element('article', null, 'release-item compact-release-item');
     const summary = element('div', null, 'release-summary');
     const title = element('div', null, 'version-name-row');
     title.append(element('strong', version.display_name || `APPGOG ${version.version}`));
     if (version.is_latest) title.append(element('span', '最新', 'badge success'));
-    summary.append(title, element('small', `${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)} · ${date(version.created_at || version.published_at)}`), element('p', version.release_notes || '暂无更新公告'));
+    summary.append(title, element('small', `${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)} · ${date(version.published_at || version.created_at)}`), element('p', version.release_notes || '暂无更新公告'));
+    const meta = element('div', null, 'release-meta');
+    meta.append(element('span', version.source_kind === 'official' ? '真实源码 ZIP' : version.source_kind || '源码未知'));
+    meta.append(element('span', version.rollback_allowed === false ? '禁止回滚' : version.rollback_to ? `可回滚至 ${version.rollback_to}` : '允许回滚'));
+    summary.append(meta);
     const side = element('div', null, 'release-side');
     side.append(element('span', version.status === 'active' ? '已发布' : '草稿', `badge ${version.status === 'active' ? 'success' : ''}`));
-    side.append(element('small', version.rollback_allowed === false ? '禁止回滚' : version.rollback_to ? `可回滚至 ${version.rollback_to}` : '允许回滚'));
+    if (version.status === 'active' && can('version.manage')) side.append(button('撤回版本', () => withdrawVersion(version), 'mini-button mini-button-danger'));
     item.append(summary, side);
     list.append(item);
   }
@@ -559,10 +598,19 @@ function renderAdmin(data) {
   renderRows('audit-list', audit.filter((item) => [item.action, item.actor_type, item.actor_id, item.subject_type, item.subject_id].some((value) => match(value, auditQuery))), 6, (item) => { const row = element('tr'); row.append(td(item.action), td(item.actor_type), td(item.actor_id), td(item.subject_type), td(item.subject_id), td(date(item.created_at))); return row; }, '没有匹配的审计记录');
   const cmsForm = $('cms-settings-form');
   if (cmsForm) {
-    for (const key of ['platform_name', 'domain_migration_cooldown_hours', 'announcement_title', 'announcement_body']) {
+    for (const key of ['platform_name', 'domain_migration_cooldown_hours']) {
       if (cmsForm.elements[key]) cmsForm.elements[key].value = cms[key] ?? '';
     }
-    if (cmsForm.elements.announcement_enabled) cmsForm.elements.announcement_enabled.checked = cms.announcement_enabled === true;
+  }
+  const announcementForm = $('announcement-form');
+  if (announcementForm) {
+    announcementForm.elements.title.value = cms.announcement_title ?? '';
+    announcementForm.elements.body.value = cms.announcement_body ?? '';
+    announcementForm.elements.enabled.checked = cms.announcement_enabled === true;
+  }
+  if ($('announcement-state')) {
+    $('announcement-state').textContent = cms.announcement_enabled ? '已启用' : '未启用';
+    $('announcement-state').classList.toggle('status-success', cms.announcement_enabled === true);
   }
   if ($('cms-role-badge')) $('cms-role-badge').textContent = installationRoleLabel(cms.installation_role);
   if ($('cms-license-url')) $('cms-license-url').textContent = cms.license_public_url ?? '—';
@@ -575,6 +623,34 @@ function renderAdmin(data) {
   ].join(' · ');
   if ($('node-count')) $('node-count').textContent = `${nodes.length} 个节点`;
   if ($('node-list')) renderRows('node-list', nodes, 7, nodeRow, '尚未创建独立节点');
+  refreshUpdateStatus();
+}
+
+function withdrawVersion(version) {
+  dialog('撤回主题版本', `${version.display_name || version.version} 撤回后不再允许客户创建新构建，历史数据不会删除。`, (card, close) => {
+    const label = element('label', null, 'field'); label.append(element('span', '撤回原因（至少 8 个字）'));
+    const input = element('textarea'); input.required = true; input.minLength = 8; input.maxLength = 500; label.append(input); card.append(label);
+    actions(card, close, '确认撤回', async () => {
+      await request(`/web/admin/versions/${encodeURIComponent(version.id)}/withdraw`, { method: 'POST', body: { reason: input.value.trim() } });
+      notify('版本已撤回'); await refresh();
+    }, true);
+  });
+}
+
+async function refreshUpdateStatus() {
+  if (mode !== 'admin' || !$('update-state') || !can('system.manage')) return;
+  try {
+    const update = await request('/web/admin/system/update');
+    $('update-state').textContent = update.available ? ({ idle: '可用', queued: '已排队', running: '更新中', succeeded: '已完成', failed: '失败' }[update.state] || update.state) : '助手离线';
+    $('update-state').classList.toggle('status-success', update.available && ['idle', 'succeeded'].includes(update.state));
+    $('update-current-version').textContent = update.current_version ? `v${update.current_version}` : '—';
+    $('update-latest-version').textContent = update.latest_version ? `v${update.latest_version}` : '尚未检查';
+    $('update-message').textContent = update.message || '等待操作';
+    $('update-log').textContent = Array.isArray(update.log) ? update.log.slice(-12).join('\n') : update.last_log || '暂无更新日志';
+    for (const id of ['check-update', 'install-update', 'repair-current']) $(id).disabled = !update.available || ['queued', 'running'].includes(update.state);
+  } catch (error) {
+    $('update-state').textContent = '读取失败'; $('update-message').textContent = error.message;
+  }
 }
 
 function changeDomain(license) {
@@ -757,12 +833,11 @@ if (mode === 'customer') {
     const submit = form.querySelector('[type="submit"]');
     const fields = new FormData(form);
     const nextDomain = String(fields.get('domain') || '').trim();
-    const reason = String(fields.get('reason') || '').trim();
     dialog('确认立即更换授权域名', `当前域名 ${state.data?.license?.bound_domain ?? '—'} 将立即失效，并切换到 ${nextDomain}。固定 Key 不变，但新域名必须重新输入原 Key 激活。`, (card, close) => {
       actions(card, close, '确认立即换绑', async () => {
         submit.disabled = true;
         try {
-          await request('/web/customer/domain-migrations', { method: 'POST', body: { domain: nextDomain, reason } });
+          await request('/web/customer/domain-migrations', { method: 'POST', body: { domain: nextDomain } });
           form.reset();
           notify('域名换绑已完成；请在新域名重新输入原固定 Key 激活');
           await refresh();
@@ -815,7 +890,7 @@ if (mode === 'customer') {
         max_activations: Number(fields.get('max_activations')),
       } });
       form.reset();
-      showSecret('新的固定授权 Key', result.license_key, '请现在安全交给客户。完整 Key 不会保存在后台。');
+      showSecret('新的固定授权 Key', result.license_key, '请安全交给客户。Key 已加密保存，仅平台所有者重新验证密码后可以查看。');
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
@@ -837,8 +912,6 @@ if (mode === 'customer') {
         release_notes: String(fields.get('release_notes') || ''),
         channel: String(fields.get('channel') || 'stable'),
         release_kind: String(fields.get('release_kind') || 'feature'),
-        min_xboard_version: String(fields.get('min_xboard_version') || ''),
-        min_upgrade_version: String(fields.get('min_upgrade_version') || ''),
         rollback_allowed: String(fields.get('rollback_allowed') || 'false'),
         rollback_to: String(fields.get('rollback_to') || ''),
       });
@@ -889,15 +962,41 @@ if (mode === 'customer') {
       await request('/web/admin/cms/settings', { method: 'POST', body: {
         platform_name: String(fields.get('platform_name') || '').trim(),
         domain_migration_cooldown_hours: Number(fields.get('domain_migration_cooldown_hours')),
-        announcement_title: String(fields.get('announcement_title') || '').trim(),
-        announcement_body: String(fields.get('announcement_body') || '').trim(),
-        announcement_enabled: fields.has('announcement_enabled'),
       } });
       notify('运营设置已保存');
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
   });
+  $('announcement-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('[type="submit"]'); submit.disabled = true;
+    try {
+      const fields = new FormData(form);
+      await request('/web/admin/announcement', { method: 'POST', body: {
+        title: String(fields.get('title') || '').trim(),
+        body: String(fields.get('body') || '').trim(),
+        enabled: fields.has('enabled'),
+      } });
+      notify('客户公告已保存'); await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { submit.disabled = false; }
+  });
+  async function triggerUpdate(action) {
+    const labels = { 'check-update': '检查更新', 'install-version': '立即更新', 'repair-current': '修复当前版本' };
+    try {
+      await request('/web/admin/system/update', { method: 'POST', body: { action } });
+      notify(`${labels[action]}任务已提交，服务重启后页面会自动恢复`);
+      await refreshUpdateStatus();
+    } catch (error) { notify(error.message, true); }
+  }
+  $('check-update')?.addEventListener('click', () => triggerUpdate('check-update'));
+  $('install-update')?.addEventListener('click', () => triggerUpdate('install-version'));
+  $('repair-current')?.addEventListener('click', () => triggerUpdate('repair-current'));
+  setInterval(() => {
+    if (!document.hidden && !$('dashboard-view').hidden && can('system.manage')) refreshUpdateStatus();
+  }, 5000);
   $('node-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

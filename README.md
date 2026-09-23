@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.1.3
+# APPGOG打包授权系统 v1.2.0
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -16,7 +16,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 默认使用 jsDelivr 获取固定引导器；引导器下载正式包时依次尝试配置的国内源、GitHub Release 和两个 GitHub 代理地址。无论来自哪个源，签名或哈希不匹配都会拒绝执行。自有国内对象存储可通过 `APPGOG_CHINA_RELEASE_BASE=https://你的国内地址` 配置。完全断网时仍可上传版本化 `.run` 离线安装。传入一次性 `--cloudflare-token` 后可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
 
-重复执行同一命令时，引导器读取 `/opt/appgog/package.json`：版本相同则安全退出；发现更高正式版本时下载并验签，然后保留原 `.env`、数据库、签名密钥、管理员身份和备份，先构建镜像并创建完整备份，再切换服务；默认拒绝自动降级。默认安装路径为 `/opt/appgog`。
+重复执行同一命令时，引导器读取 `/opt/appgog/current/package.json`：版本相同且运行健康时安全退出；发现更高正式版本时下载并验签，把完整程序写入新的 `/opt/appgog/releases/<版本>`，创建备份并原子切换 `current`。`.env`、数据库、签名密钥、管理员身份、上传、构建成品和备份保留在 `/opt/appgog/shared` 与 Docker 数据卷中；升级失败会恢复旧程序链接和服务，默认拒绝自动降级。
 
 仓库为公开仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
@@ -25,7 +25,9 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 ```sh
 appgog status
 appgog logs build-worker
-appgog update          # 仅用服务器上已经存在的代码重建；跨版本升级请重跑上面的固定命令
+appgog update          # 检查并安装签名 GitHub Release，保留业务数据
+appgog repair-source   # 重新下载当前版本并无缓存修复程序源码
+appgog uninstall       # 卸载程序，保留数据库、Key、上传、成品、配置和备份
 appgog rollback
 appgog backup
 appgog doctor
@@ -115,7 +117,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.1.3 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.0 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'

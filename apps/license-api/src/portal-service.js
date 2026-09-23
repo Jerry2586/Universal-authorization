@@ -134,6 +134,21 @@ export function createPortalService({ repository, queue, licenseService, artifac
         subjectId: 'cms', metadata: { keys: [...textFields, ...booleanFields, 'domain_migration_cooldown_hours'].filter((key) => input[key] !== undefined) }, now });
       return this.cmsSettings();
     },
+    updateAnnouncement(input, actorId) {
+      const now = clock().toISOString();
+      const title = String(input.title ?? '').trim();
+      const body = String(input.body ?? '').trim();
+      invariant(title.length <= 200, 'ANNOUNCEMENT_TITLE_INVALID', '公告标题不能超过 200 个字符');
+      invariant(body.length <= 4000, 'ANNOUNCEMENT_BODY_INVALID', '公告正文不能超过 4000 个字符');
+      const enabled = input.enabled === true && Boolean(title || body);
+      repository.setSetting('announcement_title', title, now);
+      repository.setSetting('announcement_body', body, now);
+      repository.setSetting('announcement_enabled', enabled ? 'true' : 'false', now);
+      repository.setSetting('announcement_published_at', now, now);
+      repository.audit({ actorType: 'admin', actorId, action: 'announcement.updated', subjectType: 'system',
+        subjectId: 'customer-announcement', metadata: { enabled, has_title: Boolean(title), has_body: Boolean(body) }, now });
+      return this.cmsSettings();
+    },
     createServiceNode(input, actorId) {
       invariant(['build-center', 'worker'].includes(input.role), 'NODE_ROLE_INVALID', '节点角色无效');
       const name = String(input.name ?? '').trim();
@@ -243,11 +258,11 @@ export function createPortalService({ repository, queue, licenseService, artifac
       return { bound_domain: license.bound_domain, generation: license.generation };
     },
 
-    requestCustomerDomainMigration(session, { domain, reason }) {
+    requestCustomerDomainMigration(session, { domain }) {
       customerLicense(session);
       const cooldownHours = Math.max(0, Number(repository.setting('domain_migration_cooldown_hours')) || 0);
       const result = licenseService.selfServiceDomainMigration({
-        licenseId: session.actor_id, domain, reason, cooldownHours, actorId: session.actor_id,
+        licenseId: session.actor_id, domain, reason: '', cooldownHours, actorId: session.actor_id,
       });
       return {
         id: result.request.id,
@@ -325,7 +340,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
       };
     },
 
-    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind, minXboardVersion, minUpgradeVersion, rollbackAllowed, rollbackTo }) {
+    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo }) {
       invariant(version?.trim(), 'VERSION_REQUIRED', '必须填写版本号');
       const product = licenseService.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       invariant(!repository.sourceVersionByProductVersion(product.code, version.trim()), 'VERSION_EXISTS', '该版本已经存在', 409);
@@ -336,12 +351,12 @@ export function createPortalService({ repository, queue, licenseService, artifac
         sourceKind: SOURCE_KIND.OFFICIAL,
         sourceRef: null,
         status: 'draft',
-        releaseNotes, channel, releaseKind, minXboardVersion, minUpgradeVersion, rollbackAllowed, rollbackTo,
+        releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo,
         now: clock().toISOString(),
       });
     },
 
-    publishSourceVersion({ productCode = 'appgog', version, displayName, sourceFilename, zipBuffer, releaseNotes, channel, releaseKind, minXboardVersion, minUpgradeVersion, rollbackAllowed, rollbackTo, actorId = null }) {
+    publishSourceVersion({ productCode = 'appgog', version, displayName, sourceFilename, zipBuffer, releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo, actorId = null }) {
       invariant(Buffer.isBuffer(zipBuffer) && zipBuffer.length > 0, 'SOURCE_REQUIRED', '必须上传主题 ZIP');
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
       const validation = buildEngine.validateSource(zipBuffer);
@@ -369,7 +384,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
           sourceKind: SOURCE_KIND.OFFICIAL,
           sourceRef,
           status: 'active',
-          releaseNotes, channel, releaseKind, minXboardVersion, minUpgradeVersion, rollbackAllowed, rollbackTo,
+          releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo,
           now: clock().toISOString(),
         };
         const source = existing
@@ -399,6 +414,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
           product: license.product_code,
           customer_ref: license.customer_ref,
           key_prefix: license.key_prefix,
+          key_recoverable: Boolean(license.key_encrypted),
           status: license.status,
           bound_domain: license.bound_domain,
           update_until: license.update_until,

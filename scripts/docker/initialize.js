@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from '
 import { join, resolve } from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomInt } from 'node:crypto';
 
-export const secretNames = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY', 'INTERNAL_SERVICE_TOKEN'];
+export const secretNames = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY', 'LICENSE_ENCRYPTION_KEY', 'INTERNAL_SERVICE_TOKEN'];
 export function origin(value, label) {
   const url = new URL(value.includes('://') ? value : `https://${value}`);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !url.hostname.includes('.') || url.hostname.endsWith('.example.com') || url.hostname === 'example.com' || url.hostname === 'your-domain.com' || url.hostname.endsWith('.your-domain.com')) {
@@ -26,7 +26,7 @@ function envFile(values) {
 export function initialize({ root = '/app', env = process.env } = {}) {
   const configRoot = join(root, 'runtime');
   for (const name of ['license', 'build', 'worker', 'caddy-data', 'caddy-config']) mkdirSync(join(configRoot, name), { recursive: true });
-  for (const name of ['data', 'keys', 'artifacts', 'uploads']) mkdirSync(join(root, 'var', name), { recursive: true });
+  for (const name of ['data', 'keys', 'artifacts', 'uploads', 'update-control']) mkdirSync(join(root, 'var', name), { recursive: true });
   const identityPath = join(configRoot, 'license', 'identity.json');
   const privatePath = join(root, 'var/keys/ed25519-private.pem');
   const publicPath = join(root, 'var/keys/ed25519-public.pem');
@@ -79,7 +79,7 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     APPGOG_ROLE: 'license-center', EMBEDDED_WORKER: 'false', PORT: 8787,
     BUILD_CENTER_PUBLIC_URL: `${buildUrl}/build`, DATABASE_PATH: '/app/var/data/appgog.sqlite',
     SIGNING_PRIVATE_KEY_PATH: '/app/var/keys/ed25519-private.pem', SIGNING_PUBLIC_KEY_PATH: '/app/var/keys/ed25519-public.pem',
-    ARTIFACT_ROOT: '/app/var/artifacts', UPLOAD_ROOT: '/app/var/uploads',
+    ARTIFACT_ROOT: '/app/var/artifacts', UPLOAD_ROOT: '/app/var/uploads', UPDATE_CONTROL_PATH: '/app/var/update-control',
   }));
   atomic(join(configRoot, 'build/runtime.env'), envFile({ NODE_ENV: 'production', BUILD_CENTER_PORT: 8788,
     INTERNAL_LICENSE_URL: 'http://127.0.0.1:8787', INTERNAL_SERVICE_TOKEN: identity.secrets.INTERNAL_SERVICE_TOKEN }));

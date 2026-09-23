@@ -2,7 +2,7 @@
 
 日期：2026-09-23。
 
-APPGOG打包授权系统 v1.1.3 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.0 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -25,7 +25,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 这条命令长期不变。首次运行时，引导器识别系统和 CPU，补齐 CA、OpenSSL、下载与校验工具，获取最新正式 Release，验证 Ed25519 清单签名及 `.run` SHA-256，再由正式安装器补齐 Docker Engine、Compose v2.24+ 和 Buildx，提示输入两个真实域名并启动唯一的 appgog 容器。
 
-今后发布更高版本后逐字重跑同一句命令：引导器读取 `/opt/appgog/package.json`，版本相同则安全退出；目标版本更高则下载、验签、创建完整备份并升级，保留 `.env`、runtime、数据库、业务签名密钥、管理员身份和历史备份；目标版本更低时默认拒绝降级。升级完成后同步 `.env` 中的 `APPGOG_VERSION`。
+今后发布更高版本后逐字重跑同一句命令：引导器读取 `/opt/appgog/current/package.json`，版本相同且运行健康时安全退出；目标版本更高则下载、验签，把整套程序写入新的 `/opt/appgog/releases/<版本>`，创建完整备份并原子切换 `current`。`.env`、日志与备份位于 `/opt/appgog/shared`，数据库、业务签名密钥、上传与构建成品保留在 Docker 数据卷；程序文件强制覆盖为发布版本，升级失败恢复旧链接和旧服务。目标版本更低时默认拒绝降级。
 
 默认安装到 /opt/appgog，安装全局 appgog 管理命令。要求 x86_64/amd64 或 aarch64/arm64、至少 4 GiB 可用磁盘、可联网的软件源和镜像仓库。已有 Docker 会复用，缺失插件从其已配置软件源补齐，无法获得受支持版本时明确报错。
 
@@ -35,7 +35,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.1.3 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.0 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。Docker Hub 不可达时同样可传 `--docker-registry-mirror`、`--node-image` 和 `--caddy-image`。
@@ -83,11 +83,13 @@ appgog credentials
 appgog config
 appgog services
 appgog update
+appgog repair-source
+appgog uninstall
 appgog rollback
 appgog doctor
 ```
 
-不带参数执行 `appgog` 可打开交互式管理菜单。`appgog update` 只使用服务器当前已有代码重新构建、备份和切换服务，不负责在线发现新版本；跨版本升级必须重跑第 2 节的固定一行命令。状态页应显示一个 appgog 容器及健康状态；日志以内部组件名为前缀。
+不带参数执行 `appgog` 可打开交互式管理菜单。`appgog update` 与后台“在线更新”都会检查并安装经过 Ed25519 签名的 GitHub Release；首次安装和跨版本升级仍可直接重跑第 2 节的固定一行命令。`appgog repair-source` 重新下载当前版本并执行无缓存深度重建；`appgog uninstall` 会先备份，再移除程序、容器和镜像，但保留数据库卷、Key、上传、构建成品、`shared` 配置和备份。更新、修复和卸载分别写入独立日志。
 
 ## 5. 更新与回滚
 
@@ -97,7 +99,7 @@ appgog doctor
 sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
 ```
 
-引导器只接受签名有效且版本更高的正式包。更新流程会先构建新镜像并创建完整备份，再切换服务并执行健康检查。健康检查失败时会尝试恢复带有 `appgog-platform:rollback` 标签的上一镜像。需要手工回滚时执行：
+引导器只接受签名有效且版本更高的正式包。每次更新把完整程序部署到全新版本目录，用户、Key、公告、运营设置、上传、成品和数据库保持不变，其他程序文件由发布包完整覆盖。更新流程会先创建备份、构建版本化镜像、原子切换程序并执行健康检查；失败时恢复旧程序链接并尝试恢复上一镜像。需要手工回滚时执行：
 
 ```sh
 sh scripts/docker.sh rollback

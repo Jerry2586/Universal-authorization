@@ -21,6 +21,9 @@ SKIP_DNS_CHECK=false
 NON_INTERACTIVE=false
 OPEN_MENU=true
 UPGRADE_MODE=false
+REPAIR_SOURCE=${APPGOG_REPAIR_SOURCE:-false}
+STAGED_RELEASE=''
+PREVIOUS_RELEASE=''
 
 usage() {
   cat <<'EOF'
@@ -81,6 +84,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$SOURCE_MODE" in auto|china|github) ;; *) fail '--source 只能是 auto、china 或 github' ;; esac
+
+INSTALL_ROOT=$INSTALL_DIR
+RELEASES_DIR=$INSTALL_ROOT/releases
+SHARED_DIR=$INSTALL_ROOT/shared
+CURRENT_LINK=$INSTALL_ROOT/current
 
 [ "$(id -u)" -eq 0 ] || fail '请使用 root 或 sudo 运行。'
 [ "$(uname -s 2>/dev/null || true)" = Linux ] || fail '仅支持 Linux。'
@@ -373,38 +381,57 @@ detect_local_source() {
   if [ -f "$candidate/compose.yaml" ] && [ -f "$candidate/package.json" ]; then SOURCE_DIR=$candidate; fi
 }
 
-copy_local_source() (
-  source_root=$(CDPATH= cd -- "$SOURCE_DIR" 2>/dev/null && pwd) || fail "源码目录不存在：$SOURCE_DIR"
-  [ -f "$source_root/compose.yaml" ] && [ -f "$source_root/scripts/docker.sh" ] || fail '不是有效的 APPGOG 源码目录。'
-  [ "$source_root" = "$INSTALL_DIR" ] && return
-  if [ -e "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-    [ -f "$INSTALL_DIR/scripts/docker.sh" ] && [ -f "$INSTALL_DIR/package.json" ] && [ -f "$INSTALL_DIR/.env" ] || fail "安装目录非空且不是已有 APPGOG 部署：$INSTALL_DIR"
-    log '检测到已有安装，保留 .env、runtime、数据和备份，仅更新项目文件'
-  fi
-  mkdir -p "$INSTALL_DIR"
-  staging=$(mktemp)
-  trap 'rm -f "$staging"' 0
-  tar -C "$source_root" --exclude=.git --exclude=.env --exclude=.backup-key --exclude=backups --exclude=logs --exclude=dist \
-    --exclude=node_modules --exclude=runtime --exclude=var -cf "$staging" .
-  tar -C "$INSTALL_DIR" -xf "$staging"
-)
+prepare_shared_layout() {
+  mkdir -p "$RELEASES_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control/requests"
+  chmod 700 "$SHARED_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control" 2>/dev/null || true
+  chown -R 1000:1000 "$SHARED_DIR/update-control" 2>/dev/null || true
+  chmod 770 "$SHARED_DIR/update-control" "$SHARED_DIR/update-control/requests" 2>/dev/null || true
+  if [ ! -f "$SHARED_DIR/.env" ] && [ -f "$INSTALL_ROOT/.env" ]; then cp -p "$INSTALL_ROOT/.env" "$SHARED_DIR/.env"; fi
+  if [ ! -f "$SHARED_DIR/.backup-key" ] && [ -f "$INSTALL_ROOT/.backup-key" ]; then cp -p "$INSTALL_ROOT/.backup-key" "$SHARED_DIR/.backup-key"; fi
+  for directory in backups logs; do
+    if [ -d "$INSTALL_ROOT/$directory" ] && [ ! -L "$INSTALL_ROOT/$directory" ]; then
+      find "$INSTALL_ROOT/$directory" -mindepth 1 -maxdepth 1 -exec mv -n {} "$SHARED_DIR/$directory/" \; 2>/dev/null || true
+    fi
+  done
+}
 
-copy_release_root() (
+stage_release() {
   project_root=$1
-  [ -f "$project_root/compose.yaml" ] && [ -f "$project_root/scripts/docker.sh" ] || fail '发布包不是有效的 APPGOG 项目。'
-  mkdir -p "$INSTALL_DIR"
+  [ -f "$project_root/compose.yaml" ] && [ -f "$project_root/scripts/docker.sh" ] || fail '不是有效的 APPGOG 项目源码。'
+  package_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$project_root/package.json" | head -n 1)
+  [ -n "$package_version" ] || fail 'package.json 缺少版本号。'
+  release_name=$package_version
+  if [ -e "$RELEASES_DIR/$release_name" ]; then release_name="$package_version-repair-$(date -u +%Y%m%dT%H%M%SZ)"; fi
+  stage_dir="$RELEASES_DIR/.staging-$release_name-$$"
+  final_dir="$RELEASES_DIR/$release_name"
+  rm -rf "$stage_dir"
+  mkdir -p "$stage_dir"
   staging=$(mktemp)
-  trap 'rm -f "$staging"' 0
   tar -C "$project_root" --exclude=.git --exclude=.env --exclude=.backup-key --exclude=backups --exclude=logs --exclude=dist \
     --exclude=node_modules --exclude=runtime --exclude=var -cf "$staging" .
-  tar -C "$INSTALL_DIR" -xf "$staging"
-)
+  tar -C "$stage_dir" -xf "$staging"
+  rm -f "$staging"
+  ln -s "$SHARED_DIR/.env" "$stage_dir/.env"
+  ln -s "$SHARED_DIR/backups" "$stage_dir/backups"
+  ln -s "$SHARED_DIR/logs" "$stage_dir/logs"
+  ln -s "$SHARED_DIR/.backup-key" "$stage_dir/.backup-key"
+  mv "$stage_dir" "$final_dir"
+  STAGED_RELEASE=$final_dir
+  log "程序文件已完整写入独立版本目录：$STAGED_RELEASE"
+}
+
+copy_local_source() {
+  source_root=$(CDPATH= cd -- "$SOURCE_DIR" 2>/dev/null && pwd) || fail "源码目录不存在：$SOURCE_DIR"
+  stage_release "$source_root"
+}
+
+copy_release_root() {
+  project_root=$1
+  stage_release "$project_root"
+}
 
 download_source() {
-  if [ -e "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-    [ -f "$INSTALL_DIR/compose.yaml" ] && [ -f "$INSTALL_DIR/.env" ] || fail "安装目录非空且不是已有 APPGOG 部署：$INSTALL_DIR"
-  fi
-  mkdir -p "$(dirname -- "$INSTALL_DIR")"
+  mkdir -p "$INSTALL_ROOT"
   temp_dir=''
   case "$REPOSITORY" in
     '')
@@ -448,41 +475,95 @@ download_source() {
       copy_release_root "$temp_dir/repository"
       ;;
   esac
-  [ -f "$INSTALL_DIR/compose.yaml" ] && [ -f "$INSTALL_DIR/scripts/appgog.sh" ] || fail '下载内容不是有效安装包。'
+  [ -n "$STAGED_RELEASE" ] && [ -f "$STAGED_RELEASE/compose.yaml" ] && [ -f "$STAGED_RELEASE/scripts/appgog.sh" ] || fail '下载内容不是有效安装包。'
 }
 
 write_env() {
-  package_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$INSTALL_DIR/package.json" | head -n 1)
+  package_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$STAGED_RELEASE/package.json" | head -n 1)
   [ -n "$package_version" ] || fail 'package.json 缺少版本号。'
-  if [ -f "$INSTALL_DIR/.env" ]; then
+  if [ -f "$SHARED_DIR/.env" ]; then
     env_temp=$(mktemp)
-    if grep -q '^APPGOG_VERSION=' "$INSTALL_DIR/.env"; then
-      sed "s/^APPGOG_VERSION=.*/APPGOG_VERSION=$package_version/" "$INSTALL_DIR/.env" > "$env_temp"
+    if grep -q '^APPGOG_VERSION=' "$SHARED_DIR/.env"; then
+      sed "s/^APPGOG_VERSION=.*/APPGOG_VERSION=$package_version/" "$SHARED_DIR/.env" > "$env_temp"
     else
-      cp "$INSTALL_DIR/.env" "$env_temp"
+      cp "$SHARED_DIR/.env" "$env_temp"
       printf 'APPGOG_VERSION=%s\n' "$package_version" >> "$env_temp"
     fi
-    cat "$env_temp" > "$INSTALL_DIR/.env"
+    if grep -q '^APPGOG_SHARED_DIR=' "$env_temp"; then
+      sed "s|^APPGOG_SHARED_DIR=.*|APPGOG_SHARED_DIR=$SHARED_DIR|" "$env_temp" > "$env_temp.next" && mv "$env_temp.next" "$env_temp"
+    else printf 'APPGOG_SHARED_DIR=%s\n' "$SHARED_DIR" >> "$env_temp"; fi
+    if grep -q '^APPGOG_IMAGE=' "$env_temp"; then
+      sed "s|^APPGOG_IMAGE=.*|APPGOG_IMAGE=appgog-platform:$package_version|" "$env_temp" > "$env_temp.next" && mv "$env_temp.next" "$env_temp"
+    else printf 'APPGOG_IMAGE=appgog-platform:%s\n' "$package_version" >> "$env_temp"; fi
+    cat "$env_temp" > "$SHARED_DIR/.env"
     rm -f "$env_temp"
-    chmod 600 "$INSTALL_DIR/.env"
+    chmod 600 "$SHARED_DIR/.env"
     log "保留已有 .env 并同步版本号为 $package_version；域名修改请使用 appgog config"
     return
   fi
   umask 077
-  printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=%s\nAPPGOG_NODE_IMAGE=%s\nAPPGOG_CADDY_IMAGE=%s\nLICENSE_SERVICE_ENABLED=true\nCUSTOMER_LOGIN_ENABLED=true\nBUILD_CENTER_ENABLED=true\nNEW_BUILDS_ENABLED=true\nWORKER_ENABLED=true\n' \
-    "$AUTH_DOMAIN" "$BUILD_DOMAIN" "$package_version" "$NODE_IMAGE" "$CADDY_IMAGE" > "$INSTALL_DIR/.env"
-  chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
+  printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=%s\nAPPGOG_IMAGE=appgog-platform:%s\nAPPGOG_SHARED_DIR=%s\nAPPGOG_NODE_IMAGE=%s\nAPPGOG_CADDY_IMAGE=%s\nLICENSE_SERVICE_ENABLED=true\nCUSTOMER_LOGIN_ENABLED=true\nBUILD_CENTER_ENABLED=true\nNEW_BUILDS_ENABLED=true\nWORKER_ENABLED=true\n' \
+    "$AUTH_DOMAIN" "$BUILD_DOMAIN" "$package_version" "$package_version" "$SHARED_DIR" "$NODE_IMAGE" "$CADDY_IMAGE" > "$SHARED_DIR/.env"
+  chmod 600 "$SHARED_DIR/.env" 2>/dev/null || true
+}
+
+activate_release() {
+  if [ -L "$CURRENT_LINK" ]; then PREVIOUS_RELEASE=$(readlink -f "$CURRENT_LINK" 2>/dev/null || true); fi
+  next_link="$INSTALL_ROOT/.current.$$"
+  rm -f "$next_link"
+  ln -s "$STAGED_RELEASE" "$next_link"
+  mv -Tf "$next_link" "$CURRENT_LINK"
+}
+
+restore_previous_release() {
+  [ -n "$PREVIOUS_RELEASE" ] || return 0
+  next_link="$INSTALL_ROOT/.current.rollback.$$"
+  ln -s "$PREVIOUS_RELEASE" "$next_link"
+  mv -Tf "$next_link" "$CURRENT_LINK"
+  (cd "$CURRENT_LINK" && sh scripts/docker.sh restart) >/dev/null 2>&1 || true
 }
 
 install_command() {
-  command_path="$INSTALL_DIR/scripts/appgog.sh"
-  chmod 755 "$command_path" "$INSTALL_DIR/scripts/docker.sh" "$INSTALL_DIR/scripts/install-linux.sh"
+  command_path="$CURRENT_LINK/scripts/appgog.sh"
+  chmod 755 "$command_path" "$CURRENT_LINK/scripts/docker.sh" "$CURRENT_LINK/scripts/install-linux.sh" "$CURRENT_LINK/scripts/update-helper.sh"
   if [ -e /usr/local/bin/appgog ] || [ -L /usr/local/bin/appgog ]; then
-    existing=$(readlink /usr/local/bin/appgog 2>/dev/null || true)
-    [ "$existing" = "$command_path" ] || fail '/usr/local/bin/appgog 已被其他程序占用。'
+    existing=$(readlink -f /usr/local/bin/appgog 2>/dev/null || true)
+    case "$existing" in
+      "$INSTALL_ROOT"/*) ;;
+      *) fail '/usr/local/bin/appgog 已被其他程序占用。' ;;
+    esac
   fi
   temp_link=/usr/local/bin/.appgog.$$
   rm -f "$temp_link"; ln -s "$command_path" "$temp_link"; mv -f "$temp_link" /usr/local/bin/appgog
+}
+
+install_update_helper() {
+  command -v systemctl >/dev/null 2>&1 || { log '系统未使用 systemd，在线更新助手未自动启用；命令行更新仍可用'; return 0; }
+  unit=/etc/systemd/system/appgog-update-helper.service
+  unit_temp="$unit.$$"
+  cat > "$unit_temp" <<EOF
+[Unit]
+Description=APPGOG restricted signed update helper
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$CURRENT_LINK/scripts/update-helper.sh --daemon $INSTALL_ROOT
+Restart=always
+RestartSec=3
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 644 "$unit_temp"
+  mv "$unit_temp" "$unit"
+  systemctl daemon-reload
+  systemctl enable appgog-update-helper.service >/dev/null
+  if [ "${APPGOG_HELPER_ACTIVE:-false}" != true ]; then systemctl restart appgog-update-helper.service; fi
 }
 
 print_result() {
@@ -493,7 +574,8 @@ APPGOG 安装完成
 
 管理后台：https://$AUTH_DOMAIN/admin
 客户中心：https://$BUILD_DOMAIN/build
-安装目录：$INSTALL_DIR
+安装目录：$INSTALL_ROOT
+当前版本：$CURRENT_LINK
 管理菜单：appgog
 
 输入 appgog credentials 查看初始管理员账号密码。
@@ -507,17 +589,21 @@ wait_public_https() {
     attempts=0
     until curl -fsS --max-time 10 "$endpoint" >/dev/null 2>&1; do
       attempts=$((attempts + 1))
-      [ "$attempts" -lt 36 ] || fail "公网 HTTPS 健康检查失败：$endpoint。请检查 DNS、80/443 防火墙和 Caddy 日志。"
+      if [ "$attempts" -ge 36 ]; then
+        printf '错误：公网 HTTPS 健康检查失败：%s。请检查 DNS、80/443 防火墙和 Caddy 日志。\n' "$endpoint" >&2
+        return 1
+      fi
       sleep 5
     done
     log "公网 HTTPS 已就绪：$endpoint"
   done
 }
 
-if [ -f "$INSTALL_DIR/.env" ]; then
+prepare_shared_layout
+if [ -f "$SHARED_DIR/.env" ]; then
   UPGRADE_MODE=true
-  AUTH_DOMAIN=$(sed -n 's/^AUTH_DOMAIN=//p' "$INSTALL_DIR/.env" | tail -n 1)
-  BUILD_DOMAIN=$(sed -n 's/^BUILD_DOMAIN=//p' "$INSTALL_DIR/.env" | tail -n 1)
+  AUTH_DOMAIN=$(sed -n 's/^AUTH_DOMAIN=//p' "$SHARED_DIR/.env" | tail -n 1)
+  BUILD_DOMAIN=$(sed -n 's/^BUILD_DOMAIN=//p' "$SHARED_DIR/.env" | tail -n 1)
 fi
 log "检测系统：${PRETTY_NAME:-$DISTRO}"
 install_packages
@@ -536,17 +622,23 @@ else
 fi
 
 write_env
-install_command
+activate_release
 
 if [ "$SKIP_START" = false ]; then
   if [ "$UPGRADE_MODE" = true ]; then
     log '检测到已有安装：创建完整备份、构建新版本并安全升级'
-    (cd "$INSTALL_DIR" && sh scripts/docker.sh update)
+    if [ "$REPAIR_SOURCE" = true ]; then
+      if ! (cd "$CURRENT_LINK" && APPGOG_NO_CACHE=true sh scripts/docker.sh update); then restore_previous_release; fail '源码修复失败，已恢复原版本。'; fi
+    else
+      if ! (cd "$CURRENT_LINK" && sh scripts/docker.sh update); then restore_previous_release; fail '升级失败，已恢复原版本。'; fi
+    fi
   else
     log '构建镜像并启动 APPGOG'
-    (cd "$INSTALL_DIR" && sh scripts/docker.sh install)
+    if ! (cd "$CURRENT_LINK" && sh scripts/docker.sh install); then restore_previous_release; fail '安装失败。'; fi
   fi
-  wait_public_https
+  if ! wait_public_https; then restore_previous_release; fail '部署健康检查失败，已恢复旧版本（如存在）。'; fi
+  install_command
+  install_update_helper
 fi
 if [ "$SKIP_START" = false ]; then print_result
 else log '源码与环境已准备；按要求未启动，尚未验证公网 HTTPS。'

@@ -18,9 +18,11 @@ ROOT_DIR=$(resolve_root) || {
   echo '无法定位 APPGOG 安装目录。请设置 APPGOG_ROOT。' >&2
   exit 1
 }
+case "$ROOT_DIR" in */releases/*) INSTALL_ROOT=${ROOT_DIR%/releases/*} ;; *) INSTALL_ROOT=$ROOT_DIR ;; esac
+SHARED_DIR="$INSTALL_ROOT/shared"
 DOCKER_SCRIPT="$ROOT_DIR/scripts/docker.sh"
 ENV_FILE="$ROOT_DIR/.env"
-OPERATIONS_LOG="$ROOT_DIR/logs/operations.log"
+OPERATIONS_LOG="$SHARED_DIR/logs/operations.log"
 
 [ -f "$DOCKER_SCRIPT" ] && [ -f "$ROOT_DIR/compose.yaml" ] || {
   echo "APPGOG 安装目录无效：$ROOT_DIR" >&2
@@ -60,9 +62,53 @@ confirm() {
 
 run_docker() {
   umask 077
-  mkdir -p "$ROOT_DIR/logs"
+  mkdir -p "$SHARED_DIR/logs"
   printf '%s actor=%s command=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(id -un 2>/dev/null || echo unknown)" "$1" >> "$OPERATIONS_LOG"
   (cd "$ROOT_DIR" && sh "$DOCKER_SCRIPT" "$@")
+}
+
+run_signed_installer() {
+  requested=${1:-}; repair=${2:-false}; log_name=${3:-update.log}
+  mkdir -p "$SHARED_DIR/logs"
+  bootstrap=$(mktemp) || return 1
+  cp "$ROOT_DIR/install-docker.sh" "$bootstrap" || { rm -f "$bootstrap"; return 1; }
+  chmod 700 "$bootstrap"
+  if [ -n "$requested" ]; then
+    APPGOG_VERSION="$requested" APPGOG_INSTALL_DIR="$INSTALL_ROOT" APPGOG_REPAIR_SOURCE="$repair" \
+      sh "$bootstrap" --install-dir "$INSTALL_ROOT" --non-interactive --no-menu 2>&1 | tee -a "$SHARED_DIR/logs/$log_name"
+  else
+    APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$bootstrap" --install-dir "$INSTALL_ROOT" --non-interactive --no-menu 2>&1 | tee -a "$SHARED_DIR/logs/$log_name"
+  fi
+  result=$?; rm -f "$bootstrap"; return "$result"
+}
+
+online_update() { run_signed_installer '' false update.log; }
+
+repair_source() {
+  version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/package.json" | head -n 1)
+  [ -n "$version" ] || { say_error '无法识别当前版本。'; return 1; }
+  run_signed_installer "$version" true repair.log
+}
+
+uninstall_keep_data() {
+  [ "$(id -u)" -eq 0 ] || { say_error '卸载需要使用 root 或 sudo。'; return 1; }
+  case "$INSTALL_ROOT" in /opt/appgog|/srv/appgog|/home/*/appgog) ;; *) say_error "拒绝卸载非标准目录：$INSTALL_ROOT"; return 1 ;; esac
+  mkdir -p "$SHARED_DIR/logs"
+  uninstall_log="$SHARED_DIR/logs/uninstall.log"
+  printf '%s 开始保留数据卸载\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$uninstall_log"
+  run_docker backup 2>&1 | tee -a "$uninstall_log" || return 1
+  (cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml down --remove-orphans) 2>&1 | tee -a "$uninstall_log"
+  image=$(sed -n 's/^APPGOG_IMAGE=//p' "$ENV_FILE" | tail -n 1)
+  [ -z "$image" ] || docker image rm "$image" >> "$uninstall_log" 2>&1 || true
+  systemctl disable --now appgog-update-helper.service >> "$uninstall_log" 2>&1 || true
+  rm -f /etc/systemd/system/appgog-update-helper.service /usr/local/bin/appgog
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  resolved_releases=$(CDPATH= cd -- "$INSTALL_ROOT/releases" 2>/dev/null && pwd || true)
+  [ "$resolved_releases" = "$INSTALL_ROOT/releases" ] || { say_error '版本目录校验失败，已停止删除源码。'; return 1; }
+  rm -rf "$INSTALL_ROOT/releases"
+  rm -f "$INSTALL_ROOT/current"
+  printf '%s 卸载完成，Docker 数据卷与 shared 目录已保留\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$uninstall_log"
+  say_ok "程序已卸载；数据库、Key、上传、构建成品、配置和备份仍保留。日志：$uninstall_log"
 }
 
 env_value() {
@@ -327,6 +373,8 @@ main_menu() {
       ' 11. 从完整备份恢复' \
       ' 12. 回滚最近一次更新' \
       ' 13. 系统诊断与高级工具' \
+      ' 14. 修复系统源码' \
+      ' 15. 卸载系统（保留数据）' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -339,11 +387,13 @@ main_menu() {
       6) configure_domains; pause_menu ;;
       7) configure_services; pause_menu ;;
       8) run_docker credentials; pause_menu ;;
-      9) confirm '确认构建当前代码、完整备份并更新服务？' && run_docker update; pause_menu ;;
+      9) confirm '确认检查签名 Release、完整备份并更新到最新版本？' && online_update; pause_menu ;;
       10) run_docker backup; pause_menu ;;
       11) restore_menu; pause_menu ;;
       12) confirm '确认先备份当前状态，再回滚到最近一次更新前镜像？' && run_docker rollback; pause_menu ;;
       13) advanced_menu ;;
+      14) confirm '确认重新下载当前签名版本、备份并深度重建源码？' && repair_source; pause_menu ;;
+      15) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -364,7 +414,9 @@ APPGOG 管理命令
   appgog config          修改并保存两个域名
   appgog services        配置授权、登录、打包、构建和 Worker 开关
   appgog credentials     查看初始管理员凭证
-  appgog update          构建、完整备份并更新
+  appgog update          下载签名 Release、完整备份并更新
+  appgog repair-source   重新下载当前版本并深度修复源码
+  appgog uninstall       卸载程序并保留业务数据与备份
   appgog rollback        回滚到最近一次更新前镜像
   appgog backup          创建 AES-256 加密完整备份
   appgog restore <文件>  从备份恢复到空部署
@@ -378,7 +430,10 @@ EOF
 
 case "${1:-menu}" in
   menu) main_menu ;;
-  install|status|start|stop|restart|update|rollback|backup|credentials|doctor|diagnostics) run_docker "$1" ;;
+  install|status|start|stop|restart|rollback|backup|credentials|doctor|diagnostics) run_docker "$1" ;;
+  update) online_update ;;
+  repair-source) repair_source ;;
+  uninstall) confirm '确认卸载程序但保留全部业务数据？' && uninstall_keep_data ;;
   repair) run_docker repair-permissions ;;
   cleanup) run_docker cleanup-images ;;
   logs) shift; run_docker logs "${1:-all}" "${2:-100}" ;;

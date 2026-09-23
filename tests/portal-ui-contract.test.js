@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import test from 'node:test';
+
+const root = resolve(import.meta.dirname, '..');
+const read = (name) => readFileSync(resolve(root, name), 'utf8');
+
+test('admin UI exposes independent announcement, protected key reveal, and signed online update controls', () => {
+  const html = read('apps/web/public/admin.html');
+  const script = read('apps/web/public/assets/portal.js');
+  assert.match(html, /data-view="announcements"/);
+  assert.match(html, /id="announcement-form"/);
+  assert.match(html, /id="check-update"/);
+  assert.match(html, /id="install-update"/);
+  assert.match(html, /id="repair-current"/);
+  assert.match(html, /id="logout" class="header-logout"/);
+  assert.doesNotMatch(html, /返回首页/);
+  assert.doesNotMatch(html, /name="min_xboard_version"|name="min_upgrade_version"/);
+  assert.match(script, /重新验证密码后查看完整 Key/);
+  assert.match(script, /\/web\/admin\/announcement/);
+  assert.match(script, /install-version/);
+});
+
+test('customer build UI keeps the version catalog in build tasks and removes migration notes', () => {
+  const html = read('apps/web/public/build.html');
+  const buildsPage = html.indexOf('data-page="builds"');
+  const catalog = html.indexOf('id="version-catalog"');
+  assert.ok(buildsPage >= 0 && catalog > buildsPage);
+  assert.doesNotMatch(html, /name="reason"/);
+  assert.doesNotMatch(html, /＋ 新建构建/);
+});

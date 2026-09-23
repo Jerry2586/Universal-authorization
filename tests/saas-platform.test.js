@@ -23,6 +23,7 @@ async function fixture(t, initialTime = '2026-09-22T08:00:00.000Z', surface = 'c
     pepper: 'saas-test-pepper-longer-than-thirty-two-characters',
     sessionSecret: 'saas-test-session-secret-longer-than-thirty-two',
     deliveryEncryptionKey: 'saas-test-delivery-key-longer-than-thirty-two',
+    licenseEncryptionKey: 'saas-test-license-key-longer-than-thirty-two',
     adminToken: 'saas-test-admin-token-longer-than-thirty-two',
     adminUsername: 'owner', adminPassword: 'owner-password-for-saas-tests',
     workerToken: 'saas-test-worker-token-longer-than-thirty-two',
@@ -32,6 +33,7 @@ async function fixture(t, initialTime = '2026-09-22T08:00:00.000Z', surface = 'c
     activationTokenTtlSeconds: 604800, buildTicketTtlSeconds: 900,
     webSessionTtlSeconds: 30 * 86400, maxSourceUploadBytes: 128 * 1024 * 1024,
     artifactRoot: join(root, 'artifacts'), uploadRoot: join(root, 'uploads'),
+    updateControlPath: join(root, 'update-control'),
   };
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
   const app = bootstrap({ database, config, privateKey, publicKey: publicKeyPem, clock: () => new Date(now) });
@@ -431,6 +433,62 @@ test('授权 Key 没有删除接口，撤销只改变状态并保留记录', asy
   assert.equal(row.status, 'revoked');
 });
 
+test('只有平台所有者重新验证密码后可查看加密保存的完整 Key，审计不记录明文', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-REVEAL-KEY' });
+
+  const wrongPassword = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { password: 'wrong-password' },
+  });
+  assert.equal(wrongPassword.status, 403);
+  assert.equal(wrongPassword.data.error.code, 'ADMIN_PASSWORD_CURRENT_INVALID');
+
+  const revealed = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { password: app.config.adminPassword },
+  });
+  assert.equal(revealed.status, 200);
+  assert.equal(revealed.data.license_key, issued.license_key);
+
+  const created = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'license.operator', display_name: '授权运营', password: '583214', role: 'license_ops' },
+  });
+  const operator = await app.send('/web/admin/login', { method: 'POST', body: { username: 'license.operator', password: '583214' } });
+  const forbidden = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
+    method: 'POST', cookie: operator.cookie.split(';')[0], csrf: operator.data.csrf_token, body: { password: '583214' },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.data.error.code, 'LICENSE_KEY_REVEAL_FORBIDDEN');
+
+  const event = app.repository.listAudit(20).find((item) => item.action === 'license.key_viewed');
+  assert.ok(event);
+  assert.equal(event.subject_id, issued.license_id);
+  assert.ok(!JSON.stringify(event).includes(issued.license_key));
+
+  app.database.prepare('UPDATE licenses SET key_encrypted = NULL WHERE id = ?').run(issued.license_id);
+  const legacy = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { password: app.config.adminPassword },
+  });
+  assert.equal(legacy.status, 409);
+  assert.equal(legacy.data.error.code, 'LICENSE_KEY_LEGACY');
+});
+
+test('客户公告通过独立接口发布并写入审计', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const updated = await app.send('/web/admin/announcement', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { title: '系统维护通知', body: '今晚进行例行维护。', enabled: true },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.announcement_title, '系统维护通知');
+  assert.equal(updated.data.announcement_body, '今晚进行例行维护。');
+  assert.equal(updated.data.announcement_enabled, true);
+  assert.ok(app.repository.listAudit(20).some((event) => event.action === 'announcement.updated'));
+});
+
 test('版本更新公告由服务端签名，打包地址与版本字段不能被替换', async (t) => {
   const app = await fixture(t);
   addPublishedVersion(app, { version: '1.8.0', publishedAt: '2026-09-22T08:00:00.000Z', releaseNotes: '发布公告' });
@@ -563,6 +621,31 @@ test('已有 SQLite 数据库自动追加新字段并保留原管理员身份', 
       const migration = upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-baseline'").get();
       assert.ok(migration?.applied_at);
       assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-domain-normalization'").get());
+    } finally { upgraded.close(); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('已经记录旧基线迁移的生产数据库仍会追加完整 Key 加密字段', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-v120-migrate-test-'));
+  const path = join(root, 'legacy-v113.sqlite');
+  try {
+    const old = new DatabaseSync(path);
+    old.exec(`
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_migrations VALUES ('2026-09-23-v1.0.0-baseline', '2026-09-23T00:00:00.000Z');
+      CREATE TABLE licenses (
+        id TEXT PRIMARY KEY, product_id TEXT NOT NULL, customer_ref TEXT NOT NULL,
+        key_prefix TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL,
+        bound_domain TEXT, update_until TEXT, max_builds_per_day INTEGER NOT NULL DEFAULT 3,
+        max_activations INTEGER NOT NULL DEFAULT 1, generation INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+    `);
+    old.close();
+    const upgraded = openDatabase(path);
+    try {
+      assert.ok(upgraded.prepare('PRAGMA table_info(licenses)').all().some((column) => column.name === 'key_encrypted'));
+      assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.2.0-license-key-encryption'").get());
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

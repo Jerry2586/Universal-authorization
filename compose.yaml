@@ -39,6 +39,7 @@ services:
       - appgog-keys:/app/var/keys
       - appgog-artifacts:/app/var/artifacts
       - appgog-uploads:/app/var/uploads
+      - ${APPGOG_SHARED_DIR:-./shared}/update-control:/app/var/update-control
       - appgog-license-config:/app/runtime/license
       - appgog-build-config:/app/runtime/build
       - appgog-worker-config:/app/runtime/worker

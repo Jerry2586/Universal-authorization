@@ -6,6 +6,10 @@ import { SqliteBuildQueue } from '../../../packages/adapters/src/sqlite-build-qu
 import { LocalArtifactStore } from '../../../packages/adapters/src/local-artifact-store.js';
 import { HardenedThemeBuildEngine } from '../../build-worker/src/engine.js';
 import { hashPassword } from '../../../packages/core/src/password.js';
+import { createUpdateControl } from './update-control.js';
+import { readFileSync } from 'node:fs';
+
+const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
 
 export function bootstrap({ database, config, privateKey, publicKey = '', clock }) {
   const repository = createRepository(database);
@@ -18,6 +22,7 @@ export function bootstrap({ database, config, privateKey, publicKey = '', clock 
     publicBaseUrl: config.publicBaseUrl,
   });
   const sessions = createSessionService({ repository, config, clock });
+  const updates = createUpdateControl({ root: config.updateControlPath, currentVersion: PACKAGE_VERSION, clock });
   const portal = createPortalService({
     repository, queue, licenseService: service, artifactStore, buildEngine, config, clock,
   });
@@ -34,5 +39,5 @@ export function bootstrap({ database, config, privateKey, publicKey = '', clock 
       now: (clock ? clock() : new Date()).toISOString(),
     });
   }
-  return { repository, service, sessions, portal, queue, artifactStore, buildEngine };
+  return { repository, service, sessions, portal, updates, queue, artifactStore, buildEngine };
 }

@@ -5,6 +5,7 @@ import {
   keyPrefix, newBuildTicket, newId, newInstallKey, newInstallReceiptSecret, newLicenseKey, newPackageSecret, newRefreshSecret,
 } from '../../../packages/core/src/identifiers.js';
 import { hashSecret, secretMatches } from '../../../packages/core/src/security.js';
+import { openSecret, sealSecret } from '../../../packages/core/src/secret-box.js';
 import { signCompactToken } from '../../../packages/core/src/signing.js';
 import { LICENSE_STATUS } from '../../../packages/core/src/states.js';
 import { transaction } from './database.js';
@@ -22,6 +23,10 @@ function startOfRollingDay(date) {
 }
 
 export function createLicenseService({ database, repository, config, privateKey, clock = () => new Date() }) {
+  const configuredLicenseEncryptionKey = config.licenseEncryptionKey ?? config.deliveryEncryptionKey ?? config.pepper ?? 'development-license-key';
+  const licenseEncryptionKey = configuredLicenseEncryptionKey.length >= 32
+    ? configuredLicenseEncryptionKey
+    : createHash('sha256').update(`appgog-license-key:${configuredLicenseEncryptionKey}`).digest('hex');
   function findActiveLicense(rawKey) {
     const license = repository.licenseByHash(hashSecret(rawKey, config.pepper));
     invariant(license, 'LICENSE_NOT_FOUND', '授权 Key 无效', 404);
@@ -101,6 +106,7 @@ export function createLicenseService({ database, repository, config, privateKey,
         customerRef: customerRef.trim(),
         keyPrefix: keyPrefix(plainKey),
         keyHash: hashSecret(plainKey, config.pepper),
+        keyEncrypted: sealSecret(plainKey, licenseEncryptionKey),
         status: LICENSE_STATUS.ACTIVE,
         boundDomain: domain ? canonicalizeDomain(domain) : null,
         updateUntil,
@@ -452,12 +458,22 @@ export function createLicenseService({ database, repository, config, privateKey,
       const plainKey = newLicenseKey(license.product_code);
       const now = iso(clock);
       const updated = transaction(database, () => {
-        const result = repository.rotateLicense(licenseId, keyPrefix(plainKey), hashSecret(plainKey, config.pepper), now);
+        const result = repository.rotateLicense(licenseId, keyPrefix(plainKey), hashSecret(plainKey, config.pepper), sealSecret(plainKey, licenseEncryptionKey), now);
         repository.revokeInstallReceiptsByLicense(licenseId, now);
         return result;
       });
       repository.audit({ actorType: 'admin', actorId, action: 'license.key_rotated', subjectType: 'license', subjectId: licenseId, now });
       return { license: updated, licenseKey: plainKey };
+    },
+
+    revealLicenseKey({ licenseId, actorId = null }) {
+      const license = repository.licenseById(licenseId);
+      invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);
+      invariant(license.key_encrypted, 'LICENSE_KEY_LEGACY', '历史 Key 无法恢复，请先轮换 Key 后再查看', 409);
+      const now = iso(clock);
+      const licenseKey = openSecret(license.key_encrypted, licenseEncryptionKey);
+      repository.audit({ actorType: 'admin', actorId, action: 'license.key_viewed', subjectType: 'license', subjectId: licenseId, now });
+      return { license, licenseKey };
     },
 
     changeLicenseDomain({ licenseId, domain, actorId = null }) {

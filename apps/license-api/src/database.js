@@ -31,6 +31,7 @@ const MIGRATIONS = Object.freeze({
   ],
   licenses: [
     ['max_activations', 'INTEGER NOT NULL DEFAULT 1'],
+    ['key_encrypted', 'TEXT'],
   ],
 });
 
@@ -50,6 +51,20 @@ function migrate(database) {
         SELECT id FROM admin_users ORDER BY created_at ASC, id ASC LIMIT 1
       ) AND NOT EXISTS (SELECT 1 FROM admin_users WHERE is_owner = 1)`);
       database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(baselineVersion, new Date().toISOString());
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  const encryptedKeyVersion = '2026-09-23-v1.2.0-license-key-encryption';
+  if (!database.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(encryptedKeyVersion)) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const licenseColumns = new Set(database.prepare('PRAGMA table_info(licenses)').all().map((column) => column.name));
+      if (!licenseColumns.has('key_encrypted')) database.exec('ALTER TABLE licenses ADD COLUMN key_encrypted TEXT');
+      database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(encryptedKeyVersion, new Date().toISOString());
       database.exec('COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');

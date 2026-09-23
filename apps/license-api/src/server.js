@@ -9,8 +9,8 @@ import { startEmbeddedWorker } from '../../build-worker/src/embedded-worker.js';
 const config = loadConfig();
 const database = openDatabase(config.databasePath);
 const { privateKey, publicKey } = ensureSigningKeys(config.privateKeyPath, config.publicKeyPath);
-const { service, sessions, portal, artifactStore, buildEngine } = bootstrap({ database, config, privateKey, publicKey });
-const server = createServer(createHttpHandler({ service, sessions, portal, artifactStore, config, publicKey }));
+const { service, sessions, portal, updates, artifactStore, buildEngine } = bootstrap({ database, config, privateKey, publicKey });
+const server = createServer(createHttpHandler({ service, sessions, portal, updates, artifactStore, config, publicKey }));
 const embeddedWorker = config.surface === 'combined' && config.embeddedWorker
   ? startEmbeddedWorker({ portal, buildEngine, artifactStore })
   : null;

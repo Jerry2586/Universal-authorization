@@ -51,6 +51,8 @@ export function loadConfig(overrides = {}) {
     workerToken: process.env.WORKER_TOKEN ?? 'development-worker-token-change-me',
     sessionSecret: process.env.SESSION_SECRET ?? 'development-session-secret-change-me-now',
     deliveryEncryptionKey: process.env.DELIVERY_ENCRYPTION_KEY ?? 'development-delivery-key-change-me-now',
+    licenseEncryptionKey: process.env.LICENSE_ENCRYPTION_KEY ?? process.env.DELIVERY_ENCRYPTION_KEY ?? 'development-license-key-change-me-now',
+    updateControlPath: resolve(cwd, process.env.UPDATE_CONTROL_PATH ?? './var/update-control'),
     publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'http://127.0.0.1:8787',
     buildCenterPublicUrl: process.env.BUILD_CENTER_PUBLIC_URL ?? 'http://127.0.0.1:8788/build',
     artifactRoot: resolve(cwd, process.env.ARTIFACT_ROOT ?? './var/artifacts'),
@@ -72,7 +74,7 @@ export function loadConfig(overrides = {}) {
   config.role = overrides.role ?? selectedRole;
   config.surface = config.role === 'all-in-one' ? 'combined' : 'license-center';
   if (process.env.NODE_ENV === 'production') {
-    const secrets = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY'];
+    const secrets = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY', 'LICENSE_ENCRYPTION_KEY'];
     for (const name of secrets) {
       const value = process.env[name];
       if (!value || value.length < 32 || /^(replace-with|development-)/.test(value)) {

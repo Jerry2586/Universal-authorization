@@ -224,7 +224,7 @@ function createRateLimiter() {
   };
 }
 
-export function createHttpHandler({ service, sessions, portal, artifactStore, config, publicKey }) {
+export function createHttpHandler({ service, sessions, portal, updates, artifactStore, config, publicKey }) {
   const rateLimit = createRateLimiter();
   function nodeFromToken(request, role) {
     const token = bearer(request);
@@ -318,7 +318,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         const result = sessions.loginAdmin(body.username, body.password, clientAddress(request));
         return json(response, 200, { actor: 'admin', id: result.admin.id, username: result.admin.username,
           display_name: result.admin.display_name, role: result.admin.role, permissions: result.admin.permissions,
-          csrf_token: result.csrfToken }, {
+          is_owner: Boolean(result.admin.is_owner), csrf_token: result.csrfToken }, {
           'set-cookie': cookieHeader(result.token, config, 'admin'),
         });
       }
@@ -425,6 +425,27 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         return json(response, 200, portal.updateCmsSettings(body, session.actor_id));
       }
 
+      if (method === 'POST' && url.pathname === '/web/admin/announcement') {
+        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
+        const body = await readJson(request);
+        return json(response, 200, portal.updateAnnouncement(body, session.actor_id));
+      }
+
+      if (method === 'GET' && url.pathname === '/web/admin/system/update') {
+        requireWebSession(request, sessions, 'admin', false, 'system.manage');
+        return json(response, 200, updates.status());
+      }
+
+      if (method === 'POST' && url.pathname === '/web/admin/system/update') {
+        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
+        const body = await readJson(request);
+        const queued = updates.enqueue(body.action, body.version);
+        const now = new Date().toISOString();
+        portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: `system_update.${queued.action}`,
+          subjectType: 'system_update', subjectId: queued.id, metadata: { version: queued.version }, now });
+        return json(response, 202, queued);
+      }
+
       if (method === 'POST' && url.pathname === '/web/admin/cms/nodes') {
         const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
         const body = await readJson(request);
@@ -528,8 +549,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         const version = portal.registerSourceVersion({
           productCode: body.product_code, version: body.version,
           displayName: body.display_name, releaseNotes: body.release_notes, channel: body.channel,
-          releaseKind: body.release_kind, minXboardVersion: body.min_xboard_version,
-          minUpgradeVersion: body.min_upgrade_version, rollbackAllowed: body.rollback_allowed,
+          releaseKind: body.release_kind, rollbackAllowed: body.rollback_allowed,
           rollbackTo: body.rollback_to,
         });
         return json(response, 201, {
@@ -548,8 +568,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
           displayName: url.searchParams.get('display_name'),
           sourceFilename: url.searchParams.get('source_filename'),
           releaseNotes: url.searchParams.get('release_notes'), channel: url.searchParams.get('channel'),
-          releaseKind: url.searchParams.get('release_kind'), minXboardVersion: url.searchParams.get('min_xboard_version'),
-          minUpgradeVersion: url.searchParams.get('min_upgrade_version'), rollbackAllowed: url.searchParams.get('rollback_allowed') !== 'false',
+          releaseKind: url.searchParams.get('release_kind'), rollbackAllowed: url.searchParams.get('rollback_allowed') !== 'false',
           rollbackTo: url.searchParams.get('rollback_to'),
           actorId: admin.actor_id,
           zipBuffer,
@@ -576,6 +595,18 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
           license_id: result.license.id, license_key: result.licenseKey,
           generation: result.license.generation,
         });
+      }
+
+      const webRevealMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/key$/);
+      if (method === 'POST' && webRevealMatch) {
+        rateLimit(`license-key-reveal:${clientAddress(request)}`, 8, 15 * 60 * 1000);
+        const auth = sessions.requireAdmin(sessionToken(request, 'admin'), 'license.manage');
+        sessions.verifyCsrf(auth.session, request.headers['x-csrf-token']);
+        invariant(auth.admin.is_owner || auth.admin.role === 'owner' || auth.admin.role === 'super_admin', 'LICENSE_KEY_REVEAL_FORBIDDEN', '只有平台所有者可以查看完整 Key', 403);
+        const body = await readJson(request);
+        invariant(verifyPassword(String(body.password ?? ''), auth.admin.password_hash), 'ADMIN_PASSWORD_CURRENT_INVALID', '当前管理员密码不正确', 403);
+        const result = service.revealLicenseKey({ licenseId: webRevealMatch[1], actorId: auth.admin.id });
+        return json(response, 200, { license_id: result.license.id, license_key: result.licenseKey });
       }
 
       const webDomainMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/domain$/);
