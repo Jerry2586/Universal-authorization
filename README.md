@@ -2,9 +2,39 @@
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活 CMS。一套源码支持四种角色：完整 CMS、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
+## Linux 一行安装 + 专业管理菜单
+
+在全新的 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux 或 Fedora 服务器上，以 root 身份执行一行命令：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/scripts/install-linux.sh | sudo sh -s -- \
+  --auth-domain sq.example.com \
+  --build-domain db.example.com
+```
+
+若仓库不可公开访问，应把 `npm run cms:package` 生成的 ZIP 放到你控制的下载地址，然后额外传入 `--repository ZIP地址 --sha256 校验值`，避免在命令历史里暴露私有仓库 Token。
+
+安装器会自动安装 Docker Engine 和 Compose v2、下载正式代码、生成只含两个域名的安全配置、构建并启动服务、安装全局 `appgog` 命令。交互安装也可以先下载项目，再执行：
+
+```sh
+sudo sh scripts/install-linux.sh
+```
+
+安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
+
+```sh
+appgog status
+appgog logs build-worker
+appgog update
+appgog backup
+appgog doctor
+```
+
+为避免破坏宝塔、aaPanel、1Panel、Nginx 或已有网站，一键安装器**不会抢占或修改 80/443**。安装后仍需把两个域名解析到服务器，并配置 HTTPS 反向代理到 `127.0.0.1:8787` 与 `127.0.0.1:8788`。管理菜单会持续显示正确目标。
+
 ## Docker 一体部署：只填写两个域名
 
-一套代码自动部署 Node.js 运行环境、SQLite 数据库、授权中心、打包中心和 Worker。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。服务器只需安装 Docker 和 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
+一套代码自动部署 Node.js 运行环境、SQLite 数据库、授权中心、打包中心和 Worker。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。手动 Docker 安装要求 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
 
 **完整傻瓜教程：[宝塔 / aaPanel / 1Panel / Docker 部署、更新和备份迁移](docs/宝塔-1Panel-Docker部署教程.md)。**
 

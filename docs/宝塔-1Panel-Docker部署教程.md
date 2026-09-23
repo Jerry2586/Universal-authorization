@@ -2,6 +2,20 @@
 
 默认安装是一套代码、一份 Compose、两个域名。Docker 内包含 Node.js 24、SQLite、授权中心、打包中心和构建 Worker，不需要在宿主机安装 Node.js、npm、MySQL 或手工生成业务密钥。SQLite 数据库首次启动自动创建；这不是演示模式。
 
+## 最快方式：Linux 一行安装
+
+全新服务器可以跳过手工安装 Docker、上传源码和复制 `.env` 的步骤，直接执行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/scripts/install-linux.sh | sudo sh -s -- \
+  --auth-domain sq.example.com \
+  --build-domain db.example.com
+```
+
+脚本支持 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux 和 Fedora。它会安装 Docker Engine 与 Compose v2、下载代码到 `/opt/appgog/APPGOG-CMS`、启动服务，并安装全局管理命令。执行 `appgog` 即可打开专业管理菜单；执行 `appgog help` 查看所有非交互命令。
+
+为了不破坏面板和已有网站，脚本不会接管 80/443、不会修改 DNS 或自动写入 Nginx/OpenResty。安装完成后继续阅读本文第 4 节，为两个域名配置 HTTPS 反向代理。
+
 ## 1. 准备服务器和项目
 
 在宝塔 / aaPanel / 1Panel 安装 Docker，确保终端能执行以下两条命令。需要 Docker Compose v2.24.0 或更新版本（支持可选 env_file）。
@@ -95,6 +109,14 @@ docker network connect appgog_default OPENRESTY_CONTAINER
 ## 5. 日常使用
 
 管理员登录授权域名 /admin，上传真实主题版本、管理用户与授权。客户只在打包域名 /build 输入固定授权 Key，选择版本和绑定域名后打包。首次部署不会自动创建演示客户或演示 Key。
+
+使用一键安装器后，日常管理直接运行：
+
+```sh
+appgog
+```
+
+菜单包含状态、启动、停止、重启、日志、域名配置保存、初始凭证、更新、备份、恢复和诊断。域名修改时会先备份原 `.env`，更新前会创建完整业务备份。也可直接执行 `appgog status`、`appgog logs build-worker`、`appgog backup` 或 `appgog doctor`。
 
 ## 6. 以后覆盖更新
 

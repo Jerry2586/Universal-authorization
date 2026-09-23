@@ -4,6 +4,22 @@
 
 需要从空服务器开始逐步操作时，请直接阅读 [宝塔、1Panel 与 Docker 完整部署教程](宝塔-1Panel-Docker部署教程.md)。
 
+## Linux 一键安装与管理菜单
+
+支持 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux 和 Fedora。全新服务器可执行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/scripts/install-linux.sh | sudo sh -s -- \
+  --auth-domain auth.example.com \
+  --build-domain build.example.com
+```
+
+安装器自动安装 Docker Engine 与 Compose v2、下载代码、写入权限为 600 的 `.env`、启动服务，并把管理入口安装为 `/usr/local/bin/appgog`。以后直接输入 `appgog` 打开菜单；也可使用 `appgog status|start|stop|restart|logs|update|backup|restore|doctor`。
+
+安装器不会修改防火墙、DNS、Nginx、OpenResty、Caddy 或服务器的 80/443 端口。这样可安全兼容宝塔、aaPanel、1Panel 和已有网站；HTTPS 反向代理仍由服务器管理员配置。已有安装目录或 `.env` 会被拒绝覆盖，避免误伤旧数据。
+
+正式发布时推荐把 `APPGOG-CMS-版本.zip` 放到稳定下载地址，并把 `--repository` 指向该 ZIP；同时传入 `--sha256` 校验值。私有仓库应使用受控发布包或预先配置的 Git 凭证，不要把访问 Token 直接写进终端命令历史。
+
 ## 跨服务器节点拓扑（高级）
 
 当前可运行版本由三个独立进程组成：
