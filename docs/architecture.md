@@ -1,6 +1,6 @@
-# APPGOG打包授权系统架构（v1.0.1）
+# APPGOG打包授权系统架构（v1.1.0）
 
-日期：2026-09-23
+日期：2026-09-24
 
 ## 一、用户看到的流程
 
@@ -24,7 +24,7 @@
 
 | 身份 | 生命周期 | 用户可见 | 用途 |
 |---|---|---:|---|
-| License Key | 长期 | 是 | 购买资格、打包、更新、换域名、轮换 Key |
+| License Key | 长期 | 是 | 购买资格、打包、更新和换域名；换绑时保持原 Key |
 | Build Ticket | 约 15 分钟、一次性 | 否 | 授权本次 Worker 构建 |
 | Package Secret | 每个 ZIP 唯一 | 否 | 证明运行代码确实来自该构建 |
 | Install Key | 每个 ZIP 一个、安装解锁成功后作废 | 是 | 第一阶段安装解锁 |
@@ -77,14 +77,14 @@ erDiagram
 ## 四、必须保持的安全规则
 
 1. 数据库只保存 License Key、Build Ticket、Package Secret、Install Key 和 Refresh Secret 的 HMAC-SHA-256 摘要，不保存明文。
-2. 固定 Key 可由卖家预绑定，也可由客户首次登录后绑定；换域名必须提交迁移申请并由授权管理员审批。
+2. 固定 Key 可由卖家预绑定，也可由客户首次登录后绑定；客户可按后台配置的冷却时间自助即时换域名，不需要管理员审批。
 3. Build Ticket 与 Install Key 的消费必须位于数据库写事务中，不能先查询再异步更新。
 4. 每个 Build 都有独立 Package Secret，打包器可拆分和乱序注入，但它只是抗批量复制层，不是根信任。
 5. 根信任是授权服务器的 Ed25519 私钥。客户包只持有公钥。
 6. Activation Token 必须绑定 License generation、Build、Package、域名、后台 Origin 和 Installation ID。
 7. 后台页面隐藏不等于授权。APPGOG 的设置读取、保存和关键配置接口都必须在服务端或可信运行层再次验签。
 8. 正常运行优先本地验签，按周期联网刷新；授权服务器短暂故障不能立即让客户站点白屏。
-9. Key 轮换增加 License generation。旧 Key 立刻不能打包，旧激活在下一次刷新时失效。
+9. 域名换绑增加 License generation，立即撤销旧 Activation 与未使用 Install Receipt；固定 Key 保持不变，新域名必须重新输入原 Key 激活。管理员显式轮换 Key 属于独立高风险操作。
 10. 成品完成前必须同时校验整包 SHA-256、Ed25519 签名包身份、逐文件 SHA-256 与 Package Secret HMAC。
 11. 所有签发、打包、激活、轮换、域名绑定/迁移和撤销操作必须写审计日志。
 

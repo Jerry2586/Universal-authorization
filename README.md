@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.0.1
+# APPGOG打包授权系统 v1.1.0
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -6,13 +6,15 @@
 
 默认只运行 **一个 appgog Docker 容器**，包含 Node.js、SQLite、授权中心、打包中心、Worker 和 Caddy HTTPS。宿主机不需要额外配置 Node.js、数据库或反向代理。
 
-本机执行 npm run cms:package，会生成 dist/APPGOG-Packaging-Licensing-System-1.0.1.run。把这个自解压文件上传到服务器 /root/，然后只执行：
+本机执行 npm run cms:package，会生成 dist/APPGOG-Packaging-Licensing-System-1.1.0.run。把这个自解压文件上传到服务器 /root/，然后只执行：
 
 ```sh
-sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.1.run
+sudo sh /root/APPGOG-Packaging-Licensing-System-1.1.0.run
 ```
 
-安装文件自带完整源码和 SHA-256 校验，自动补齐解压工具、系统工具、Docker、Compose 和 Buildx；已有组件会复用。首次按提示填两个真实域名（提前设置 DNS A 记录），安装器自动生成密钥和管理员密码、启动容器并检查公网 HTTPS。
+安装文件自带完整源码、SHA-256 和 Ed25519 签名校验，自动补齐解压工具、系统工具、Docker、Compose 和 Buildx；已有组件会复用。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
+
+国内服务器无法连接 GitHub 时，可将同一组签名发布文件同步到国内对象存储/CDN，并使用 `--source auto --china-base https://你的国内发布地址`。安装器先验证签名清单，再校验 ZIP SHA-256；国内源失败后才尝试 GitHub。也可直接上传完整 `.run` 离线包，不依赖 GitHub。传入一次性 `--cloudflare-token` 后，安装器可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
 
 重复执行同一命令会保留原 .env、数据库、签名密钥和备份，先构建镜像、备份已有数据，再更新。默认路径为 /opt/appgog。安装需要联网下载系统包和基础镜像；现有 Docker 的软件源无法提供缺失插件时会明确报错，不会强行替换引擎。端口占用、DNS 未生效也会给出错误。
 
@@ -113,13 +115,14 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.0.1 安装 ZIP（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.1.0 安装 ZIP（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
+$env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
 npm run cms:package
 ```
 
-输出目录为 `dist/`。
+输出目录为 `dist/`。生产发布必须提供与 `scripts/release-public.pem` 匹配的 Ed25519 私钥；私钥只放在发布机安全目录，不进入仓库、ZIP、`.run` 或日志。未设置私钥时仅用于本地开发打包，不会生成清单签名。
 
 ## 已完成的闭环
 
@@ -135,15 +138,16 @@ npm run cms:package
 
 ## 当前能力
 
-- 长期固定 License Key、客户首次域名绑定、受控迁移审批、暂停、恢复、撤销和 Key 轮换。
+- 长期固定 License Key 不提供删除接口；客户可首次绑定域名，并在后台冷却策略允许时自助即时换绑。换绑不轮换 Key，会撤销旧 Activation，客户需在新域名重新输入原 Key 激活。
 - 每次构建独立身份和一次性 Install Key，Install Key 完成安装解锁后立即作废；正式激活另行使用固定 License Key。
 - 激活凭证绑定域名、Xboard 后台 Origin、Installation ID、Build 和 Package。
 - Ed25519 数字签名与本地验签；固定 Key、安装 Key、刷新 Secret 等只保存 HMAC 摘要。
-- 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；客户和管理员独立 HttpOnly Cookie 与 CSRF 防护，成员可停用并撤销会话。
+- 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；首次管理员密码和新建管理员密码均为六位数字，管理员可在用户中心自行改密；普通管理员可软删除，所有者和当前账号受保护。
 - 客户打包站只接收固定 Key，不暴露内部客户编号、订单号或授权记录 ID；授权中心可审计成员操作。
 - 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。
-- 版本公告由服务端签名，客户可在有效更新期内下载更新包或按策略重新构建历史版本回滚包。
-- 管理后台可上传/发布主题 ZIP、签发授权、查看构建、激活和审计记录。
+- 运营公告可在后台编辑、启停并在客户打包页展示；版本公告由服务端签名，客户可在有效更新期内下载更新包或按策略重新构建历史版本回滚包。
+- 管理后台支持点击或拖拽真实上传主题 ZIP，显示进度，并从 `config.json`、文件名和根目录自动识别版本号与版本名称；冲突时拒绝发布。
+- 部署域名和服务开关在网页中只读，只能通过 Linux `appgog config` 与 `appgog services` 调整。
 - 客户中心可查看授权、过去 24 小时剩余额度、创建构建、查看进度、显示 Install Key，并通过 5 分钟短期会话票据下载成品。
 - 安全 ZIP 解析：阻止目录穿越、加密 ZIP、压缩炸弹、符号链接、可执行文件和普通 PHP。
 - 自动验证 Xboard 主题的 `config.json` 以及 `index.html` 或 `dashboard.blade.php`。

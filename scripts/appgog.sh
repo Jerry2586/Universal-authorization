@@ -71,12 +71,59 @@ env_value() {
   sed -n "s/^[[:space:]]*$key=//p" "$ENV_FILE" | tail -n 1
 }
 
+set_env_value() {
+  key=$1; value=$2
+  temp_path=$(mktemp "$ROOT_DIR/.env.tmp.XXXXXX") || return 1
+  awk -v key="$key" -v value="$value" '
+    BEGIN { seen = 0 }
+    index($0, key "=") == 1 { if (!seen) print key "=" value; seen = 1; next }
+    { print }
+    END { if (!seen) print key "=" value }
+  ' "$ENV_FILE" > "$temp_path" || { rm -f "$temp_path"; return 1; }
+  chmod 600 "$temp_path" 2>/dev/null || true
+  mv "$temp_path" "$ENV_FILE"
+}
+
 valid_domain() {
   value=$1
   case "$value" in
     ''|*://*|*/*|*:*|*[!A-Za-z0-9.-]*|.*|*.) return 1 ;;
   esac
   case "$value" in *.*) return 0 ;; *) return 1 ;; esac
+}
+
+cloudflare_request() {
+  token=$1; method=$2; path=$3; data=${4:-}
+  if [ -n "$data" ]; then
+    curl -fsS --max-time 20 -X "$method" "https://api.cloudflare.com/client/v4$path" \
+      -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data "$data"
+  else
+    curl -fsS --max-time 20 -X "$method" "https://api.cloudflare.com/client/v4$path" \
+      -H "Authorization: Bearer $token" -H 'Content-Type: application/json'
+  fi
+}
+
+cloudflare_zone_id() {
+  token=$1; domain=$2; zone=$domain
+  while printf '%s' "$zone" | grep -q '\.'; do
+    response=$(cloudflare_request "$token" GET "/zones?name=$zone&status=active&per_page=1") || return 1
+    id=$(printf '%s' "$response" | jq -r 'if .success then (.result[0].id // empty) else empty end')
+    [ -z "$id" ] || { printf '%s' "$id"; return 0; }
+    zone=${zone#*.}
+  done
+  return 1
+}
+
+cloudflare_upsert() {
+  token=$1; domain=$2; ip=$3
+  zone_id=$(cloudflare_zone_id "$token" "$domain") || { say_error "Cloudflare 未找到 $domain 的 Zone 或 Token 权限不足。"; return 1; }
+  response=$(cloudflare_request "$token" GET "/zones/$zone_id/dns_records?type=A&name=$domain&per_page=1") || return 1
+  record_id=$(printf '%s' "$response" | jq -r 'if .success then (.result[0].id // empty) else empty end')
+  payload=$(jq -nc --arg name "$domain" --arg content "$ip" '{type:"A",name:$name,content:$content,ttl:1,proxied:false}')
+  if [ -n "$record_id" ]; then response=$(cloudflare_request "$token" PUT "/zones/$zone_id/dns_records/$record_id" "$payload") || return 1
+  else response=$(cloudflare_request "$token" POST "/zones/$zone_id/dns_records" "$payload") || return 1; fi
+  [ "$(printf '%s' "$response" | jq -r '.success')" = true ] || return 1
+  say_ok "Cloudflare DNS 已更新：$domain -> $ip"
 }
 
 package_version() {
@@ -153,6 +200,18 @@ configure_domains() {
   valid_domain "$new_build" || { say_error '打包域名格式无效；只填写域名，不要包含 https://、端口或路径。'; return 1; }
   [ "$new_auth" != "$new_build" ] || { say_error '授权域名与打包域名必须不同。'; return 1; }
 
+  if confirm '域名是否由 Cloudflare 托管，并自动更新两个 A 记录？'; then
+    command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || { say_error 'Cloudflare 自动 DNS 需要 jq 和 curl。'; return 1; }
+    tty_read 'Cloudflare API Token（仅本次使用，不保存）：'
+    cf_token=$REPLY_VALUE
+    [ -n "$cf_token" ] || { say_error 'Cloudflare API Token 不能为空。'; return 1; }
+    public_ip=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || curl -4fsS --max-time 10 https://ifconfig.me/ip 2>/dev/null || true)
+    [ -n "$public_ip" ] || { say_error '无法检测公网 IPv4。'; return 1; }
+    cloudflare_upsert "$cf_token" "$new_auth" "$public_ip" || return 1
+    cloudflare_upsert "$cf_token" "$new_build" "$public_ip" || return 1
+    cf_token=''; unset cf_token REPLY_VALUE
+  fi
+
   printf '\n配置差异：\n  - AUTH_DOMAIN=%s\n  + AUTH_DOMAIN=%s\n  - BUILD_DOMAIN=%s\n  + BUILD_DOMAIN=%s\n' \
     "$old_auth" "$new_auth" "$old_build" "$new_build"
   confirm '确认保存配置？' || { say_warn '已取消，没有修改配置。'; return 0; }
@@ -187,6 +246,25 @@ configure_domains() {
   if confirm '现在执行安全更新并应用配置？'; then
     run_docker update
   fi
+}
+
+configure_services() {
+  [ -f "$ENV_FILE" ] || { say_error '.env 不存在，请重新运行一键安装器。'; return 1; }
+  printf '%s\n' '服务开关只影响 APPGOG 业务入口，不会删除任何授权、Key、主题或构建数据。'
+  for item in \
+    'LICENSE_SERVICE_ENABLED:授权与激活服务' \
+    'CUSTOMER_LOGIN_ENABLED:客户 Key 登录' \
+    'BUILD_CENTER_ENABLED:客户打包中心' \
+    'NEW_BUILDS_ENABLED:接收新构建' \
+    'WORKER_ENABLED:Worker 构建服务'; do
+    key=${item%%:*}; label=${item#*:}; current=$(env_value "$key"); [ -n "$current" ] || current=true
+    tty_read "$label [$current]（true/false）："
+    value=${REPLY_VALUE:-$current}
+    case "$value" in true|false) ;; *) say_error "$label 只能填写 true 或 false"; return 1 ;; esac
+    set_env_value "$key" "$value" || return 1
+  done
+  say_ok '服务开关已写入 .env。'
+  if confirm '现在重建并应用服务开关？'; then run_docker update; fi
 }
 
 logs_menu() {
@@ -242,12 +320,13 @@ main_menu() {
       '  4. 重启全部服务' \
       '  5. 查看服务日志' \
       '  6. 修改并保存域名配置' \
-      '  7. 查看初始管理员凭证' \
-      '  8. 安全更新当前版本' \
-      '  9. 创建完整备份' \
-      ' 10. 从完整备份恢复' \
-      ' 11. 回滚最近一次更新' \
-      ' 12. 系统诊断与高级工具' \
+      '  7. 配置业务服务开关' \
+      '  8. 查看初始管理员凭证' \
+      '  9. 安全更新当前版本' \
+      ' 10. 创建完整备份' \
+      ' 11. 从完整备份恢复' \
+      ' 12. 回滚最近一次更新' \
+      ' 13. 系统诊断与高级工具' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -258,12 +337,13 @@ main_menu() {
       4) confirm '确认重启全部服务？' && run_docker restart; pause_menu ;;
       5) logs_menu; pause_menu ;;
       6) configure_domains; pause_menu ;;
-      7) run_docker credentials; pause_menu ;;
-      8) confirm '确认构建当前代码、完整备份并更新服务？' && run_docker update; pause_menu ;;
-      9) run_docker backup; pause_menu ;;
-      10) restore_menu; pause_menu ;;
-      11) confirm '确认先备份当前状态，再回滚到最近一次更新前镜像？' && run_docker rollback; pause_menu ;;
-      12) advanced_menu ;;
+      7) configure_services; pause_menu ;;
+      8) run_docker credentials; pause_menu ;;
+      9) confirm '确认构建当前代码、完整备份并更新服务？' && run_docker update; pause_menu ;;
+      10) run_docker backup; pause_menu ;;
+      11) restore_menu; pause_menu ;;
+      12) confirm '确认先备份当前状态，再回滚到最近一次更新前镜像？' && run_docker rollback; pause_menu ;;
+      13) advanced_menu ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -282,6 +362,7 @@ APPGOG 管理命令
   appgog restart         重启服务
   appgog logs [服务]     查看日志
   appgog config          修改并保存两个域名
+  appgog services        配置授权、登录、打包、构建和 Worker 开关
   appgog credentials     查看初始管理员凭证
   appgog update          构建、完整备份并更新
   appgog rollback        回滚到最近一次更新前镜像
@@ -302,6 +383,7 @@ case "${1:-menu}" in
   cleanup) run_docker cleanup-images ;;
   logs) shift; run_docker logs "${1:-all}" "${2:-100}" ;;
   config) configure_domains ;;
+  services) configure_services ;;
   restore) [ -n "${2:-}" ] || { usage >&2; exit 1; }; run_docker restore "$2" ;;
   help|-h|--help) usage ;;
   *) usage >&2; exit 1 ;;

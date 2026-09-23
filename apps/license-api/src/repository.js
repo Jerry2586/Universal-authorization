@@ -139,6 +139,11 @@ export function createRepository(database) {
     pendingDomainMigrationByLicense: database.prepare(`
       SELECT * FROM domain_migration_requests WHERE license_id = ? AND status = 'pending' LIMIT 1
     `),
+    latestApprovedDomainMigrationByLicense: database.prepare(`
+      SELECT * FROM domain_migration_requests
+      WHERE license_id = ? AND status = 'approved'
+      ORDER BY reviewed_at DESC, requested_at DESC LIMIT 1
+    `),
     listDomainMigrations: database.prepare(`
       SELECT domain_migration_requests.*, licenses.customer_ref, licenses.bound_domain, products.code AS product_code
       FROM domain_migration_requests
@@ -285,12 +290,21 @@ export function createRepository(database) {
       INSERT INTO admin_users (id, username, display_name, password_hash, role, permissions_json, is_owner, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `),
-    adminByUsername: database.prepare(`SELECT * FROM admin_users WHERE username = ?`),
+    adminByUsername: database.prepare(`SELECT * FROM admin_users WHERE username = ? AND deleted_at IS NULL`),
     adminById: database.prepare(`SELECT * FROM admin_users WHERE id = ?`),
-    listAdmins: database.prepare(`SELECT * FROM admin_users ORDER BY is_owner DESC, created_at ASC`),
+    listAdmins: database.prepare(`SELECT * FROM admin_users WHERE deleted_at IS NULL ORDER BY is_owner DESC, created_at ASC`),
     updateAdminLogin: database.prepare(`UPDATE admin_users SET last_login_at = ?, last_login_ip = ?, updated_at = ? WHERE id = ?`),
     changeAdminStatus: database.prepare(`UPDATE admin_users SET status = ?, updated_at = ? WHERE id = ? AND is_owner = 0`),
     updateAdminPassword: database.prepare(`UPDATE admin_users SET password_hash = ?, updated_at = ? WHERE id = ?`),
+    softDeleteAdmin: database.prepare(`
+      UPDATE admin_users
+      SET deleted_username = username,
+          username = username || '#deleted#' || id,
+          status = 'deleted',
+          deleted_at = ?,
+          updated_at = ?
+      WHERE id = ? AND is_owner = 0 AND deleted_at IS NULL
+    `),
     revokeAdminSessions: database.prepare(`DELETE FROM web_sessions WHERE actor_type = 'admin' AND actor_id = ?`),
     withdrawSourceVersion: database.prepare(`UPDATE source_versions SET status = 'withdrawn', withdrawn_reason = ? WHERE id = ? AND status = 'active'`),
     settingByKey: database.prepare(`SELECT * FROM system_settings WHERE key = ?`),
@@ -397,6 +411,7 @@ export function createRepository(database) {
     },
     domainMigrationById: (id) => queries.domainMigrationById.get(id),
     pendingDomainMigrationByLicense: (licenseId) => queries.pendingDomainMigrationByLicense.get(licenseId),
+    latestApprovedDomainMigrationByLicense: (licenseId) => queries.latestApprovedDomainMigrationByLicense.get(licenseId),
     listDomainMigrations: (limit = 100) => queries.listDomainMigrations.all(limit),
     decideDomainMigration(id, status, reviewerId, reviewNote, now) {
       const changed = queries.decideDomainMigration.run(status, now, reviewerId, reviewNote ?? null, id).changes;
@@ -524,6 +539,10 @@ export function createRepository(database) {
     },
     updateAdminPassword(id, passwordHash, now) {
       const changed = queries.updateAdminPassword.run(passwordHash, now, id).changes;
+      return changed === 1 ? queries.adminById.get(id) : null;
+    },
+    deleteAdmin(id, now) {
+      const changed = queries.softDeleteAdmin.run(now, now, id).changes;
       return changed === 1 ? queries.adminById.get(id) : null;
     },
     revokeAdminSessions(id) { queries.revokeAdminSessions.run(id); },

@@ -45,31 +45,11 @@ jobs:
             dist/*.zip.sha256
             dist/*.run
             dist/*.run.sha256
+            dist/release-manifest.json
+            dist/release-manifest.json.sig
           retention-days: 30
-      - name: Publish matching GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "$RELEASE_TAG_EXISTS" != true ]; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git tag -a "$RELEASE_TAG" -m "APPGOG $RELEASE_TAG"
-            git push origin "$RELEASE_TAG"
-          fi
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" \
-              dist/*.zip dist/*.zip.sha256 dist/*.run dist/*.run.sha256 \
-              --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$RELEASE_TAG" \
-              dist/*.zip dist/*.zip.sha256 dist/*.run dist/*.run.sha256 \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "APPGOG $RELEASE_TAG 单容器一体安装" \
-              --generate-notes \
-              --verify-tag
-          fi
+      # Signed production releases are uploaded by the release operator. The
+      # Ed25519 private key is deliberately not stored in this repository.
       - name: Service diagnostics on failure
         if: failure()
         run: |

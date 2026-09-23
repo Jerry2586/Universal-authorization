@@ -24,6 +24,12 @@ function integer(name, fallback) {
   return value;
 }
 
+function boolean(name, fallback = true) {
+  const value = String(process.env[name] ?? fallback).trim().toLowerCase();
+  if (!['true', 'false'].includes(value)) throw new Error(`${name} 必须为 true 或 false`);
+  return value === 'true';
+}
+
 export function loadConfig(overrides = {}) {
   loadLocalEnvironment();
   const cwd = process.cwd();
@@ -55,6 +61,11 @@ export function loadConfig(overrides = {}) {
     downloadTicketTtlSeconds: integer('DOWNLOAD_TICKET_TTL_SECONDS', 300),
     webSessionTtlSeconds: integer('WEB_SESSION_TTL_SECONDS', 28800),
     maxSourceUploadBytes: integer('MAX_SOURCE_UPLOAD_BYTES', 134217728),
+    licenseServiceEnabled: boolean('LICENSE_SERVICE_ENABLED', true),
+    customerLoginEnabled: boolean('CUSTOMER_LOGIN_ENABLED', true),
+    buildCenterEnabled: boolean('BUILD_CENTER_ENABLED', true),
+    newBuildsEnabled: boolean('NEW_BUILDS_ENABLED', true),
+    workerEnabled: boolean('WORKER_ENABLED', true),
     embeddedWorker: (process.env.EMBEDDED_WORKER ?? (selectedRole === 'all-in-one' ? 'true' : 'false')).toLowerCase() === 'true',
     ...overrides,
   };
@@ -68,8 +79,8 @@ export function loadConfig(overrides = {}) {
         throw new Error(`生产环境必须设置至少 32 字符的独立随机 ${name}`);
       }
     }
-    if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD.length < 12) {
-      throw new Error('生产环境必须设置 ADMIN_USERNAME 和至少 12 字符的 ADMIN_PASSWORD');
+    if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD.length < 6) {
+      throw new Error('生产环境必须设置 ADMIN_USERNAME 和至少 6 字符的 ADMIN_PASSWORD');
     }
     if (new URL(config.publicBaseUrl).protocol !== 'https:') {
       throw new Error('生产环境 PUBLIC_BASE_URL 必须使用 HTTPS');

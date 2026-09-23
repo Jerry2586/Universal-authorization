@@ -6,7 +6,48 @@ import { openSecret, sealSecret } from '../../../packages/core/src/secret-box.js
 import { hashSecret, secretMatches } from '../../../packages/core/src/security.js';
 import { publicBuildJob, SOURCE_KIND } from '../../../packages/contracts/src/build-job.js';
 
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+
+function versionFromName(value) {
+  const text = String(value ?? '').replace(/\.zip$/i, '');
+  if (!/appgog/i.test(text)) return null;
+  return text.match(/(?:^|[-_\s])v?(\d+\.\d+\.\d+)(?:$|[-_\s])/i)?.[1] ?? null;
+}
+
+function sourceMetadata(files, sourceFilename) {
+  const configPaths = [...files.keys()]
+    .filter((name) => name.split('/').at(-1)?.toLowerCase() === 'config.json')
+    .sort((left, right) => left.split('/').length - right.split('/').length || left.localeCompare(right));
+  let config = {};
+  if (configPaths.length) {
+    try { config = JSON.parse(files.get(configPaths[0]).toString('utf8')); }
+    catch { invariant(false, 'SOURCE_CONFIG_INVALID', '主题 config.json 不是有效 JSON', 400); }
+  }
+  const configVersion = [config.version, config.theme?.version, config.appgog?.version]
+    .find((value) => typeof value === 'string' && VERSION_PATTERN.test(value.trim()))?.trim() ?? null;
+  const roots = [...new Set([...files.keys()].map((name) => name.split('/')[0]).filter(Boolean))];
+  const nameVersions = [sourceFilename, ...roots].map(versionFromName).filter(Boolean);
+  const uniqueNameVersions = [...new Set(nameVersions)];
+  invariant(uniqueNameVersions.length <= 1, 'SOURCE_VERSION_CONFLICT', 'ZIP 文件名与根目录中的版本号不一致，请检查后重新上传', 409);
+  const nameVersion = uniqueNameVersions[0] ?? null;
+  invariant(!configVersion || !nameVersion || configVersion === nameVersion, 'SOURCE_VERSION_CONFLICT', 'config.json 与 ZIP 文件名或根目录中的版本号不一致', 409);
+  const version = configVersion ?? nameVersion;
+  const configuredName = [config.display_name, config.displayName, config.theme?.display_name, config.theme?.name, config.name]
+    .find((value) => typeof value === 'string' && value.trim())?.trim() ?? null;
+  const displayName = version ? (configuredName
+    ? (configuredName.includes(version) ? configuredName : `${configuredName} ${version}`)
+    : `APPGOG ${version}`) : configuredName;
+  return { version, displayName };
+}
+
 export function createPortalService({ repository, queue, licenseService, artifactStore, buildEngine, config, clock = () => new Date() }) {
+  const serviceConfig = Object.freeze({
+    license_service_enabled: 'licenseServiceEnabled',
+    customer_login_enabled: 'customerLoginEnabled',
+    build_center_enabled: 'buildCenterEnabled',
+    new_builds_enabled: 'newBuildsEnabled',
+    worker_enabled: 'workerEnabled',
+  });
   function customerLicense(session) {
     const license = repository.licenseById(session.actor_id);
     invariant(license && license.status === 'active', 'LICENSE_INACTIVE', '授权已停用', 403);
@@ -39,37 +80,58 @@ export function createPortalService({ repository, queue, licenseService, artifac
 
   return {
     repository,
-    serviceEnabled(key, fallback = true) { return boolSetting(key, fallback); },
+    serviceEnabled(key, fallback = true) {
+      const property = serviceConfig[key];
+      return property ? config[property] !== false : boolSetting(key, fallback);
+    },
     cmsSettings() {
       const saved = repository.listSettings();
+      const announcementEnabled = saved.announcement_enabled === 'true' && Boolean(saved.announcement_title?.trim() || saved.announcement_body?.trim());
       return {
         platform_name: saved.platform_name ?? 'APPGOG打包授权系统',
         installation_role: config.role ?? (config.surface === 'combined' ? 'all-in-one' : 'license-center'),
-        license_public_url: saved.license_public_url ?? config.publicBaseUrl,
-        build_public_url: saved.build_public_url ?? config.buildCenterPublicUrl,
-        license_service_enabled: boolSetting('license_service_enabled', true),
-        customer_login_enabled: boolSetting('customer_login_enabled', true),
-        build_center_enabled: boolSetting('build_center_enabled', true),
-        new_builds_enabled: boolSetting('new_builds_enabled', true),
-        worker_enabled: boolSetting('worker_enabled', true),
+        license_public_url: config.publicBaseUrl,
+        build_public_url: config.buildCenterPublicUrl,
+        domain_migration_cooldown_hours: Math.max(0, Number(saved.domain_migration_cooldown_hours) || 0),
+        announcement_title: saved.announcement_title ?? '',
+        announcement_body: saved.announcement_body ?? '',
+        announcement_enabled: announcementEnabled,
+        announcement_published_at: saved.announcement_published_at ?? null,
+        license_service_enabled: config.licenseServiceEnabled !== false,
+        customer_login_enabled: config.customerLoginEnabled !== false,
+        build_center_enabled: config.buildCenterEnabled !== false,
+        new_builds_enabled: config.newBuildsEnabled !== false,
+        worker_enabled: config.workerEnabled !== false,
         nodes: repository.listServiceNodes().map(publicNode),
       };
     },
     updateCmsSettings(input, actorId) {
       const now = clock().toISOString();
-      const textFields = ['platform_name', 'license_public_url', 'build_public_url'];
-      const booleanFields = ['license_service_enabled', 'customer_login_enabled', 'build_center_enabled', 'new_builds_enabled', 'worker_enabled'];
+      const deploymentFields = ['license_public_url', 'build_public_url', 'license_service_enabled', 'customer_login_enabled', 'build_center_enabled', 'new_builds_enabled', 'worker_enabled'];
+      invariant(!deploymentFields.some((key) => input[key] !== undefined), 'DEPLOYMENT_SETTING_READ_ONLY', '域名和服务开关只能通过 Linux appgog 管理菜单修改', 403);
+      const textFields = ['platform_name', 'announcement_title', 'announcement_body'];
+      const booleanFields = ['announcement_enabled'];
       for (const key of textFields) {
         if (input[key] === undefined) continue;
         const value = String(input[key]).trim();
-        invariant(value.length >= 2 && value.length <= 200, 'CMS_SETTING_INVALID', `${key} 配置无效`);
-        repository.setSetting(key, key.endsWith('_url') ? optionalHttpUrl(value) : value, now);
+        const maximum = key === 'announcement_body' ? 4000 : 200;
+        invariant(key !== 'platform_name' || value.length >= 2, 'CMS_SETTING_INVALID', '平台名称至少 2 个字符');
+        invariant(value.length <= maximum, 'CMS_SETTING_INVALID', `${key} 配置过长`);
+        repository.setSetting(key, value, now);
       }
       for (const key of booleanFields) {
         if (input[key] !== undefined) repository.setSetting(key, input[key] === true ? 'true' : 'false', now);
       }
+      if (input.domain_migration_cooldown_hours !== undefined) {
+        const hours = Number(input.domain_migration_cooldown_hours);
+        invariant(Number.isInteger(hours) && hours >= 0 && hours <= 8760, 'DOMAIN_MIGRATION_COOLDOWN_INVALID', '域名换绑冷却必须是 0–8760 小时的整数');
+        repository.setSetting('domain_migration_cooldown_hours', String(hours), now);
+      }
+      if (input.announcement_enabled === true || input.announcement_title !== undefined || input.announcement_body !== undefined) {
+        repository.setSetting('announcement_published_at', now, now);
+      }
       repository.audit({ actorType: 'admin', actorId, action: 'cms.settings.updated', subjectType: 'system',
-        subjectId: 'cms', metadata: { keys: [...textFields, ...booleanFields].filter((key) => input[key] !== undefined) }, now });
+        subjectId: 'cms', metadata: { keys: [...textFields, ...booleanFields, 'domain_migration_cooldown_hours'].filter((key) => input[key] !== undefined) }, now });
       return this.cmsSettings();
     },
     createServiceNode(input, actorId) {
@@ -110,7 +172,14 @@ export function createPortalService({ repository, queue, licenseService, artifac
       const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
       const versions = repository.listActiveSourceVersions(license.product_code);
       const latestVersion = versions[0]?.version ?? null;
-      const migration = repository.pendingDomainMigrationByLicense(license.id);
+      const migration = repository.latestApprovedDomainMigrationByLicense(license.id);
+      const cooldownHours = Math.max(0, Number(repository.setting('domain_migration_cooldown_hours')) || 0);
+      const nextAllowedAt = migration?.reviewed_at && cooldownHours > 0
+        ? new Date(new Date(migration.reviewed_at).getTime() + cooldownHours * 60 * 60 * 1000).toISOString()
+        : null;
+      const announcementTitle = repository.setting('announcement_title') ?? '';
+      const announcementBody = repository.setting('announcement_body') ?? '';
+      const announcementEnabled = repository.setting('announcement_enabled') === 'true' && Boolean(announcementTitle.trim() || announcementBody.trim());
       const buildsUsed = repository.recentBuildCount(license.id, new Date(clock().getTime() - 24 * 60 * 60 * 1000).toISOString());
       return {
         license: {
@@ -131,6 +200,20 @@ export function createPortalService({ repository, queue, licenseService, artifac
           status: migration.status,
           reason: migration.reason,
           requested_at: migration.requested_at,
+          reviewed_at: migration.reviewed_at,
+          cooldown_hours: cooldownHours,
+          next_allowed_at: nextAllowedAt,
+          cooldown_active: Boolean(nextAllowedAt && clock() < new Date(nextAllowedAt)),
+        } : null,
+        domain_migration_policy: {
+          cooldown_hours: cooldownHours,
+          next_allowed_at: nextAllowedAt,
+          cooldown_active: Boolean(nextAllowedAt && clock() < new Date(nextAllowedAt)),
+        },
+        announcement: announcementEnabled ? {
+          title: announcementTitle,
+          body: announcementBody,
+          published_at: repository.setting('announcement_published_at'),
         } : null,
         versions: versions.map((version) => ({
           version: version.version,
@@ -162,15 +245,19 @@ export function createPortalService({ repository, queue, licenseService, artifac
 
     requestCustomerDomainMigration(session, { domain, reason }) {
       customerLicense(session);
-      const request = licenseService.requestDomainMigration({
-        licenseId: session.actor_id, domain, reason, actorId: session.actor_id,
+      const cooldownHours = Math.max(0, Number(repository.setting('domain_migration_cooldown_hours')) || 0);
+      const result = licenseService.selfServiceDomainMigration({
+        licenseId: session.actor_id, domain, reason, cooldownHours, actorId: session.actor_id,
       });
       return {
-        id: request.id,
-        previous_domain: request.previous_domain,
-        requested_domain: request.requested_domain,
-        status: request.status,
-        requested_at: request.requested_at,
+        id: result.request.id,
+        previous_domain: result.request.previous_domain,
+        requested_domain: result.request.requested_domain,
+        status: result.request.status,
+        requested_at: result.request.requested_at,
+        reviewed_at: result.request.reviewed_at,
+        bound_domain: result.license.bound_domain,
+        generation: result.license.generation,
       };
     },
 
@@ -254,13 +341,19 @@ export function createPortalService({ repository, queue, licenseService, artifac
       });
     },
 
-    publishSourceVersion({ productCode = 'appgog', version, displayName, zipBuffer, releaseNotes, channel, releaseKind, minXboardVersion, minUpgradeVersion, rollbackAllowed, rollbackTo, actorId = null }) {
+    publishSourceVersion({ productCode = 'appgog', version, displayName, sourceFilename, zipBuffer, releaseNotes, channel, releaseKind, minXboardVersion, minUpgradeVersion, rollbackAllowed, rollbackTo, actorId = null }) {
       invariant(Buffer.isBuffer(zipBuffer) && zipBuffer.length > 0, 'SOURCE_REQUIRED', '必须上传主题 ZIP');
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
-      buildEngine.validateSource(zipBuffer);
+      const validation = buildEngine.validateSource(zipBuffer);
+      const detected = sourceMetadata(validation.files, sourceFilename);
       const product = licenseService.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
-      const normalizedVersion = version?.trim();
-      invariant(normalizedVersion, 'VERSION_REQUIRED', '必须填写版本号');
+      const requestedVersion = version?.trim() || null;
+      invariant(!requestedVersion || !detected.version || requestedVersion === detected.version,
+        'SOURCE_VERSION_CONFLICT', `填写的版本号与安装包识别结果 ${detected.version} 不一致`, 409);
+      const normalizedVersion = requestedVersion ?? detected.version;
+      invariant(normalizedVersion, 'VERSION_REQUIRED', '无法自动识别版本号，请手动填写后重试');
+      invariant(VERSION_PATTERN.test(normalizedVersion), 'VERSION_INVALID', '版本号格式无效，请使用例如 1.8.11 的格式');
+      const normalizedDisplayName = displayName?.trim() || detected.displayName || `APPGOG ${normalizedVersion}`;
       const existing = repository.sourceVersionByProductVersion(product.code, normalizedVersion);
       invariant(!existing || existing.status === 'draft', 'VERSION_EXISTS', '该版本已经发布', 409);
       const versionId = existing?.id ?? newId('src');
@@ -272,7 +365,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
           id: versionId,
           productId: product.id,
           version: normalizedVersion,
-          displayName: displayName?.trim() || `APPGOG ${normalizedVersion}`,
+          displayName: normalizedDisplayName,
           sourceKind: SOURCE_KIND.OFFICIAL,
           sourceRef,
           status: 'active',
@@ -286,7 +379,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
         repository.audit({
           actorType: 'admin', actorId, action: 'source_version.published',
           subjectType: 'source_version', subjectId: source.id,
-          metadata: { version: source.version, source_ref: sourceRef, size: zipBuffer.length },
+           metadata: { version: source.version, display_name: source.display_name, source_filename: sourceFilename ?? null, source_ref: sourceRef, size: zipBuffer.length },
           now: clock().toISOString(),
         });
         return source;

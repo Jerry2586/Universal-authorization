@@ -2,7 +2,12 @@ name: appgog
 services:
   appgog:
     image: ${APPGOG_IMAGE:-appgog-platform:local}
-    build: .
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${APPGOG_NODE_IMAGE:-node:24-bookworm-slim}
+        CADDY_IMAGE: ${APPGOG_CADDY_IMAGE:-caddy:2.10}
+    pull_policy: never
     restart: unless-stopped
     init: true
     read_only: true
@@ -20,6 +25,11 @@ services:
     environment:
       AUTH_DOMAIN: ${AUTH_DOMAIN:-}
       BUILD_DOMAIN: ${BUILD_DOMAIN:-}
+      LICENSE_SERVICE_ENABLED: ${LICENSE_SERVICE_ENABLED:-true}
+      CUSTOMER_LOGIN_ENABLED: ${CUSTOMER_LOGIN_ENABLED:-true}
+      BUILD_CENTER_ENABLED: ${BUILD_CENTER_ENABLED:-true}
+      NEW_BUILDS_ENABLED: ${NEW_BUILDS_ENABLED:-true}
+      WORKER_ENABLED: ${WORKER_ENABLED:-true}
     ports:
       - "${HTTP_PORT:-80}:8080"
       - "${HTTPS_PORT:-443}:8443"

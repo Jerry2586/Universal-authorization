@@ -44,6 +44,13 @@ test('Self-extracting installer contains the exact checksummed archive', () => {
   assert.ok(installer.includes(createHash('sha256').update(zip).digest('hex')));
   assert.throws(() => createInstaller(zip, '../escape'));
 });
+test('Signed self-extracting installer embeds Ed25519 verification material', () => {
+  const zip = writeZip(new Map([['release/scripts/install-linux.sh', Buffer.from('exit 0\n')]]));
+  const installer = createInstaller(zip, 'release', { signature: Buffer.from('signature'), publicKey: 'public-key' }).toString();
+  assert.match(installer, /openssl pkeyutl -verify/);
+  assert.ok(installer.includes(Buffer.from('signature').toString('base64')));
+  assert.ok(installer.includes(Buffer.from('public-key').toString('base64')));
+});
 test('Linux installer extracts, forwards args, and rejects corrupt payload before execution', { skip: process.platform === 'win32' }, t => {
   const dir = mkdtempSync(join(tmpdir(), 'appgog-run-test-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

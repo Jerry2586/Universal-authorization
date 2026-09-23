@@ -203,6 +203,7 @@ export function createLicenseService({ database, repository, config, privateKey,
         if (decision === 'approved') {
           repository.changeLicenseDomain(request.license_id, request.requested_domain, now);
           repository.revokeInstallReceiptsByLicense(request.license_id, now);
+          repository.revokeActivationsByLicense(request.license_id, now);
         }
         const reviewed = repository.decideDomainMigration(requestId, decision, reviewerId, String(reviewNote ?? '').trim().slice(0, 500), now);
         invariant(reviewed, 'DOMAIN_MIGRATION_RACE', '域名迁移申请正在被另一个管理员处理', 409);
@@ -212,6 +213,41 @@ export function createLicenseService({ database, repository, config, privateKey,
           metadata: { previous_domain: request.previous_domain, requested_domain: request.requested_domain }, now,
         });
         return { request: reviewed, license: repository.licenseById(request.license_id) };
+      });
+    },
+
+    selfServiceDomainMigration({ licenseId, domain, reason = '', cooldownHours = 0, actorId = licenseId }) {
+      const normalized = canonicalizeDomain(domain);
+      const note = String(reason ?? '').trim().slice(0, 500);
+      const hours = Math.max(0, Number(cooldownHours) || 0);
+      const nowDate = clock();
+      const now = iso(() => nowDate);
+      return transaction(database, () => {
+        const license = repository.licenseById(licenseId);
+        invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);
+        invariant(license.status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(license.bound_domain, 'DOMAIN_NOT_BOUND', '请先完成首次域名绑定', 409);
+        invariant(license.bound_domain !== normalized, 'DOMAIN_UNCHANGED', '新域名与当前绑定域名相同', 409);
+        const latest = repository.latestApprovedDomainMigrationByLicense(licenseId);
+        if (hours > 0 && latest?.reviewed_at) {
+          const nextAllowed = new Date(new Date(latest.reviewed_at).getTime() + hours * 60 * 60 * 1000);
+          invariant(nowDate >= nextAllowed, 'DOMAIN_MIGRATION_COOLDOWN', `域名换绑冷却中，下次可操作时间：${nextAllowed.toISOString()}`, 429,
+            { next_allowed_at: nextAllowed.toISOString() });
+        }
+        const request = repository.createDomainMigration({
+          licenseId, previousDomain: license.bound_domain, requestedDomain: normalized, reason: note, now,
+        });
+        const updated = repository.changeLicenseDomain(licenseId, normalized, now);
+        repository.revokeInstallReceiptsByLicense(licenseId, now);
+        repository.revokeActivationsByLicense(licenseId, now);
+        const reviewed = repository.decideDomainMigration(request.id, 'approved', null, 'customer-self-service', now);
+        invariant(reviewed, 'DOMAIN_MIGRATION_RACE', '域名换绑正在被另一个请求处理', 409);
+        repository.audit({
+          actorType: 'customer', actorId, action: 'license.domain_migration_self_service',
+          subjectType: 'domain_migration', subjectId: request.id,
+          metadata: { previous_domain: license.bound_domain, requested_domain: normalized, generation: updated.generation }, now,
+        });
+        return { request: reviewed, license: updated };
       });
     },
 
@@ -433,6 +469,7 @@ export function createLicenseService({ database, repository, config, privateKey,
       const updated = transaction(database, () => {
         const result = repository.changeLicenseDomain(licenseId, normalized, now);
         repository.revokeInstallReceiptsByLicense(licenseId, now);
+        repository.revokeActivationsByLicense(licenseId, now);
         return result;
       });
       repository.audit({

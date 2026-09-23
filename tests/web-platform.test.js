@@ -231,6 +231,23 @@ test('队列适配器与业务协议隔离：只可领取一次，返回 Build �
   app.close();
 });
 
+test('主题 ZIP 自动识别 config.json 与文件名版本并拒绝冲突', (t) => {
+  const app = setup();
+  t.after(() => app.close());
+  const sourceZip = writeZip(new Map([
+    ['APPGOG-1.8.11-xboard/config.json', Buffer.from('{"name":"APPGOG","version":"1.8.11"}')],
+    ['APPGOG-1.8.11-xboard/index.html', Buffer.from('<!doctype html><html><head></head><body>APPGOG</body></html>')],
+  ]));
+  const published = app.portal.publishSourceVersion({
+    productCode: 'appgog', sourceFilename: 'APPGOG-1.8.11-xboard.zip', zipBuffer: sourceZip,
+  });
+  assert.equal(published.version, '1.8.11');
+  assert.equal(published.display_name, 'APPGOG 1.8.11');
+  assert.throws(() => app.portal.publishSourceVersion({
+    productCode: 'appgog', version: '1.8.12', sourceFilename: 'APPGOG-1.8.11-xboard.zip', zipBuffer: sourceZip,
+  }), /不一致/);
+});
+
 test('客户下载必须使用短期、不可篡改且绑定当前会话的票据', async (t) => {
   const app = setup();
   const issued = app.service.issueLicense({ customerRef: 'ORDER-DOWNLOAD', domain: 'download.example.com' });

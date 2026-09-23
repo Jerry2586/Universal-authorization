@@ -1,5 +1,7 @@
-FROM caddy:2.10 AS caddy
-FROM node:24-bookworm-slim
+ARG CADDY_IMAGE=caddy:2.10
+ARG NODE_IMAGE=node:24-bookworm-slim
+FROM ${CADDY_IMAGE} AS caddy
+FROM ${NODE_IMAGE}
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=caddy /usr/bin/caddy /tmp/caddy

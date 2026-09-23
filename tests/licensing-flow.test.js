@@ -359,7 +359,7 @@ test('最大激活环境数为 1 时拒绝第二个环境，且不消费其 Inst
   app.database.close();
 });
 
-test('域名迁移后旧 Activation 无法刷新并返回明确的域名迁移错误', () => {
+test('域名换绑后旧 Activation 立即撤销且无法刷新', () => {
   const app = fixture();
   const issued = app.service.issueLicense({ customerRef: 'customer-domain-move', domain: 'old.example.com' });
   const ticket = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '1.0.0', domain: 'old.example.com' });
@@ -382,7 +382,7 @@ test('域名迁移后旧 Activation 无法刷新并返回明确的域名迁移�
       backendUrl: 'https://panel.example.com',
       installationId: 'installation_domain_move',
     }),
-    (error) => error.code === 'LICENSE_DOMAIN_MISMATCH',
+    (error) => error.code === 'ACTIVATION_INACTIVE',
   );
   app.database.close();
 });

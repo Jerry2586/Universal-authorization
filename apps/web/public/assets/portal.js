@@ -1,11 +1,12 @@
 const mode = document.body.dataset.portal;
 const $ = (id) => document.getElementById(id);
-const state = { csrf: null, data: null, loading: false, notificationTimer: null, permissions: [] };
+const state = { csrf: null, data: null, loading: false, notificationTimer: null, permissions: [], session: null };
 
 function can(permission) { return mode === 'admin' && (state.permissions.includes('*') || state.permissions.includes(permission)); }
 
 function applyAdminPermissions(session) {
   if (mode !== 'admin') return;
+  state.session = session;
   state.permissions = Array.isArray(session.permissions) ? session.permissions : [];
   const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view', cms: 'system.manage' };
   for (const [view, permission] of Object.entries(sections)) {
@@ -20,6 +21,10 @@ function applyAdminPermissions(session) {
   if (issueShortcut) issueShortcut.hidden = !can('license.issue');
   const operator = document.querySelector('.operator-chip strong');
   if (operator) operator.textContent = session.display_name || session.username || '管理员';
+  const role = document.querySelector('.operator-chip small');
+  if (role) role.textContent = roleLabel(session.role);
+  const avatar = document.querySelector('.operator-avatar');
+  if (avatar) avatar.textContent = String(session.display_name || session.username || 'A').slice(0, 1).toUpperCase();
 }
 
 async function request(path, { method = 'GET', body, raw = false } = {}) {
@@ -41,6 +46,33 @@ async function request(path, { method = 'GET', body, raw = false } = {}) {
     throw new Error(result.error?.message ?? `请求失败 (${response.status})`);
   }
   return result;
+}
+
+function uploadZip(path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', path);
+    xhr.responseType = 'json';
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('content-type', 'application/zip');
+    if (state.csrf) xhr.setRequestHeader('x-csrf-token', state.csrf);
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+    });
+    xhr.addEventListener('load', () => {
+      const result = xhr.response ?? (() => { try { return JSON.parse(xhr.responseText); } catch { return {}; } })();
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(result);
+      if (xhr.status === 401 || xhr.status === 403 && result.error?.code === 'SESSION_INVALID') {
+        state.csrf = null;
+        state.session = null;
+        setView(false);
+      }
+      reject(new Error(result.error?.message ?? `上传失败 (${xhr.status})`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('网络连接中断，主题 ZIP 上传失败')));
+    xhr.addEventListener('abort', () => reject(new Error('主题 ZIP 上传已取消')));
+    xhr.send(file);
+  });
 }
 
 function notify(message, error = false) {
@@ -118,6 +150,59 @@ function renderRows(id, items, count, render, empty = '暂无记录') {
 }
 function match(value, query) { return String(value ?? '').toLocaleLowerCase().includes(query); }
 function search(id) { return ($(id)?.value ?? '').trim().toLocaleLowerCase(); }
+function fileSize(value) {
+  const size = Number(value) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+function detectedVersionFromFilename(name) {
+  if (!/appgog/i.test(name ?? '')) return null;
+  return String(name).replace(/\.zip$/i, '').match(/(?:^|[-_\s])v?(\d+\.\d+\.\d+)(?:$|[-_\s])/i)?.[1] ?? null;
+}
+function setSourceFile(file) {
+  const input = $('source-zip');
+  const zone = $('source-upload');
+  if (!input || !zone) return;
+  if (!file) {
+    state.sourceFile = null;
+    input.value = '';
+    zone.classList.remove('has-file', 'upload-valid', 'upload-error');
+    $('source-file-meta').hidden = true;
+    $('source-upload-progress').hidden = true;
+    $('source-upload-title').textContent = '点击选择或拖拽主题 ZIP 到这里';
+    $('source-file-status').textContent = '最大 128 MB；上传后自动识别版本号和版本名称';
+    return;
+  }
+  if (!/\.zip$/i.test(file.name) || file.type && !['application/zip', 'application/x-zip-compressed'].includes(file.type)) {
+    setSourceFile(null);
+    zone.classList.add('upload-error');
+    $('source-file-status').textContent = '文件类型错误：只能上传 ZIP 安装包';
+    throw new Error('只能上传 ZIP 安装包');
+  }
+  if (file.size > 128 * 1024 * 1024) {
+    setSourceFile(null);
+    zone.classList.add('upload-error');
+    $('source-file-status').textContent = '文件超过 128 MB 限制';
+    throw new Error('主题 ZIP 不能超过 128 MB');
+  }
+  state.sourceFile = file;
+  zone.classList.add('has-file', 'upload-valid');
+  zone.classList.remove('upload-error');
+  $('source-file-name').textContent = file.name;
+  $('source-file-size').textContent = fileSize(file.size);
+  $('source-file-meta').hidden = false;
+  $('source-upload-title').textContent = '主题 ZIP 已选择';
+  const detected = detectedVersionFromFilename(file.name);
+  const form = $('version-form');
+  if (detected && form) {
+    form.elements.version.value = detected;
+    form.elements.display_name.value = `APPGOG ${detected}`;
+    $('source-file-status').textContent = `已从文件名识别版本 ${detected}；服务端还会读取 config.json 最终校验`;
+  } else {
+    $('source-file-status').textContent = '未从文件名识别版本，请手动填写；服务端会优先读取 config.json 校验';
+  }
+}
 function button(text, action, className = 'mini-button') {
   const node = element('button', text, className);
   node.type = 'button';
@@ -249,19 +334,32 @@ function renderCustomer(data) {
   $('license-prefix').textContent = license.key_prefix ? `${license.key_prefix}••••` : '已验证';
   $('license-domain-detail').textContent = license.bound_domain ?? '未绑定';
   $('update-until').textContent = date(license.update_until);
+  const announcement = data.announcement;
+  const announcementBanner = $('announcement-banner');
+  if (announcementBanner) {
+    announcementBanner.hidden = !announcement;
+    if (announcement) {
+      $('announcement-title').textContent = announcement.title || '平台公告';
+      $('announcement-body').textContent = announcement.body || '';
+      $('announcement-time').textContent = announcement.published_at ? `发布于 ${date(announcement.published_at)}` : '';
+    }
+  }
   const bindPanel = $('domain-bind-panel');
   if (bindPanel) bindPanel.hidden = Boolean(license.bound_domain);
   const migrationPanel = $('domain-migration-panel');
   const migration = data.domain_migration;
+  const migrationPolicy = data.domain_migration_policy ?? {};
   if (migrationPanel) migrationPanel.hidden = !license.bound_domain;
   const migrationForm = $('domain-migration-form');
   if (migrationForm) {
-    const pending = migration?.status === 'pending';
-    for (const control of migrationForm.elements) control.disabled = pending;
+    const coolingDown = Boolean(migrationPolicy.cooldown_active);
+    for (const control of migrationForm.elements) control.disabled = coolingDown;
     const status = $('domain-migration-status');
-    if (status) status.textContent = pending
-      ? `待审核：${migration.previous_domain} → ${migration.requested_domain}（${date(migration.requested_at)}）`
-      : '管理员批准后旧激活会在刷新时失效，新域名需重新构建和激活。';
+    if (status) status.textContent = coolingDown
+      ? `上次换绑：${migration?.previous_domain ?? '—'} → ${migration?.requested_domain ?? license.bound_domain}；下次可换绑时间：${date(migrationPolicy.next_allowed_at)}`
+      : migration?.reviewed_at
+        ? `上次换绑完成于 ${date(migration.reviewed_at)}。确认后将立即使旧域名激活失效。`
+        : '确认后立即换绑；旧域名授权随即失效，新域名需重新输入原固定 Key 激活。';
   }
   $('current-date').textContent = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
   const catalog = $('version-catalog');
@@ -347,6 +445,8 @@ function adminRow(admin) {
   const action = element('td', null, 'actions');
   if (admin.is_owner || admin.role === 'owner') {
     action.append(element('span', '受保护账号', 'table-muted'));
+  } else if (admin.id === state.session?.id) {
+    action.append(element('span', '当前账号', 'table-muted'));
   } else {
     const next = status === 'active' ? 'suspended' : 'active';
     action.append(button(next === 'active' ? '恢复账号' : '停用账号', async (event) => {
@@ -359,6 +459,15 @@ function adminRow(admin) {
       } catch (error) { notify(error.message, true); }
       finally { if (trigger.isConnected) trigger.disabled = false; }
     }));
+    action.append(button('删除账号', () => {
+      dialog('删除管理员账号', `将删除“${admin.display_name || admin.username}”的登录权限，并立即撤销其全部会话。历史审计记录会继续保留。`, (card, close) => {
+        actions(card, close, '确认删除', async () => {
+          await request(`/web/admin/admins/${encodeURIComponent(admin.id)}`, { method: 'DELETE' });
+          notify('管理员账号已删除');
+          await refresh();
+        }, true);
+      });
+    }, 'mini-button mini-button-danger'));
   }
   row.append(action);
   return row;
@@ -417,7 +526,7 @@ function renderAdmin(data) {
   const licenseQuery = search('license-search');
   const licenseStatus = $('license-status-filter').value;
   renderRows('license-list', licenses.filter((license) => (!licenseStatus || license.status === licenseStatus) && [license.customer_ref, license.bound_domain, license.key_prefix].some((value) => match(value, licenseQuery))), 7, licenseRow, '没有匹配的授权');
-  if ($('migration-count')) $('migration-count').textContent = `${migrations.filter((item) => item.status === 'pending').length} 个待审核`;
+  if ($('migration-count')) $('migration-count').textContent = `${migrations.length} 条记录`;
   if ($('migration-list')) renderRows('migration-list', migrations, 7, migrationRow, '暂无域名迁移申请');
   const list = $('version-list');
   list.replaceChildren();
@@ -450,14 +559,20 @@ function renderAdmin(data) {
   renderRows('audit-list', audit.filter((item) => [item.action, item.actor_type, item.actor_id, item.subject_type, item.subject_id].some((value) => match(value, auditQuery))), 6, (item) => { const row = element('tr'); row.append(td(item.action), td(item.actor_type), td(item.actor_id), td(item.subject_type), td(item.subject_id), td(date(item.created_at))); return row; }, '没有匹配的审计记录');
   const cmsForm = $('cms-settings-form');
   if (cmsForm) {
-    for (const key of ['platform_name', 'license_public_url', 'build_public_url']) {
+    for (const key of ['platform_name', 'domain_migration_cooldown_hours', 'announcement_title', 'announcement_body']) {
       if (cmsForm.elements[key]) cmsForm.elements[key].value = cms[key] ?? '';
     }
-    for (const key of ['license_service_enabled', 'customer_login_enabled', 'build_center_enabled', 'new_builds_enabled', 'worker_enabled']) {
-      if (cmsForm.elements[key]) cmsForm.elements[key].checked = cms[key] !== false;
-    }
+    if (cmsForm.elements.announcement_enabled) cmsForm.elements.announcement_enabled.checked = cms.announcement_enabled === true;
   }
   if ($('cms-role-badge')) $('cms-role-badge').textContent = installationRoleLabel(cms.installation_role);
+  if ($('cms-license-url')) $('cms-license-url').textContent = cms.license_public_url ?? '—';
+  if ($('cms-build-url')) $('cms-build-url').textContent = cms.build_public_url ?? '—';
+  if ($('cms-installation-role')) $('cms-installation-role').textContent = installationRoleLabel(cms.installation_role);
+  if ($('cms-service-status')) $('cms-service-status').textContent = [
+    cms.license_service_enabled !== false ? '授权服务在线' : '授权服务停用',
+    cms.build_center_enabled !== false ? '打包中心在线' : '打包中心停用',
+    cms.worker_enabled !== false ? 'Worker 在线' : 'Worker 停用',
+  ].join(' · ');
   if ($('node-count')) $('node-count').textContent = `${nodes.length} 个节点`;
   if ($('node-list')) renderRows('node-list', nodes, 7, nodeRow, '尚未创建独立节点');
 }
@@ -524,7 +639,62 @@ document.querySelectorAll('[data-go-view]').forEach((item) => item.addEventListe
 document.querySelector('.mobile-menu')?.addEventListener('click', () => $('dashboard-view').classList.toggle('nav-open'));
 document.addEventListener('click', (event) => {
   if (event.target === $('dashboard-view') && $('dashboard-view').classList.contains('nav-open')) $('dashboard-view').classList.remove('nav-open');
+  const accountMenu = $('account-menu');
+  const accountToggle = $('account-menu-toggle');
+  if (accountMenu && accountToggle && !accountMenu.hidden && !accountToggle.closest('.account-menu')?.contains(event.target)) {
+    accountMenu.hidden = true;
+    accountToggle.setAttribute('aria-expanded', 'false');
+  }
 });
+
+function openAccountCenter() {
+  const menu = $('account-menu');
+  if (menu) menu.hidden = true;
+  $('account-menu-toggle')?.setAttribute('aria-expanded', 'false');
+  dialog('用户中心', '修改当前管理员密码。密码修改后所有已登录设备会立即退出，需要使用新密码重新登录。', (card, close) => {
+    const form = element('form', null, 'form-stack');
+    const fields = [
+      ['current_password', '当前密码', 'current-password'],
+      ['new_password', '新密码（6 位数字）', 'new-password'],
+      ['confirm_password', '确认新密码', 'new-password'],
+    ];
+    for (const [name, labelText, autocomplete] of fields) {
+      const label = element('label', null, 'field');
+      label.append(element('span', labelText));
+      const input = element('input');
+      input.name = name;
+      input.type = 'password';
+      input.autocomplete = autocomplete;
+      input.inputMode = 'numeric';
+      input.required = true;
+      if (name !== 'current_password') { input.minLength = 6; input.maxLength = 6; input.pattern = '[0-9]{6}'; }
+      label.append(input);
+      form.append(label);
+    }
+    const row = element('div', null, 'dialog-actions');
+    row.append(button('取消', close, 'button button-secondary'));
+    const submit = element('button', '保存新密码', 'button button-primary');
+    submit.type = 'submit';
+    row.append(submit);
+    form.append(row);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      try {
+        const data = new FormData(form);
+        await request('/web/admin/account/password', { method: 'POST', body: Object.fromEntries(data) });
+        close();
+        state.csrf = null;
+        state.permissions = [];
+        state.session = null;
+        setView(false);
+        notify('密码修改成功，请使用新密码重新登录');
+      } catch (error) { notify(error.message, true); }
+      finally { submit.disabled = false; }
+    });
+    card.append(form);
+  });
+}
 
 $('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -541,6 +711,7 @@ $('login-form').addEventListener('submit', async (event) => {
     const body = mode === 'customer' ? { license_key: fields.get('license_key') } : { username: fields.get('username'), password: fields.get('password') };
     const result = await request(`/web/${mode}/login`, { method: 'POST', body });
     state.csrf = result.csrf_token;
+    state.session = result;
     applyAdminPermissions(result);
     form.reset();
     setView(true);
@@ -561,6 +732,7 @@ $('logout').addEventListener('click', async () => {
   catch (error) { notify(error.message, true); }
   state.csrf = null;
   state.permissions = [];
+  state.session = null;
   setView(false);
 });
 
@@ -583,21 +755,54 @@ if (mode === 'customer') {
     event.preventDefault();
     const form = event.currentTarget;
     const submit = form.querySelector('[type="submit"]');
-    submit.disabled = true;
-    try {
-      const fields = new FormData(form);
-      await request('/web/customer/domain-migrations', { method: 'POST', body: {
-        domain: String(fields.get('domain') || '').trim(), reason: String(fields.get('reason') || '').trim(),
-      } });
-      form.reset(); notify('域名迁移申请已提交'); await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { submit.disabled = false; }
+    const fields = new FormData(form);
+    const nextDomain = String(fields.get('domain') || '').trim();
+    const reason = String(fields.get('reason') || '').trim();
+    dialog('确认立即更换授权域名', `当前域名 ${state.data?.license?.bound_domain ?? '—'} 将立即失效，并切换到 ${nextDomain}。固定 Key 不变，但新域名必须重新输入原 Key 激活。`, (card, close) => {
+      actions(card, close, '确认立即换绑', async () => {
+        submit.disabled = true;
+        try {
+          await request('/web/customer/domain-migrations', { method: 'POST', body: { domain: nextDomain, reason } });
+          form.reset();
+          notify('域名换绑已完成；请在新域名重新输入原固定 Key 激活');
+          await refresh();
+        } finally { submit.disabled = false; }
+      }, true);
+    });
   });
   setInterval(() => {
     if (!document.hidden && !$('dashboard-view').hidden && state.data?.builds?.some((job) => ['queued', 'processing'].includes(job.status))) refresh();
   }, 5000);
 } else {
+  $('account-menu-toggle')?.addEventListener('click', () => {
+    const menu = $('account-menu');
+    const expanded = menu.hidden;
+    menu.hidden = !expanded;
+    $('account-menu-toggle').setAttribute('aria-expanded', String(expanded));
+  });
+  $('open-account-center')?.addEventListener('click', openAccountCenter);
   $('refresh-admin').addEventListener('click', refresh);
+  const uploadZone = $('source-upload');
+  const sourceInput = $('source-zip');
+  if (uploadZone && sourceInput) {
+    uploadZone.addEventListener('click', (event) => { if (!event.target.closest('#source-file-remove')) sourceInput.click(); });
+    uploadZone.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); sourceInput.click(); }
+    });
+    sourceInput.addEventListener('change', () => {
+      try { setSourceFile(sourceInput.files?.[0] ?? null); } catch (error) { notify(error.message, true); }
+    });
+    for (const eventName of ['dragenter', 'dragover']) uploadZone.addEventListener(eventName, (event) => {
+      event.preventDefault(); uploadZone.classList.add('is-dragging');
+    });
+    for (const eventName of ['dragleave', 'drop']) uploadZone.addEventListener(eventName, (event) => {
+      event.preventDefault(); uploadZone.classList.remove('is-dragging');
+    });
+    uploadZone.addEventListener('drop', (event) => {
+      try { setSourceFile(event.dataTransfer?.files?.[0] ?? null); } catch (error) { notify(error.message, true); }
+    });
+    $('source-file-remove')?.addEventListener('click', (event) => { event.stopPropagation(); setSourceFile(null); });
+  }
   for (const id of ['license-search', 'license-status-filter', 'admin-build-search', 'build-status-filter', 'activation-search', 'audit-search']) {
     $(id).addEventListener(id.includes('filter') ? 'change' : 'input', () => { if (state.data) renderAdmin(state.data); });
   }
@@ -628,10 +833,11 @@ if (mode === 'customer') {
     submit.disabled = true;
     try {
       const fields = new FormData(form);
-      const file = fields.get('source_zip');
+      const file = state.sourceFile ?? fields.get('source_zip');
       if (!(file instanceof File) || !file.size) throw new Error('请选择主题 ZIP');
       const params = new URLSearchParams({
         product_code: 'appgog',
+        source_filename: file.name,
         version: String(fields.get('version')),
         display_name: String(fields.get('display_name') || ''),
         release_notes: String(fields.get('release_notes') || ''),
@@ -642,9 +848,20 @@ if (mode === 'customer') {
         rollback_allowed: String(fields.get('rollback_allowed') || 'false'),
         rollback_to: String(fields.get('rollback_to') || ''),
       });
-      await request(`/web/admin/versions/upload?${params}`, { method: 'POST', body: file, raw: true });
+      const progressWrap = $('source-upload-progress');
+      const progressFill = $('source-upload-progress-fill');
+      const progressText = $('source-upload-progress-text');
+      progressWrap.hidden = false;
+      $('source-file-status').textContent = '正在上传并执行 ZIP 安全检查…';
+      const result = await uploadZip(`/web/admin/versions/upload?${params}`, file, (percent) => {
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+      });
+      progressFill.style.width = '100%';
+      progressText.textContent = '校验通过';
       form.reset();
-      notify('主题 ZIP 安全检查通过，版本已发布');
+      setSourceFile(null);
+      notify(`${result.display_name || result.version} 安全检查通过，版本已发布`);
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
@@ -677,15 +894,12 @@ if (mode === 'customer') {
       const fields = new FormData(form);
       await request('/web/admin/cms/settings', { method: 'POST', body: {
         platform_name: String(fields.get('platform_name') || '').trim(),
-        license_public_url: String(fields.get('license_public_url') || '').trim(),
-        build_public_url: String(fields.get('build_public_url') || '').trim(),
-        license_service_enabled: fields.has('license_service_enabled'),
-        customer_login_enabled: fields.has('customer_login_enabled'),
-        build_center_enabled: fields.has('build_center_enabled'),
-        new_builds_enabled: fields.has('new_builds_enabled'),
-        worker_enabled: fields.has('worker_enabled'),
+        domain_migration_cooldown_hours: Number(fields.get('domain_migration_cooldown_hours')),
+        announcement_title: String(fields.get('announcement_title') || '').trim(),
+        announcement_body: String(fields.get('announcement_body') || '').trim(),
+        announcement_enabled: fields.has('announcement_enabled'),
       } });
-      notify('系统设置已保存');
+      notify('运营设置已保存');
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
@@ -713,6 +927,7 @@ if (mode === 'customer') {
 request(`/web/session?actor=${mode}`).then((session) => {
   if (session.actor !== mode) return;
   state.csrf = session.csrf_token;
+  state.session = session;
   applyAdminPermissions(session);
   setView(true);
   const requested = location.hash.slice(1);

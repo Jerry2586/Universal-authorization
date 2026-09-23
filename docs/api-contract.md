@@ -18,7 +18,7 @@
 | `POST /web/logout?actor=admin\|customer` | 对应已登录会话 | 退出并清除该身份 Cookie，不影响另一身份 |
 | `GET /web/customer/overview` | 客户 | 当前授权、过去 24 小时已用/剩余构建额度、可用版本、最近构建 |
 | `POST /web/customer/domain/bind` | 客户 | 首次绑定域名；仅未绑定状态可执行，输入 `{ "domain": "example.com" }` |
-| `POST /web/customer/domain-migrations` | 客户 | 提交受控域名迁移申请，输入新域名和 8–500 字迁移原因 |
+| `POST /web/customer/domain-migrations` | 客户 | 按后台冷却策略自助即时换绑域名；固定 Key 不变，旧 Activation 立即撤销 |
 | `POST /web/customer/builds` | 客户 | 输入 `{ "version": "1.0.0", "domain": "demo.example.com" }` 创建任务 |
 | `GET /web/customer/builds/{id}` | 所属客户 | 任务状态、成品 SHA-256 和本次 Install Key |
 | `POST /web/customer/builds/{id}/download-ticket` | 所属客户 + CSRF | 创建约 5 分钟有效、不可猜测并绑定当前会话和构建任务的下载票据 |
@@ -29,10 +29,13 @@
 | `POST /web/admin/versions/upload?product_code=appgog&version=1.0.0&display_name=APPGOG` | 管理员 | 请求体为 ZIP 原始字节，`Content-Type: application/zip`；检查并发布可安装主题版本 |
 | `POST /web/admin/licenses/{id}/rotate-key` | 管理员 | 轮换固定 Key，返回只显示一次的新 Key |
 | `POST /web/admin/licenses/{id}/domain` | 管理员 | 输入 `{ "domain": "new.example.com" }` 换绑域名 |
-| `POST /web/admin/domain-migrations/{id}/review` | 授权管理员 | 输入 `{ "decision": "approved\|rejected", "review_note": "..." }` 审批客户迁移申请 |
+| `POST /web/admin/domain-migrations/{id}/review` | 授权管理员 | 兼容处理旧版尚未结束的迁移申请；v1.1.0 客户新换绑不再等待审批 |
 | `POST /web/admin/licenses/{id}/status` | 管理员 | 输入 `{ "status": "active" }`，也支持 `suspended`、`revoked` |
+| `POST /web/admin/account/password` | 当前管理员 | 校验当前密码并把密码修改为新的六位数字，成功后撤销该账号全部会话 |
+| `DELETE /web/admin/admins/{id}` | 所有者 | 软删除普通管理员并撤销会话；不能删除所有者或当前账号 |
+| `POST /web/admin/cms/settings` | 所有者 | 修改平台名称、换绑冷却和运营公告；部署域名、服务开关拒绝网页写入 |
 
-当前构建下载同时要求客户会话和短期 HMAC 下载票据；票据绑定会话 ID、构建任务、随机 nonce 和过期时间，成品引用不直接暴露为公共静态 URL。`Install Key` 在已完成构建详情中可再次查看；它只有首次成功安装解锁可用一次，不应把“只使用一次”误解为“只展示一次”。域名迁移批准后 License generation 增加，未使用 Install Receipt 被撤销，旧激活下次刷新时按域名迁移失效。
+当前构建下载同时要求客户会话和短期 HMAC 下载票据；票据绑定会话 ID、构建任务、随机 nonce 和过期时间，成品引用不直接暴露为公共静态 URL。`Install Key` 在已完成构建详情中可再次查看；它只有首次成功安装解锁可用一次，不应把“只使用一次”误解为“只展示一次”。自助换绑后 License generation 增加，未使用 Install Receipt 和旧 Activation 立即撤销，客户在新域名重新输入原固定 Key 激活。
 
 ## 管理自动化接口
 

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomInt } from 'node:crypto';
 
 export const secretNames = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY', 'INTERNAL_SERVICE_TOKEN'];
 export function origin(value, label) {
@@ -44,14 +44,14 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     if (legacy && (!secretNames.every(name => env[name]) || !env.ADMIN_USERNAME || !env.ADMIN_PASSWORD || !existsSync(privatePath) || !existsSync(publicPath))) {
       throw new Error('发现旧数据：必须提供原 .env 和完整签名密钥；禁止生成新凭证覆盖旧授权');
     }
-    identity = { format: 1, createdAt: new Date().toISOString(), secrets: {}, adminUsername: env.ADMIN_USERNAME || 'admin', adminPassword: env.ADMIN_PASSWORD || `Appgog-${randomBytes(24).toString('base64url')}` };
+    identity = { format: 1, createdAt: new Date().toISOString(), secrets: {}, adminUsername: env.ADMIN_USERNAME || 'admin', adminPassword: env.ADMIN_PASSWORD || String(randomInt(100000, 1000000)) };
     for (const name of secretNames) identity.secrets[name] = env[name] || randomBytes(48).toString('base64url');
   }
   for (const name of secretNames) {
     const value = identity.secrets?.[name];
     if (typeof value !== 'string' || value.length < 32 || /^(replace-with|development-)/.test(value)) throw new Error(`无效的生产凭证 ${name}`);
   }
-  if (!identity.adminUsername || typeof identity.adminPassword !== 'string' || identity.adminPassword.length < 12) throw new Error('管理员初始配置无效');
+  if (!identity.adminUsername || typeof identity.adminPassword !== 'string' || identity.adminPassword.length < 6) throw new Error('管理员初始配置无效');
   identity.options ??= {};
   for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'DOWNLOAD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
     if (env[name] !== undefined && env[name] !== '') {

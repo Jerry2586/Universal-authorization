@@ -11,6 +11,7 @@ function fixture(t) { const root = mkdtempSync(join(tmpdir(), 'appgog-docker-'))
 test('Docker initializes once, retains identities on update, and isolates role credentials', t => {
   const root = fixture(t);
   const first = initialize({ root, env });
+  assert.match(first.identity.adminPassword, /^\d{6}$/);
   const keyPath = join(root, 'var/keys/ed25519-private.pem');
   const key = readFileSync(keyPath, 'utf8');
   writeFileSync(join(root, 'var/data/appgog.sqlite'), 'existing-database');

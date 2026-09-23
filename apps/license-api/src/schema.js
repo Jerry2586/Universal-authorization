@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS admin_users (
   status TEXT NOT NULL,
   last_login_at TEXT,
   last_login_ip TEXT,
+  deleted_at TEXT,
+  deleted_username TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

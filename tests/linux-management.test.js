@@ -26,6 +26,14 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /4194304/);
   assert.match(installer, /add-port=443\/udp/);
   assert.match(installer, /verify_download/);
+  assert.match(installer, /--source MODE/);
+  assert.match(installer, /release-manifest\.json\.sig/);
+  assert.match(installer, /openssl pkeyutl -verify/);
+  assert.match(installer, /cloudflare_upsert_record/);
+  assert.match(installer, /APPGOG_DOCKER_REGISTRY_MIRROR/);
+  assert.match(installer, /sh scripts\/docker\.sh update/);
+  assert.match(installer, /git clone.*\$temp_dir\/repository/);
+  assert.match(installer, /copy_release_root "\$temp_dir\/repository"/);
   assert.match(installer, /\/opt\/appgog/);
   assert.match(installer, /保留已有 \.env/);
   assert.match(installer, /chmod 600 "\$INSTALL_DIR\/\.env"/);
@@ -38,7 +46,7 @@ test('Linux installer installs Docker, protects existing configuration, and crea
 
 test('management menu exposes safe lifecycle, logs, configuration, backup, restore, and diagnostics', () => {
   const manager = text(scripts.manager);
-  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'credentials', 'update', 'rollback', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'cleanup']) {
+  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'services', 'credentials', 'update', 'rollback', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'cleanup']) {
     assert.ok(manager.includes(command), `管理脚本缺少 ${command}`);
   }
   assert.match(manager, /确认保存配置/);
@@ -48,6 +56,8 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
   assert.match(manager, /配置差异/);
   assert.match(manager, /最近备份/);
   assert.match(manager, /更新状态/);
+  assert.match(manager, /Cloudflare API Token/);
+  assert.match(manager, /LICENSE_SERVICE_ENABLED/);
 });
 
 test('Docker operations keep destructive volume removal out of the supported workflow', () => {

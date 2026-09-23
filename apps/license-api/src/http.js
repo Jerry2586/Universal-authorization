@@ -315,7 +315,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         rateLimit(`admin-login:${clientAddress(request)}`, 8, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = sessions.loginAdmin(body.username, body.password, clientAddress(request));
-        return json(response, 200, { actor: 'admin', username: result.admin.username,
+        return json(response, 200, { actor: 'admin', id: result.admin.id, username: result.admin.username,
           display_name: result.admin.display_name, role: result.admin.role, permissions: result.admin.permissions,
           csrf_token: result.csrfToken }, {
           'set-cookie': cookieHeader(result.token, config, 'admin'),
@@ -327,8 +327,8 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         const session = sessions.requireActor(token, sessionActor);
         if (sessionActor === 'admin') {
           const { admin, permissions } = sessions.requireAdmin(token);
-          return json(response, 200, { actor: 'admin', username: admin.username, display_name: admin.display_name,
-            role: admin.role, permissions, csrf_token: session.csrf_token });
+          return json(response, 200, { actor: 'admin', id: admin.id, username: admin.username, display_name: admin.display_name,
+            role: admin.role, is_owner: Boolean(admin.is_owner), permissions, csrf_token: session.csrf_token });
         }
         return json(response, 200, { actor: sessionActor, csrf_token: session.csrf_token });
       }
@@ -449,7 +449,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         const session = requireWebSession(request, sessions, 'admin', true, 'admin.manage');
         const body = await readJson(request);
         invariant(/^[a-zA-Z][a-zA-Z0-9_.-]{2,39}$/.test(body.username ?? ''), 'ADMIN_USERNAME_INVALID', '管理员账号必须为 3–40 位字母、数字、点、下划线或短横线');
-        invariant(typeof body.password === 'string' && body.password.length >= 12, 'ADMIN_PASSWORD_WEAK', '管理员密码至少 12 个字符');
+        invariant(/^\d{6}$/.test(body.password ?? ''), 'ADMIN_PASSWORD_INVALID', '管理员初始密码必须是 6 位数字');
         invariant(ADMIN_ROLES.includes(body.role) && body.role !== 'owner' && body.role !== 'super_admin', 'ADMIN_ROLE_INVALID', '只能创建非最高权限的管理员');
         invariant(!portal.repository.adminByUsername(body.username), 'ADMIN_EXISTS', '管理员账号已存在', 409);
         const admin = portal.repository.createAdmin({ username: body.username, displayName: String(body.display_name ?? body.username).slice(0, 80),
@@ -471,6 +471,38 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: `admin.${body.status}`,
           subjectType: 'admin', subjectId: admin.id, now: new Date().toISOString() });
         return json(response, 200, { id: admin.id, status: admin.status });
+      }
+
+      if (method === 'POST' && url.pathname === '/web/admin/account/password') {
+        const session = requireWebSession(request, sessions, 'admin', true);
+        const body = await readJson(request);
+        const admin = portal.repository.adminById(session.actor_id);
+        invariant(admin && verifyPassword(String(body.current_password ?? ''), admin.password_hash), 'ADMIN_PASSWORD_CURRENT_INVALID', '当前密码不正确', 403);
+        invariant(/^\d{6}$/.test(body.new_password ?? ''), 'ADMIN_PASSWORD_INVALID', '新密码必须是 6 位数字');
+        invariant(body.new_password === body.confirm_password, 'ADMIN_PASSWORD_CONFIRM_MISMATCH', '两次输入的新密码不一致');
+        invariant(body.new_password !== body.current_password, 'ADMIN_PASSWORD_UNCHANGED', '新密码不能与当前密码相同');
+        const now = new Date().toISOString();
+        portal.repository.updateAdminPassword(admin.id, hashPassword(body.new_password), now);
+        portal.repository.audit({ actorType: 'admin', actorId: admin.id, action: 'admin.password_changed',
+          subjectType: 'admin', subjectId: admin.id, now });
+        portal.repository.revokeAdminSessions(admin.id);
+        return json(response, 200, { ok: true, reauth_required: true }, { 'set-cookie': clearCookieHeader(config, 'admin') });
+      }
+
+      const adminDeleteMatch = url.pathname.match(/^\/web\/admin\/admins\/([^/]+)$/);
+      if (method === 'DELETE' && adminDeleteMatch) {
+        const session = requireWebSession(request, sessions, 'admin', true, 'admin.manage');
+        invariant(session.actor_id !== adminDeleteMatch[1], 'ADMIN_SELF_DELETE', '不能删除当前登录账号', 403);
+        const target = portal.repository.adminById(adminDeleteMatch[1]);
+        invariant(target && !target.deleted_at, 'ADMIN_NOT_FOUND', '管理员不存在', 404);
+        invariant(!target.is_owner && target.role !== 'owner', 'ADMIN_PROTECTED', '平台所有者账号不能删除', 403);
+        const now = new Date().toISOString();
+        const deleted = portal.repository.deleteAdmin(target.id, now);
+        invariant(deleted, 'ADMIN_PROTECTED', '管理员不存在或受到保护', 403);
+        portal.repository.revokeAdminSessions(target.id);
+        portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: 'admin.deleted',
+          subjectType: 'admin', subjectId: target.id, metadata: { username: target.username, role: target.role }, now });
+        return json(response, 200, { id: target.id, deleted: true });
       }
 
       if (method === 'POST' && url.pathname === '/web/admin/licenses') {
@@ -513,6 +545,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
           productCode: url.searchParams.get('product_code') || 'appgog',
           version: url.searchParams.get('version'),
           displayName: url.searchParams.get('display_name'),
+          sourceFilename: url.searchParams.get('source_filename'),
           releaseNotes: url.searchParams.get('release_notes'), channel: url.searchParams.get('channel'),
           releaseKind: url.searchParams.get('release_kind'), minXboardVersion: url.searchParams.get('min_xboard_version'),
           minUpgradeVersion: url.searchParams.get('min_upgrade_version'), rollbackAllowed: url.searchParams.get('rollback_allowed') !== 'false',

@@ -11,6 +11,8 @@ const MIGRATIONS = Object.freeze({
     ['is_owner', 'INTEGER NOT NULL DEFAULT 0'],
     ['last_login_at', 'TEXT'],
     ['last_login_ip', 'TEXT'],
+    ['deleted_at', 'TEXT'],
+    ['deleted_username', 'TEXT'],
   ],
   source_versions: [
     ['release_notes', "TEXT NOT NULL DEFAULT ''"],

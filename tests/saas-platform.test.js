@@ -135,12 +135,12 @@ test('owner creates a release_manager who can log in but cannot issue a license'
   const created = await app.send('/web/admin/admins', {
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
     body: { username: 'release.manager', display_name: 'Release Manager',
-      password: 'release-manager-password-2026', role: 'release_manager' },
+      password: '183726', role: 'release_manager' },
   });
   assert.equal(created.status, 201);
   assert.equal(created.data.role, 'release_manager');
   const manager = await app.send('/web/admin/login', {
-    method: 'POST', body: { username: 'release.manager', password: 'release-manager-password-2026' },
+    method: 'POST', body: { username: 'release.manager', password: '183726' },
   });
   assert.equal(manager.status, 200);
   const denied = await app.send('/web/admin/licenses', {
@@ -166,7 +166,7 @@ test('customer overview exposes key prefix and domain, not customer reference or
   assert.doesNotMatch(JSON.stringify(overview.data), /PRIVATE-CUSTOMER-REFERENCE/);
 });
 
-test('客户中心完成首次域名绑定并提交迁移，只有管理员可审批', async (t) => {
+test('客户中心可自助换绑域名，固定 Key 不变并遵守后台冷却', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
   const issued = await issue(app, owner, { customerRef: 'ORDER-DOMAIN-FLOW', domain: null });
@@ -191,28 +191,31 @@ test('客户中心完成首次域名绑定并提交迁移，只有管理员可�
     body: { domain: 'next.example.com', reason: '客户正式业务域名需要按计划完成迁移' },
   });
   assert.equal(requested.status, 201);
-  assert.equal(requested.data.status, 'pending');
+  assert.equal(requested.data.status, 'approved');
+  assert.equal(requested.data.bound_domain, 'next.example.com');
+  assert.equal(requested.data.generation, 2);
   const overview = await app.send('/web/customer/overview', { cookie: customer.cookie });
   assert.equal(overview.data.domain_migration.requested_domain, 'next.example.com');
-
-  const forbidden = await app.send(`/web/admin/domain-migrations/${requested.data.id}/review`, {
-    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
-    body: { decision: 'approved' },
-  });
-  assert.equal(forbidden.status, 401);
+  assert.equal(overview.data.license.bound_domain, 'next.example.com');
   const adminOverview = await app.send('/web/admin/overview', { cookie: owner.cookie });
-  assert.ok(adminOverview.data.domain_migrations.some((item) => item.id === requested.data.id && item.status === 'pending'));
-
-  const approved = await app.send(`/web/admin/domain-migrations/${requested.data.id}/review`, {
+  assert.ok(adminOverview.data.domain_migrations.some((item) => item.id === requested.data.id && item.status === 'approved'));
+  const loginAgain = await app.send('/web/customer/login', { method: 'POST', body: { license_key: issued.license_key } });
+  assert.equal(loginAgain.status, 200);
+  const settings = await app.send('/web/admin/cms/settings', {
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
-    body: { decision: 'approved', review_note: '已核验迁移窗口' },
+    body: { platform_name: 'APPGOG', domain_migration_cooldown_hours: 24 },
   });
-  assert.equal(approved.status, 200);
-  assert.equal(approved.data.bound_domain, 'next.example.com');
-  assert.equal(approved.data.generation, 2);
-  const after = await app.send('/web/customer/overview', { cookie: customer.cookie });
-  assert.equal(after.data.license.bound_domain, 'next.example.com');
-  assert.equal(after.data.domain_migration, null);
+  assert.equal(settings.status, 200);
+  const cooling = await app.send('/web/customer/domain-migrations', {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { domain: 'third.example.com', reason: '' },
+  });
+  assert.equal(cooling.status, 429);
+  assert.equal(cooling.data.error.code, 'DOMAIN_MIGRATION_COOLDOWN');
+  const adminChanged = await app.send(`/web/admin/licenses/${issued.license_id}/domain`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { domain: 'admin.example.com' },
+  });
+  assert.notEqual(adminChanged.status, 429);
 });
 
 test('release metadata and update window allow old published builds but reject newer releases', async (t) => {
@@ -341,10 +344,10 @@ test('管理员停用后旧会话立即失效，所有者账号受保护', async
   const owner = await app.owner();
   const created = await app.send('/web/admin/admins', {
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
-    body: { username: 'support-qa', display_name: '客服测试', password: 'support-qa-password-2026', role: 'support' },
+    body: { username: 'support-qa', display_name: '客服测试', password: '294837', role: 'support' },
   });
   assert.equal(created.status, 201);
-  const staff = await app.send('/web/admin/login', { method: 'POST', body: { username: 'support-qa', password: 'support-qa-password-2026' } });
+  const staff = await app.send('/web/admin/login', { method: 'POST', body: { username: 'support-qa', password: '294837' } });
   assert.equal(staff.status, 200);
   assert.equal((await app.send('/web/admin/overview', { cookie: staff.cookie.split(';')[0] })).status, 200);
   const suspended = await app.send(`/web/admin/admins/${created.data.id}/status`, {
@@ -357,6 +360,75 @@ test('管理员停用后旧会话立即失效，所有者账号受保护', async
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { status: 'suspended' },
   });
   assert.equal(protectedChange.status, 403);
+});
+
+test('管理员可修改自己的六位数字密码，修改后所有旧会话失效', async (t) => {
+  const app = await fixture(t);
+  const first = await app.owner();
+  const second = await app.owner();
+  const changed = await app.send('/web/admin/account/password', {
+    method: 'POST', cookie: first.cookie, csrf: first.csrf,
+    body: { current_password: app.config.adminPassword, new_password: '516204', confirm_password: '516204' },
+  });
+  assert.equal(changed.status, 200);
+  assert.match(changed.cookie, /^appgog_admin_session=;/);
+  assert.equal((await app.send('/web/admin/overview', { cookie: first.cookie })).status, 401);
+  assert.equal((await app.send('/web/admin/overview', { cookie: second.cookie })).status, 401);
+  assert.equal((await app.send('/web/admin/login', {
+    method: 'POST', body: { username: app.config.adminUsername, password: app.config.adminPassword },
+  })).status, 401);
+  assert.equal((await app.send('/web/admin/login', {
+    method: 'POST', body: { username: app.config.adminUsername, password: '516204' },
+  })).status, 200);
+});
+
+test('普通管理员可软删除并释放用户名，所有者和当前账号不可删除', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const created = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'delete-me', display_name: '待删除账号', password: '618305', role: 'support' },
+  });
+  assert.equal(created.status, 201);
+  const staff = await app.send('/web/admin/login', { method: 'POST', body: { username: 'delete-me', password: '618305' } });
+  assert.equal(staff.status, 200);
+  const selfDelete = await app.send(`/web/admin/admins/${created.data.id}`, {
+    method: 'DELETE', cookie: staff.cookie.split(';')[0], csrf: staff.data.csrf_token,
+  });
+  assert.equal(selfDelete.status, 403);
+  const ownerRow = app.repository.adminByUsername(app.config.adminUsername);
+  assert.equal((await app.send(`/web/admin/admins/${ownerRow.id}`, {
+    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+  })).status, 403);
+  assert.equal((await app.send(`/web/admin/admins/${created.data.id}`, {
+    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+  })).status, 200);
+  assert.equal((await app.send('/web/admin/overview', { cookie: staff.cookie.split(';')[0] })).status, 401);
+  assert.equal(app.repository.adminByUsername('delete-me'), undefined);
+  assert.equal(app.repository.adminById(created.data.id).deleted_username, 'delete-me');
+  const recreated = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'delete-me', display_name: '重新创建', password: '729416', role: 'support' },
+  });
+  assert.equal(recreated.status, 201);
+  assert.ok(app.repository.listAudit(20).some((event) => event.action === 'admin.deleted' && event.subject_id === created.data.id));
+});
+
+test('授权 Key 没有删除接口，撤销只改变状态并保留记录', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-KEEP-KEY' });
+  const deleted = await app.send(`/web/admin/licenses/${issued.license_id}`, {
+    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+  });
+  assert.equal(deleted.status, 404);
+  const revoked = await app.send(`/web/admin/licenses/${issued.license_id}/status`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { status: 'revoked' },
+  });
+  assert.equal(revoked.status, 200);
+  const row = app.repository.licenseById(issued.license_id);
+  assert.ok(row);
+  assert.equal(row.status, 'revoked');
 });
 
 test('版本更新公告由服务端签名，打包地址与版本字段不能被替换', async (t) => {
@@ -378,26 +450,31 @@ test('CMS 设置和节点凭证只由所有者管理，停用与轮换会立即�
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
     body: {
       platform_name: 'APPGOG 正式授权中心',
-      license_public_url: 'https://auth.example.com/',
-      build_public_url: 'https://build.example.com/build/',
-      license_service_enabled: true,
-      customer_login_enabled: true,
-      build_center_enabled: true,
-      new_builds_enabled: false,
-      worker_enabled: true,
+      domain_migration_cooldown_hours: 36,
+      announcement_title: '维护公告',
+      announcement_body: '今晚进行例行维护。',
+      announcement_enabled: true,
     },
   });
   assert.equal(settings.status, 200);
   assert.equal(settings.data.platform_name, 'APPGOG 正式授权中心');
-  assert.equal(settings.data.license_public_url, 'https://auth.example.com');
-  assert.equal(settings.data.new_builds_enabled, false);
+  assert.equal(settings.data.license_public_url, app.config.publicBaseUrl);
+  assert.equal(settings.data.domain_migration_cooldown_hours, 36);
+  assert.equal(settings.data.announcement_enabled, true);
 
-  const invalidUrl = await app.send('/web/admin/cms/settings', {
+  const deploymentSetting = await app.send('/web/admin/cms/settings', {
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
-    body: { license_public_url: 'not-a-url' },
+    body: { build_public_url: 'https://forbidden.example.com', worker_enabled: false },
   });
-  assert.equal(invalidUrl.status, 400);
-  assert.equal(invalidUrl.data.error.code, 'CMS_URL_INVALID');
+  assert.equal(deploymentSetting.status, 403);
+  assert.equal(deploymentSetting.data.error.code, 'DEPLOYMENT_SETTING_READ_ONLY');
+
+  const invalidCooldown = await app.send('/web/admin/cms/settings', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { domain_migration_cooldown_hours: -1 },
+  });
+  assert.equal(invalidCooldown.status, 400);
+  assert.equal(invalidCooldown.data.error.code, 'DOMAIN_MIGRATION_COOLDOWN_INVALID');
 
   const created = await app.send('/web/admin/cms/nodes', {
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
@@ -433,10 +510,10 @@ test('CMS 设置和节点凭证只由所有者管理，停用与轮换会立即�
 
   const staffCreated = await app.send('/web/admin/admins', {
     method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
-    body: { username: 'cms-support', display_name: 'CMS 客服', password: 'cms-support-password-2026', role: 'support' },
+    body: { username: 'cms-support', display_name: 'CMS 客服', password: '405918', role: 'support' },
   });
   assert.equal(staffCreated.status, 201);
-  const staff = await app.send('/web/admin/login', { method: 'POST', body: { username: 'cms-support', password: 'cms-support-password-2026' } });
+  const staff = await app.send('/web/admin/login', { method: 'POST', body: { username: 'cms-support', password: '405918' } });
   const staffOverview = await app.send('/web/admin/overview', { cookie: staff.cookie.split(';')[0] });
   assert.equal(staffOverview.status, 200);
   assert.equal(staffOverview.data.cms, null);
