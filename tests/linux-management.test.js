@@ -27,7 +27,7 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /add-port=443\/udp/);
   assert.match(installer, /verify_download/);
   assert.match(installer, /\/opt\/appgog/);
-  assert.match(installer, /\[ ! -f "\$INSTALL_DIR\/\.env" \] \|\| fail/);
+  assert.match(installer, /保留已有 \.env/);
   assert.match(installer, /chmod 600 "\$INSTALL_DIR\/\.env"/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
@@ -52,14 +52,14 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
 
 test('Docker operations keep destructive volume removal out of the supported workflow', () => {
   const docker = text(scripts.docker);
-  assert.match(docker, /install\|start|install\)/);
+  assert.match(docker, /install\|update\)/);
   assert.match(docker, /doctor\(\)/);
   assert.match(docker, /logs\(\)/);
   assert.match(docker, /appgog-platform:rollback/);
   assert.match(docker, /diagnostics\(\)/);
   assert.match(docker, /repair_permissions\(\)/);
   assert.match(docker, /docker image prune -f/);
-  assert.match(docker, /compose stop caddy build-worker build-center license-center/);
+  assert.match(docker, /compose stop appgog/);
   assert.match(docker, /aes-256-cbc/);
   assert.match(docker, /pbkdf2/);
   assert.match(docker, /\.backup-key/);
@@ -79,6 +79,8 @@ test('management shell scripts pass POSIX syntax validation when sh is available
     return;
   }
   accessSync('/bin/sh', constants.X_OK);
-  const result = spawnSync('/bin/sh', ['-n', scripts.docker, scripts.installer, scripts.manager], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
+  for (const script of Object.values(scripts)) {
+    const result = spawnSync('/bin/sh', ['-n', script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
 });

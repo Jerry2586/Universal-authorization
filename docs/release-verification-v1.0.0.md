@@ -4,8 +4,8 @@
 
 ## 已执行验证
 
-- `node --test`：54 项，53 通过，0 失败，1 跳过；
-- 跳过项：当前 Windows Node 环境没有可保证的 POSIX Shell，因此管理 Shell 脚本的 `sh -n` 自动测试跳过；
+- `node --test`：60 项，58 通过，0 失败，2 项 Linux 专用测试跳过；
+- Windows 下跳过 POSIX Shell 自动测试与自解压脚本 Linux 执行测试；另通过 Git Bash 对每个 Shell 脚本执行语法检查。新增进程退出、spawn 失败、连续健康失败及安装包校验测试通过。
 - 固定 Key 正常、错误、暂停、恢复、最终撤销、轮换、跨产品拒绝和激活数量限制：自动测试通过；
 - 域名规范化、首次绑定、重复绑定拒绝、受控迁移、管理员审批和 generation 失效：自动测试通过；
 - 两阶段授权、Install Key 一次性事务消费、Install Receipt 环境绑定、正式激活、Token 篡改/过期/撤销与离线宽限：自动测试通过；
@@ -27,14 +27,14 @@
 
 ## 本机无法执行的真实验证
 
-当前开发主机是 Windows，未安装 Docker，也没有可用 POSIX `sh`。因此以下项目未被伪造为成功：
+当前开发主机是 Windows，未安装 Docker。Linux Docker 运行结果以对应 GitHub Actions 为准，下列目标服务器验收不能由本机替代：
 
 - `docker compose config --quiet` 的真实 Docker CLI 解析；
-- Linux Shell 的实际 `sh -n`；
+- 自解压安装文件在目标 Linux 的系统依赖补齐；
 - Debian、Ubuntu、RHEL、Rocky、Alma、Fedora 实机包管理器安装；
 - 公网 DNS A 记录、80/443 防火墙、Caddy ACME 证书签发与自动续期；
 - 全新 VPS 一行安装、更新失败自动回滚和整机备份恢复演练；
-- Linux 宿主机上的 Worker 网络隔离、资源限制和沙箱逃逸验证；
+- 单容器的资源限制与宿主机加固验证；默认 Worker 与其他进程共享文件系统；
 - 真实 APPGOG/Xboard 后端设置、主题启用、Xboard 连接、受保护资源与正式更新路由的逐项守卫接入。
 
 这些项目需要目标 Linux VPS、真实域名和真实 APPGOG/Xboard 源码。仓库已经提供安装器、Caddy 编排、诊断、服务端守卫 SDK 和接入契约，但本地静态测试不能替代外部环境验收。
@@ -45,6 +45,6 @@
 
 ## 发布制品
 
-正式文件名：`APPGOG-Packaging-Licensing-System-1.0.0.zip`。
+主安装文件：`APPGOG-Packaging-Licensing-System-1.0.0.run`，另提供 ZIP 源码和两者 SHA-256。
 
 最终 SHA-256 以本次收口重新生成并独立交叉验证的结果为准。每次修改源码或文档后，旧 ZIP 和旧哈希都立即失效。

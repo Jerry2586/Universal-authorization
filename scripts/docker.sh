@@ -24,6 +24,10 @@ require_config() {
     exit 1
   fi
 }
+project_containers() {
+  docker ps "$@" --filter "label=com.docker.compose.project=${APPGOG_PROJECT:-appgog}" --format '{{.ID}} {{.Label "com.docker.compose.service"}}' |
+    awk '$2 ~ /^(appgog|initialize|license-center|build-center|build-worker|caddy)$/ { print $1 }'
+}
 backup() (
   umask 077
   command -v openssl >/dev/null 2>&1 || fail '创建加密备份需要 OpenSSL。'
@@ -38,13 +42,10 @@ backup() (
   plain="$target.partial.tar.gz"
   encrypted="$target.partial"
   # Stop writers before archiving SQLite (including WAL), files and secrets together.
-  running=$(compose ps --status running --services)
-  trap 'rm -f "$plain" "$encrypted"; if [ -n "$running" ]; then compose start $running >/dev/null || true; fi' EXIT
-  compose stop caddy
-  compose stop build-worker
-  compose stop build-center
-  compose stop license-center
-  compose run --rm --no-deps -T --entrypoint tar initialize -C /app -czf - \
+  running=$(project_containers)
+  trap 'rm -f "$plain" "$encrypted"; if [ -n "$running" ]; then docker start $running >/dev/null || true; fi' 0
+  [ -z "$running" ] || docker stop $running >/dev/null
+  compose run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --entrypoint tar appgog -C /app -czf - \
     var/data var/keys var/artifacts var/uploads runtime/license runtime/build runtime/worker runtime/caddy-data runtime/caddy-config > "$plain"
   openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -pass "file:$BACKUP_KEY_FILE" -in "$plain" -out "$encrypted"
   rm -f "$plain"
@@ -52,14 +53,90 @@ backup() (
   echo "加密完整备份：$ROOT_DIR/$target"
   echo "恢复密钥：$BACKUP_KEY_FILE（请单独离线保存，不要和备份放在同一位置）"
 )
+validate_mounts() {
+  for container in $(project_containers -a); do
+    docker inspect --format '{{range .Mounts}}{{.Type}} {{if .Name}}{{.Name}}{{else}}-{{end}} {{println .Destination}}{{end}}' "$container" |
+      while read -r kind name destination; do
+        expected=''
+        case "$destination" in
+          /app/var/data) expected=appgog-db ;;
+          /app/var/keys) expected=appgog-keys ;;
+          /app/var/artifacts) expected=appgog-artifacts ;;
+          /app/var/uploads) expected=appgog-uploads ;;
+          /app/runtime/license) expected=appgog-license-config ;;
+          /app/runtime/build) expected=appgog-build-config ;;
+          /app/runtime/worker) expected=appgog-worker-config ;;
+          /data|/app/runtime/caddy-data) expected=appgog-caddy-data ;;
+          /config|/app/runtime/caddy-config) expected=appgog-caddy-config ;;
+          /app/var|/app/runtime|/app) fail '检测到自定义数据挂载，请先迁移到标准命名卷，禁止空卷覆盖旧实例。' ;;
+        esac
+        if [ -n "$expected" ]; then
+          [ "$kind" = volume ] && [ "$name" = "${APPGOG_PROJECT:-appgog}_$expected" ] || fail "检测到自定义数据卷：$destination；请先映射原数据。"
+        fi
+      done || return 1
+  done
+}
+deploy() (
+  # Build before interrupting the running installation. Keep only single-container rollback images.
+  validate_mounts
+  previous=$(compose ps -a -q appgog)
+  previous_image=''
+  if [ -n "$previous" ]; then previous_image=$(docker inspect --format '{{.Image}}' "$previous"); fi
+  compose build
+  image_name=$(compose config --images | head -n 1)
+  [ -z "$previous_image" ] || docker tag "$previous_image" appgog-platform:rollback
+  existing=$(project_containers -a)
+  if [ -n "$existing" ] || docker volume inspect "${APPGOG_PROJECT:-appgog}_appgog-db" >/dev/null 2>&1; then
+    backup
+  fi
+  legacy=$(docker ps -a --filter "label=com.docker.compose.project=${APPGOG_PROJECT:-appgog}" --format '{{.ID}} {{.Label "com.docker.compose.service"}}' | awk '$2 ~ /^(initialize|license-center|build-center|build-worker|caddy)$/ {print $1}')
+  running=$(project_containers)
+  switched=false
+  runtime_backup=''
+  cleanup_deploy() {
+    if [ "$switched" = false ] && [ -n "$runtime_backup" ]; then
+      compose run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --cap-add CHOWN --cap-add FOWNER --entrypoint tar appgog -C /app -xzf - < "$runtime_backup" || {
+        echo '旧运行配置恢复失败，保留停止状态；请使用完整备份恢复。' >&2
+        rm -f "$runtime_backup"
+        return
+      }
+    fi
+    if [ "$switched" = false ] && [ -n "$running" ]; then docker start $running >/dev/null || true; fi
+    [ -z "$runtime_backup" ] || rm -f "$runtime_backup"
+  }
+  trap cleanup_deploy 0
+  [ -z "$running" ] || docker stop $running >/dev/null
+  if [ -n "$legacy" ]; then
+    umask 077
+    runtime_candidate=$(mktemp)
+    if ! compose run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --entrypoint tar appgog -C /app -czf - runtime/license runtime/build runtime/worker > "$runtime_candidate"; then
+      rm -f "$runtime_candidate"
+      fail '无法保存旧运行配置，停止迁移。'
+    fi
+    runtime_backup=$runtime_candidate
+  fi
+  # Old Caddy ran as root. Only this short maintenance helper owns elevated capabilities.
+  compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c     'chown -R 1000:1000 /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads /app/runtime/license /app/runtime/build /app/runtime/worker /app/runtime/caddy-data /app/runtime/caddy-config'
+  if ! compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 appgog; then
+    compose stop appgog || true
+    if [ -n "$previous_image" ]; then
+      docker tag "$previous_image" "$image_name"
+      compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 appgog || true
+      switched=true
+    fi
+    fail '安装/更新健康检查失败；已尝试恢复原服务，数据备份保留在 backups，请查看 logs。'
+  fi
+  switched=true
+  [ -z "$legacy" ] || docker rm $legacy >/dev/null
+  compose ps
+)
 logs() {
   service=${2:-all}
   tail_count=${3:-100}
   case "$tail_count" in ''|0|*[!0-9]*) fail '日志行数必须是正整数。' ;; esac
   case "$service" in
-    all) compose logs --tail "$tail_count" initialize license-center build-center build-worker caddy ;;
-    initialize|license-center|build-center|build-worker|caddy) compose logs --tail "$tail_count" "$service" ;;
-    *) fail '服务名只能是 all、initialize、license-center、build-center、build-worker 或 caddy。' ;;
+    all|initialize|license-center|build-center|build-worker|caddy|appgog) compose logs --tail "$tail_count" appgog ;;
+    *) fail '日志参数只能是 all、appgog 或逻辑组件名称。' ;;
   esac
 }
 doctor() {
@@ -95,11 +172,11 @@ doctor() {
     echo '[失败] Compose 配置无效'
     failed=1
   fi
-  running=$(compose ps --status running --services 2>/dev/null | awk '$0 == "license-center" || $0 == "build-center" || $0 == "build-worker" || $0 == "caddy" { count += 1 } END { print count + 0 }')
-  if [ "$running" -eq 4 ]; then
-    echo '[正常] 三个业务服务与 HTTPS 入口均在运行'
+  running=$(compose ps --status running --services 2>/dev/null | awk '$0 == "appgog" { count += 1 } END { print count + 0 }')
+  if [ "$running" -eq 1 ] && compose ps --status running appgog 2>/dev/null | grep -q '(healthy)'; then
+    echo '[正常] 单一 appgog 容器运行，内部四个进程健康'
   else
-    echo "[失败] 核心服务仅运行 $running/4"
+    echo "[失败] appgog 单容器未达到健康状态"
     failed=1
   fi
   echo
@@ -136,7 +213,7 @@ doctor() {
       fi
     done
   fi
-  if compose run --rm --no-deps -T --entrypoint sh initialize -c '
+  if compose run --rm --no-deps -T --entrypoint sh appgog -c '
     test -s /app/var/keys/ed25519-private.pem && test -s /app/var/keys/ed25519-public.pem &&
     test "$(stat -c %a /app/var/keys/ed25519-private.pem 2>/dev/null)" = 600
   ' >/dev/null 2>&1; then
@@ -192,7 +269,7 @@ repair_permissions() {
   [ -f .env ] && chmod 600 .env 2>/dev/null || true
   mkdir -p backups logs
   chmod 700 backups logs 2>/dev/null || true
-  compose run --rm --no-deps -T --entrypoint sh initialize -c '
+  compose run --rm --no-deps -T --entrypoint sh appgog -c '
     chmod 700 /app/var/keys /app/runtime/license /app/runtime/build /app/runtime/worker 2>/dev/null || true
     find /app/var/keys -type f -exec chmod 600 {} + 2>/dev/null || true
     find /app/runtime/license /app/runtime/build /app/runtime/worker -type f -exec chmod 600 {} + 2>/dev/null || true
@@ -224,11 +301,11 @@ usage() {
 EOF
 }
 case "${1:-help}" in
-  install)
+  install|update)
     require_docker
     require_config
-    compose up -d --build --force-recreate --wait --wait-timeout 180
-    echo '安装完成。用 sh scripts/docker.sh credentials 查看初始管理员账号密码。'
+    deploy
+    echo '单容器安装完成。用 sh scripts/docker.sh credentials 查看初始管理员账号密码。'
     ;;
   start)
     require_docker
@@ -238,35 +315,19 @@ case "${1:-help}" in
   stop)
     require_docker
     require_config
-    compose stop caddy build-worker build-center license-center
+    compose stop appgog
     ;;
   restart)
     require_docker
     require_config
     compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
     ;;
-  update)
-    require_docker
-    require_config
-    backup
-    image_name=${APPGOG_IMAGE:-appgog-platform:local}
-    if docker image inspect "$image_name" >/dev/null 2>&1; then docker tag "$image_name" appgog-platform:rollback; fi
-    compose build
-    if ! compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180; then
-      echo '更新健康检查失败，正在自动回滚镜像...' >&2
-      if docker image inspect appgog-platform:rollback >/dev/null 2>&1; then
-        docker tag appgog-platform:rollback "$image_name"
-        compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
-      fi
-      fail '更新失败，已尝试恢复更新前镜像；请运行 doctor 和 logs。'
-    fi
-    compose ps
-    ;;
+
   rollback)
     require_docker
     require_config
     docker image inspect appgog-platform:rollback >/dev/null 2>&1 || fail '没有可用的更新前回滚镜像。'
-    image_name=${APPGOG_IMAGE:-appgog-platform:local}
+    image_name=$(compose config --images | head -n 1)
     backup
     docker tag appgog-platform:rollback "$image_name"
     compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
@@ -289,7 +350,7 @@ case "${1:-help}" in
         if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "file:$BACKUP_KEY_FILE" -in "$archive" -out "$decrypted"; then
           fail '备份解密失败；请检查备份文件与独立恢复密钥是否匹配。'
         fi
-        if ! compose run --rm --no-deps -T initialize node scripts/docker/restore.js - < "$decrypted"; then
+        if ! compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$decrypted"; then
           fail '备份内容校验或恢复失败；目标部署必须为空，且备份必须完整。'
         fi
         rm -f "$decrypted"
@@ -297,7 +358,7 @@ case "${1:-help}" in
         ;;
       *)
         echo '警告：正在恢复旧版未加密备份；恢复后请立即创建新的 .enc 加密备份。' >&2
-        compose run --rm --no-deps -T initialize node scripts/docker/restore.js - < "$archive"
+        compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$archive"
         ;;
     esac
     compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
@@ -305,7 +366,7 @@ case "${1:-help}" in
   credentials)
     require_docker
     require_config
-    compose run --rm --no-deps -T --entrypoint cat initialize /app/runtime/license/initial-admin.txt
+    compose run --rm --no-deps -T --entrypoint cat appgog /app/runtime/license/initial-admin.txt
     ;;
   status) require_docker; compose ps -a ;;
   logs) require_docker; require_config; logs "$@" ;;

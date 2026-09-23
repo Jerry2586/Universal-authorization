@@ -1,10 +1,17 @@
 {
   admin off
+  http_port 8080
+  https_port 8443
+}
+
+http://127.0.0.1:8081 {
+  bind 127.0.0.1
+  respond /health "ok" 200
 }
 
 {$AUTH_DOMAIN} {
   encode zstd gzip
-  reverse_proxy license-center:8787
+  reverse_proxy 127.0.0.1:8787
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options "nosniff"
@@ -14,7 +21,7 @@
 
 {$BUILD_DOMAIN} {
   encode zstd gzip
-  reverse_proxy build-center:8788
+  reverse_proxy 127.0.0.1:8788
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options "nosniff"

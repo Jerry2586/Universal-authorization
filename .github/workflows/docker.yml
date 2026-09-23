@@ -19,8 +19,17 @@ jobs:
         run: npm test
       - name: Fresh install, real build, update and complete restore
         run: sh scripts/docker/verify.sh
+      - name: Package self-extracting installer
+        run: npm run cms:package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appgog-single-container-installer
+          path: |
+            dist/*.run
+            dist/*.run.sha256
+          retention-days: 30
       - name: Service diagnostics on failure
         if: failure()
         run: |
           docker compose ps -a
-          docker compose logs --tail=100 initialize license-center build-center build-worker
+          docker compose logs --tail=100 appgog

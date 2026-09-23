@@ -100,12 +100,13 @@ service_state() {
     SERVICE_COLOR=$RED
     return
   fi
-  running=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps --status running --services 2>/dev/null | \
-    awk '$0 == "license-center" || $0 == "build-center" || $0 == "build-worker" || $0 == "caddy" { count += 1 } END { print count + 0 }')
-  case "$running" in
-    4) SERVICE_STATE='正常（4/4）'; SERVICE_COLOR=$GREEN ;;
-    0) SERVICE_STATE='已停止（0/4）'; SERVICE_COLOR=$RED ;;
-    *) SERVICE_STATE="部分运行（$running/4）"; SERVICE_COLOR=$YELLOW ;;
+  container=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps -a -q appgog 2>/dev/null)
+  health=''
+  [ -z "$container" ] || health=$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container" 2>/dev/null)
+  case "$health" in
+    'running healthy') SERVICE_STATE='正常（1 个容器，全部进程健康）'; SERVICE_COLOR=$GREEN ;;
+    running*) SERVICE_STATE='启动中或健康检查未通过'; SERVICE_COLOR=$YELLOW ;;
+    *) SERVICE_STATE='已停止'; SERVICE_COLOR=$RED ;;
   esac
 }
 

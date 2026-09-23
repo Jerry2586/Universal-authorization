@@ -2,7 +2,7 @@
 
 日期：2026-09-23。
 
-APPGOG打包授权系统 v1.0.0 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和自动 HTTPS 入口由同一份 `compose.yaml` 管理；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.0.0 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -11,51 +11,23 @@ APPGOG打包授权系统 v1.0.0 的正式生产路线只有统一 Docker Compose
 - 两个不同域名，例如 `auth.example.com` 与 `build.example.com`；
 - 两个 DNS A 记录均已指向服务器公网 IPv4；
 - TCP 80、TCP 443、UDP 443 可由公网访问，且没有其他程序占用 80/443；
-- 正式发布 ZIP 或具备授权访问权限的源码仓库。
+- 自解压 .run 安装文件或具备授权访问权限的源码仓库。
 
 安装器会检查端口、公网 IPv4 与 DNS。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
 
-## 2. 私有仓库安装
+## 2. 单文件自动安装（推荐）
 
-当前仓库为私有仓库。匿名下载 raw 安装脚本会返回 404，此时安装器尚未启动。增加 `--repository` 参数也不能解决第一步下载脚本的权限问题。
-
-在开发电脑执行 `npm run cms:package`，把 `dist` 中的发布 ZIP 和同名 `.sha256` 文件一起上传到服务器 `/root/`。它们不会随 Git 推送上传。
-
-先安装解压工具，按发行版选择一条：
+本机执行 npm run cms:package，将生成的 dist/APPGOG-Packaging-Licensing-System-1.0.0.run 上传到服务器 /root/，执行：
 
 ```sh
-# Debian / Ubuntu
-apt-get update && apt-get install -y unzip
-# 使用 DNF 的系统
-dnf install -y unzip
-# 旧版使用 YUM 的系统
-yum install -y unzip
+sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.0.run
 ```
 
-然后以 root 身份执行整段命令，任何一步失败都会停止后续步骤：
+无需手动安装 unzip、解压或进入源码目录。安装文件包含源码和 SHA-256 校验，自动检查并补齐系统工具、Docker Engine、Compose v2.24+ 和 Buildx，自动构建并启动唯一的 appgog 容器。首次提示输入两个真实域名；重复运行从已有 .env 读取配置，保留数据与签名身份，并在更新前创建加密备份。
 
-```sh
-cd /root &&
-ls -l APPGOG-Packaging-Licensing-System-1.0.0.zip APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
-sha256sum -c APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
-unzip APPGOG-Packaging-Licensing-System-1.0.0.zip &&
-cd APPGOG-Packaging-Licensing-System-1.0.0 &&
-sh scripts/install-linux.sh --source-dir "$PWD"
-```
+默认安装到 /opt/appgog，安装全局 appgog 管理命令。要求 x86_64/amd64 或 aarch64/arm64、至少 4 GiB 可用磁盘、可联网的软件源和镜像仓库。已有 Docker 会复用，缺失插件从其已配置软件源补齐，无法获得受支持版本时明确报错。
 
-按提示输入两个真实域名，本文所有 `example.com` 域名均为占位示例。安装器读取本地源码，不再匿名拉取私有仓库；安装依赖和构建镜像仍需联网。如果提示安装目录非空，不要删除旧数据，请按第 5 节更新。
-
-如果服务器已有 Git 且当前用户的 SSH 密钥已获此仓库读取权限，也可以在尚不存在 `appgog-source` 目录的位置执行：
-
-```sh
-git clone --branch main git@github.com:Jerry2586/Universal-authorization.git appgog-source &&
-cd appgog-source &&
-sudo sh scripts/install-linux.sh --source-dir "$PWD"
-```
-
-首次 SSH 连接需要核对 GitHub 主机密钥，不要关闭主机密钥校验，也不要把访问 Token 写进命令或仓库。
-
-安装目录默认为 `/opt/appgog`。安装器会验证 x86_64/amd64 或 aarch64/arm64 架构、至少 4 GiB 可用空间、Docker Engine、Buildx 与 Compose v2，写入权限为 600 的 `.env`、初始化随机密钥和首个管理员、启动四个服务，并安装全局 `appgog` 管理命令。
+仓库是私有的，匿名 raw 下载会返回 404；必须先上传 .run 或经认证获取源码。源码方式只需在仓库根目录执行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。本机 dist 不随 Git 推送上传。
 
 ## 3. 手动 Docker 安装
 
@@ -85,7 +57,7 @@ Caddy 自动提供：
 - `https://build.example.com/build`：客户打包中心；
 - `https://build.example.com/health`：打包中心健康检查。
 
-内部的 `127.0.0.1:8787` 与 `127.0.0.1:8788` 只用于宿主机诊断，不是正式公网入口。
+8787、8788 和 8081 是容器内部端口，不映射到宿主机；对外只提供 80/443。
 
 ## 4. 管理命令
 
@@ -100,7 +72,7 @@ appgog credentials
 appgog doctor
 ```
 
-不带参数执行 `appgog` 可打开交互式管理菜单。状态页应显示授权中心、打包中心、Worker、Caddy 共四个服务。
+不带参数执行 `appgog` 可打开交互式管理菜单。状态页应显示一个 appgog 容器及健康状态；日志以内部组件名为前缀。
 
 ## 5. 更新与回滚
 
@@ -117,6 +89,8 @@ sh scripts/docker.sh rollback
 ```
 
 镜像回滚不等于数据库降级。若新版本执行了不兼容的数据迁移，应在空项目中恢复升级前备份和对应代码版本，验证后再切换 DNS。禁止执行 `docker compose down -v`。
+
+旧版标准 Compose 部署可通过重跑安装器迁移：沿用相同项目名与九个命名卷，备份后停止旧容器，修复卷权限，新容器健康后移除旧容器。自定义挂载路径需人工映射。跨旧多容器版本的回退须使用对应旧源码与完整备份，不能使用单容器镜像 rollback。
 
 ## 6. 备份与恢复
 
@@ -136,16 +110,16 @@ sh scripts/docker.sh restore /绝对路径/appgog-备份.tar.gz.enc
 
 恢复器先解密到权限为 600 的临时文件，再拒绝路径穿越、符号链接、不完整备份、非空目标卷和运行中的业务服务；解密失败和恢复失败分别返回非零状态。旧版明文 `.tar.gz` 仅作为兼容输入，恢复后应立即创建新的加密备份。恢复完成后再切换 DNS；优先保留原授权域名，以免已发出的安装包无法连接授权中心。
 
-构建 Worker 默认使用只读根文件系统、移除全部 Linux capabilities、`no-new-privileges`、1 GiB 内存、1.5 CPU、256 PID 和受限临时目录。真实生产仍应结合宿主机执行容器逃逸测试、网络出口策略和容量压测。
+整个容器使用只读根文件系统、移除 capabilities、no-new-privileges、2 GiB 内存、2 CPU、512 PID 和受限临时目录。四个进程共享 UID 和数据卷，角色环境变量分离不是文件系统安全隔离；Worker 不执行上传源码。维护时短暂创建同镜像辅助容器进行备份/权限修复，完成即移除，常驻只有一个容器。
 
 ## 7. 跨服务器节点
 
-默认正式路线是一台服务器的一体 Compose。需要拆分时，授权中心仍是唯一数据和签名源；打包中心与 Worker 使用后台生成的独立节点凭证，通过 HTTPS 下载源码、上传成品，不共享数据库或私钥。
+默认正式路线是一台服务器的单容器。以下是高级扩展接口说明，不是默认安装步骤。需要拆分时，授权中心仍是唯一数据和签名源；打包中心与 Worker 使用后台生成的独立节点凭证，通过 HTTPS 下载源码、上传成品，不共享数据库或私钥。
 
 ```text
 Caddy / HTTPS
-  ├─ AUTH_DOMAIN  → license-center:8787
-  └─ BUILD_DOMAIN → build-center:8788
+  ├─ AUTH_DOMAIN  → 127.0.0.1:8787
+  └─ BUILD_DOMAIN → 127.0.0.1:8788
 
 build-center ── BUILD_CENTER_NODE_TOKEN ──→ license-center
 build-worker ── WORKER_NODE_TOKEN ────────→ license-center
@@ -158,13 +132,13 @@ build-worker ── WORKER_NODE_TOKEN ────────→ license-center
 ```sh
 sh scripts/docker.sh status
 sh scripts/docker.sh doctor
-docker compose logs --tail=100 initialize
-docker compose logs --tail=100 caddy license-center build-center build-worker
+docker compose logs --tail=100 appgog
+docker compose exec -T appgog node scripts/docker/health.js
 ```
 
 - Caddy 证书失败：确认两个 DNS A 记录、公网 80/443、系统时间和域名拼写；
 - 下载脚本返回 404：私有仓库需要认证，改用第 2 节的 ZIP 或已认证源码安装；
-- `unzip: command not found`：先安装 `unzip` 再解压，否则后续目录和脚本都不存在；
+- 新版 .run 会自动补齐 unzip；若工具安装失败，检查发行版软件源和网络，修复后重跑同一命令；
 - ZIP 文件不存在：检查是否已上传到 `/root/`，以及文件名是否一致；Git 推送不会上传本机 `dist`；
 - 端口占用：停止原 Web 服务后重试，正式路线不与其他反向代理共享 80/443；
 - 初始化失败：检查 `.env` 是否仍是示例域名、旧密钥是否缺失；不要删除数据卷重试；

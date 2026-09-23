@@ -19,8 +19,8 @@ usage() {
 APPGOG Linux 一键安装器
 
   sudo sh scripts/install-linux.sh
-  curl -fsSL <安装脚本地址> | sudo sh -s -- \
-    --auth-domain auth.example.com --build-domain build.example.com
+  sudo sh APPGOG-Packaging-Licensing-System-1.0.0.run
+  重复运行会保留配置并检查、补齐缺失依赖。
 
 参数：
   --auth-domain DOMAIN       授权中心域名
@@ -81,31 +81,68 @@ compose_supported() {
   [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 24 ]; }
 }
 install_packages() {
+  missing=false
+  for tool in curl git tar gzip unzip openssl getent ss; do
+    command -v "$tool" >/dev/null 2>&1 || missing=true
+  done
+  [ -s /etc/ssl/certs/ca-certificates.crt ] || [ -s /etc/pki/tls/certs/ca-bundle.crt ] || missing=true
+  [ "$missing" = true ] || return 0
+  log '补齐缺失的系统工具与 CA 证书'
   case "$DISTRO" in
     ubuntu|debian)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar gzip unzip openssl
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar gzip unzip openssl iproute2
       ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
-      "$manager" install -y ca-certificates curl git tar gzip unzip openssl
+      "$manager" install -y ca-certificates curl git tar gzip unzip openssl iproute
       ;;
     *) fail "不支持自动安装依赖的发行版：$DISTRO" ;;
   esac
 }
 
+repair_docker_plugins() {
+  log '保留现有 Docker Engine，补齐 Compose 和 Buildx 插件'
+  case "$DISTRO" in
+    ubuntu|debian)
+      apt-get update
+      packages=''
+      if ! compose_supported; then
+        if apt-cache show docker-compose-plugin >/dev/null 2>&1; then packages="$packages docker-compose-plugin"
+        elif apt-cache show docker-compose-v2 >/dev/null 2>&1; then packages="$packages docker-compose-v2"
+        else fail '现有软件源没有 Compose v2，请配置与现有 Docker 对应的软件源后重试。'; fi
+      fi
+      if ! docker buildx version >/dev/null 2>&1; then
+        if apt-cache show docker-buildx-plugin >/dev/null 2>&1; then packages="$packages docker-buildx-plugin"
+        elif apt-cache show docker-buildx >/dev/null 2>&1; then packages="$packages docker-buildx"
+        else fail '现有软件源没有 Buildx，请配置与现有 Docker 对应的软件源后重试。'; fi
+      fi
+      [ -z "$packages" ] || DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove $packages
+      ;;
+    centos|rhel|rocky|almalinux|fedora|ol)
+      manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
+      packages=''
+      compose_supported || packages="$packages docker-compose-plugin"
+      docker buildx version >/dev/null 2>&1 || packages="$packages docker-buildx-plugin"
+      [ -z "$packages" ] || "$manager" install -y $packages
+      ;;
+    *) fail "无法为 $DISTRO 自动补齐 Docker 插件" ;;
+  esac
+}
 install_docker() {
-  if compose_supported; then
+  if command -v docker >/dev/null 2>&1; then
+    if ! compose_supported || ! docker buildx version >/dev/null 2>&1; then
+      [ "$SKIP_DOCKER" = false ] || fail 'Docker 插件缺失，且已禁用自动安装。'
+      repair_docker_plugins
+    fi
     if ! docker info >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then systemctl enable --now docker; fi
     docker info >/dev/null 2>&1 || fail 'Docker 已安装但服务不可访问。'
-    docker buildx version >/dev/null 2>&1 || fail 'Docker Buildx 不可用；请安装 docker-buildx-plugin 后重试。'
-    log "Docker 已安装：$(docker --version)"
+    compose_supported || fail '补齐后 Compose 仍低于 2.24 或不可用。'
+    docker buildx version >/dev/null 2>&1 || fail '补齐后 Buildx 仍不可用。'
+    log "复用现有 Docker：$(docker --version)"
     return
   fi
-  [ "$SKIP_DOCKER" = false ] || fail 'Docker Compose v2 不可用。'
-  if command -v docker >/dev/null 2>&1; then
-    fail '检测到已有 Docker，但 Compose 低于 2.24 或不可用。为保护现有容器，安装器不会强制替换；请先升级 Docker Compose 后重试。'
-  fi
+  [ "$SKIP_DOCKER" = false ] || fail '未安装 Docker，且已禁用自动安装。'
   log '安装 Docker Engine 与 Compose v2'
   install_packages
   case "$DISTRO" in
@@ -136,7 +173,7 @@ install_docker() {
 }
 
 valid_domain() {
-  case "$1" in ''|*://*|*/*|*:*|*[!A-Za-z0-9.-]*|.*|*.) return 1 ;; *.*) return 0 ;; *) return 1 ;; esac
+  case "$1" in example.com|*.example.com|your-domain.com|*.your-domain.com|''|*://*|*/*|*:*|*[!A-Za-z0-9.-]*|.*|*.) return 1 ;; *.*) return 0 ;; *) return 1 ;; esac
 }
 
 preflight_network() {
@@ -145,7 +182,9 @@ preflight_network() {
   available_kb=$(df -Pk "$disk_path" 2>/dev/null | awk 'NR == 2 { print $4 }')
   case "$available_kb" in ''|*[!0-9]*) fail "无法检查安装目录所在磁盘：$disk_path" ;; esac
   [ "$available_kb" -ge 4194304 ] || fail '安装磁盘可用空间不足 4 GiB；请清理空间后重试。'
-  if command -v ss >/dev/null 2>&1; then
+  owned=$(docker ps -q --filter "label=com.docker.compose.project=${APPGOG_PROJECT:-appgog}" --filter label=com.docker.compose.service=appgog)
+  legacy=$(docker ps -q --filter "label=com.docker.compose.project=${APPGOG_PROJECT:-appgog}" --filter label=com.docker.compose.service=caddy)
+  if [ -z "$owned$legacy" ] && command -v ss >/dev/null 2>&1; then
     ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)(80|443)$' && fail '80 或 443 端口已被占用；统一 Docker HTTPS 入口需要独占这两个端口。'
   fi
   [ "$SKIP_DNS_CHECK" = false ] || return 0
@@ -195,15 +234,21 @@ detect_local_source() {
   if [ -f "$candidate/compose.yaml" ] && [ -f "$candidate/package.json" ]; then SOURCE_DIR=$candidate; fi
 }
 
-copy_local_source() {
+copy_local_source() (
   source_root=$(CDPATH= cd -- "$SOURCE_DIR" 2>/dev/null && pwd) || fail "源码目录不存在：$SOURCE_DIR"
   [ -f "$source_root/compose.yaml" ] && [ -f "$source_root/scripts/docker.sh" ] || fail '不是有效的 APPGOG 源码目录。'
   [ "$source_root" = "$INSTALL_DIR" ] && return
-  [ ! -e "$INSTALL_DIR" ] || [ -z "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ] || fail "安装目录非空：$INSTALL_DIR"
+  if [ -e "$INSTALL_DIR" ] && [ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    [ -f "$INSTALL_DIR/scripts/docker.sh" ] && [ -f "$INSTALL_DIR/package.json" ] && [ -f "$INSTALL_DIR/.env" ] || fail "安装目录非空且不是已有 APPGOG 部署：$INSTALL_DIR"
+    log '检测到已有安装，保留 .env、runtime、数据和备份，仅更新项目文件'
+  fi
   mkdir -p "$INSTALL_DIR"
-  tar -C "$source_root" --exclude=.git --exclude=.env --exclude=backups --exclude=dist \
-    --exclude=node_modules --exclude=runtime --exclude=var -cf - . | tar -C "$INSTALL_DIR" -xf -
-}
+  staging=$(mktemp)
+  trap 'rm -f "$staging"' 0
+  tar -C "$source_root" --exclude=.git --exclude=.env --exclude=.backup-key --exclude=backups --exclude=logs --exclude=dist \
+    --exclude=node_modules --exclude=runtime --exclude=var -cf "$staging" .
+  tar -C "$INSTALL_DIR" -xf "$staging"
+)
 
 download_source() {
   [ ! -e "$INSTALL_DIR" ] || [ -z "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ] || fail "安装目录非空：$INSTALL_DIR"
@@ -244,7 +289,11 @@ download_source() {
 }
 
 write_env() {
-  [ ! -f "$INSTALL_DIR/.env" ] || fail "为保护旧安装，不会覆盖 $INSTALL_DIR/.env"
+  if [ -f "$INSTALL_DIR/.env" ]; then
+    chmod 600 "$INSTALL_DIR/.env"
+    log '保留已有 .env；域名修改请使用 appgog config'
+    return
+  fi
   umask 077
   printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=1.0.0\n' "$AUTH_DOMAIN" "$BUILD_DOMAIN" > "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
@@ -273,7 +322,7 @@ APPGOG 安装完成
 管理菜单：appgog
 
 输入 appgog credentials 查看初始管理员账号密码。
-统一 Docker 部署已通过 Caddy 自动申请并续期 HTTPS 证书。
+单一 appgog 容器，Caddy 自动申请并续期 HTTPS 证书。
 ============================================================
 EOF
 }
@@ -290,7 +339,12 @@ wait_public_https() {
   done
 }
 
+if [ -f "$INSTALL_DIR/.env" ]; then
+  AUTH_DOMAIN=$(sed -n 's/^AUTH_DOMAIN=//p' "$INSTALL_DIR/.env" | tail -n 1)
+  BUILD_DOMAIN=$(sed -n 's/^BUILD_DOMAIN=//p' "$INSTALL_DIR/.env" | tail -n 1)
+fi
 log "检测系统：${PRETTY_NAME:-$DISTRO}"
+install_packages
 prompt_domain AUTH_DOMAIN '授权中心域名'
 prompt_domain BUILD_DOMAIN '客户打包中心域名'
 [ "$AUTH_DOMAIN" != "$BUILD_DOMAIN" ] || fail '两个域名必须不同。'
@@ -311,7 +365,9 @@ if [ "$SKIP_START" = false ]; then
   (cd "$INSTALL_DIR" && sh scripts/docker.sh install)
   wait_public_https
 fi
-print_result
+if [ "$SKIP_START" = false ]; then print_result
+else log '源码与环境已准备；按要求未启动，尚未验证公网 HTTPS。'
+fi
 
 if [ "$OPEN_MENU" = true ] && [ "$NON_INTERACTIVE" = false ] && { [ -t 0 ] || [ -t 1 ]; } && [ -r /dev/tty ]; then
   exec /usr/local/bin/appgog </dev/tty >/dev/tty

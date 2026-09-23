@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { writeZip } from '../packages/core/src/zip.js';
+import { createInstaller } from './package-installer.js';
 
 const root = resolve(process.cwd());
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -44,3 +45,9 @@ console.log(`文件数量：${files.size}`);
 console.log(`安装包名称：${basename(output)}`);
 console.log(`SHA-256：${sha256}`);
 console.log(`校验文件：${checksumOutput}`);
+
+const installerPath = join(outputDirectory, releaseName + '.run');
+const installer = createInstaller(archive, releaseName);
+writeFileSync(installerPath, installer, { mode: 0o700 });
+writeFileSync(installerPath + '.sha256', createHash('sha256').update(installer).digest('hex') + '  ' + basename(installerPath) + '\n', { mode: 0o600 });
+console.log('一体安装文件：' + installerPath);

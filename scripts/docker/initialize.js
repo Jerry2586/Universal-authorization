@@ -82,8 +82,8 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     ARTIFACT_ROOT: '/app/var/artifacts', UPLOAD_ROOT: '/app/var/uploads',
   }));
   atomic(join(configRoot, 'build/runtime.env'), envFile({ NODE_ENV: 'production', BUILD_CENTER_PORT: 8788,
-    INTERNAL_LICENSE_URL: 'http://license-center:8787', INTERNAL_SERVICE_TOKEN: identity.secrets.INTERNAL_SERVICE_TOKEN }));
-  atomic(join(configRoot, 'worker/runtime.env'), envFile({ ...shared, INTERNAL_LICENSE_URL: 'http://license-center:8787',
+    INTERNAL_LICENSE_URL: 'http://127.0.0.1:8787', INTERNAL_SERVICE_TOKEN: identity.secrets.INTERNAL_SERVICE_TOKEN }));
+  atomic(join(configRoot, 'worker/runtime.env'), envFile({ ...shared, INTERNAL_LICENSE_URL: 'http://127.0.0.1:8787',
     WORKER_TOKEN: identity.secrets.WORKER_TOKEN, WORKER_REMOTE_TRANSFER: 'false', WORKER_ID: 'worker-compose-1', ARTIFACT_ROOT: '/app/var/artifacts' }));
   const credentialsPath = join(configRoot, 'license/initial-admin.txt');
   if (!existsSync(credentialsPath)) atomic(credentialsPath, `管理员账号：${identity.adminUsername}\n初始密码：${identity.adminPassword}\n后台修改过密码后，以后台的新密码为准。此文件仅记录初始凭证。\n`);

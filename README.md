@@ -4,28 +4,19 @@
 
 ## Linux 安装 + 专业管理菜单
 
-当前仓库为私有仓库，匿名下载 raw 安装脚本会返回 404。请在本机执行 `npm run cms:package`，把 `dist` 中的发布 ZIP 和同名 `.sha256` 文件上传到服务器 `/root/`；它们不会随 Git 推送上传。
+默认只运行 **一个 appgog Docker 容器**，包含 Node.js、SQLite、授权中心、打包中心、Worker 和 Caddy HTTPS。宿主机不需要额外配置 Node.js、数据库或反向代理。
 
-先安装解压工具：Debian/Ubuntu 执行 `apt-get update && apt-get install -y unzip`；使用 DNF 的系统执行 `dnf install -y unzip`，旧版 YUM 系统执行 `yum install -y unzip`。
-
-然后以 root 身份执行以下整段命令，任何一步失败都会停止后续步骤：
+本机执行 npm run cms:package，会生成 dist/APPGOG-Packaging-Licensing-System-1.0.0.run。把这个自解压文件上传到服务器 /root/，然后只执行：
 
 ```sh
-cd /root &&
-ls -l APPGOG-Packaging-Licensing-System-1.0.0.zip APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
-sha256sum -c APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
-unzip APPGOG-Packaging-Licensing-System-1.0.0.zip &&
-cd APPGOG-Packaging-Licensing-System-1.0.0 &&
-sh scripts/install-linux.sh --source-dir "$PWD"
+sudo sh /root/APPGOG-Packaging-Licensing-System-1.0.0.run
 ```
 
-按提示填写两个真实域名，并提前把 DNS A 记录指向服务器。`sq.example.com`、`db.example.com` 仅为示例。提示文件不存在时，先检查上传路径和文件名，不要继续执行后续命令。
+安装文件自带完整源码和 SHA-256 校验，自动补齐解压工具、系统工具、Docker、Compose 和 Buildx；已有组件会复用。首次按提示填两个真实域名（提前设置 DNS A 记录），安装器自动生成密钥和管理员密码、启动容器并检查公网 HTTPS。
 
-安装器使用本地源码，自动安装 Docker Engine 和 Compose v2、生成配置、构建并启动服务、安装全局 `appgog` 命令。若已通过认证克隆项目，在源码根目录执行：
+重复执行同一命令会保留原 .env、数据库、签名密钥和备份，先构建镜像、备份已有数据，再更新。默认路径为 /opt/appgog。安装需要联网下载系统包和基础镜像；现有 Docker 的软件源无法提供缺失插件时会明确报错，不会强行替换引擎。端口占用、DNS 未生效也会给出错误。
 
-```sh
-sudo sh scripts/install-linux.sh --source-dir "$PWD"
-```
+仓库是私有的，匿名 raw 地址不能下载。先上传 .run 文件，或在已认证获取的源码目录运行 sudo sh scripts/install-linux.sh --source-dir "$PWD"。Git 推送不包含本机 dist 制品。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -42,7 +33,7 @@ appgog doctor
 
 ## Docker 一体部署：只填写两个域名
 
-一套代码自动部署 Node.js 运行环境、SQLite 数据库、授权中心、打包中心和 Worker。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。手动 Docker 安装要求 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
+一个容器包含 Node.js 运行环境、SQLite 数据库、授权中心、打包中心、Worker 和 Caddy。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。手动 Docker 安装要求 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
 
 完整安装、更新、回滚、备份和恢复步骤见 [Docker/Linux 部署说明](docs/deployment.md)。
 
@@ -71,8 +62,8 @@ sh scripts/docker.sh credentials
 
 | 域名 | 内部目标 | 入口 |
 | --- | --- | --- |
-| AUTH_DOMAIN | license-center:8787 | `https://AUTH_DOMAIN/admin` |
-| BUILD_DOMAIN | build-center:8788 | `https://BUILD_DOMAIN/build` |
+| AUTH_DOMAIN | 容器内 127.0.0.1:8787 | `https://AUTH_DOMAIN/admin` |
+| BUILD_DOMAIN | 容器内 127.0.0.1:8788 | `https://BUILD_DOMAIN/build` |
 
 以后覆盖代码并保留 .env，然后执行：
 
@@ -92,7 +83,7 @@ sh scripts/docker.sh restore /绝对路径/备份.tar.gz
 
 备份包含数据库、签名密钥、内部凭证、上传源码和构建成品，输出为 AES-256/PBKDF2 加密文件；首次备份生成 `.backup-key`，必须与备份分开离线保存。更新不删除数据卷；不要执行 docker compose down -v。当前从源码构建镜像，尚未提供只执行 docker compose pull 的镜像发布方式。
 
-**旧部署：不要覆盖原 .env。** 保留原秘密值、签名密钥和项目名 appgog，先完整备份，再按完整教程的“已有旧 Docker 部署升级”转换。新配置发现旧数据但缺少原凭证时会拒绝启动，避免原授权失效。
+**旧部署：保留原 .env 和 Compose 项目名。** 安装器支持本仓库旧版标准命名卷迁移：备份、停止旧容器、修复卷权限、启动单容器，成功后移除旧容器而保留卷。自定义 bind mount 或改名数据卷需要按实际挂载迁移，不能当成空安装。跨多容器到单容器的历史版本回退需要对应旧源码及备份，普通 rollback 只支持单容器镜像。
 
 ## 高级：手动安装与跨服务器分离部署
 
@@ -160,7 +151,7 @@ npm run cms:package
 - 授权中心只公开管理页面和授权 API；客户打包中心只公开客户页面并通过独立内部凭证代理客户接口。
 - 独立 Worker 只领取构建任务和上报结果，不持有 Ed25519 签名私钥或管理员凭证；Compose 默认启用只读根文件系统、移除 Linux capabilities、禁止提权并限制 CPU、内存和 PID。
 - SQLite、本地文件存储和独立 Worker；均有可替换接口，便于以后迁移 PostgreSQL、S3 和容器 Worker。
-- 54 个自动测试覆盖完整两阶段打包激活、固定 Key 状态与跨产品拒绝、域名绑定与迁移、激活数量、离线宽限、短期下载票据、角色与会话隔离、服务节点凭证、AES-GCM 包身份、制品完整性、跨服务器构建、队列租约、Docker/Caddy 和失败回滚；当前 Windows 环境为 53 项通过、0 失败，另有 1 项 POSIX Shell 语法测试跳过。
+- 自动测试覆盖两阶段授权、构建激活、权限和会话、队列租约、单容器进程监督、自解压包校验与部署数据保护。Linux CI 额外执行真实 Docker 安装、更新与备份恢复。
 
 ## 目录
 
