@@ -1,652 +1,163 @@
-# APPGOG 授权系统部署教程
+# APPGOG Docker 一体部署教程
 
-更新日期：2026-09-23。
+默认安装是一套代码、一份 Compose、两个域名。Docker 内包含 Node.js 24、SQLite、授权中心、打包中心和构建 Worker，不需要在宿主机安装 Node.js、npm、MySQL 或手工生成业务密钥。SQLite 数据库首次启动自动创建；这不是演示模式。
 
-本文适用于当前仓库的单机三服务版本，包含三种部署入口：
+## 1. 准备服务器和项目
 
-- 纯 Docker Compose；
-- 宝塔面板；
-- 1Panel。
+在宝塔 / aaPanel / 1Panel 安装 Docker，确保终端能执行以下两条命令。需要 Docker Compose v2.24.0 或更新版本（支持可选 env_file）。
 
-三种方式最终运行的业务完全相同：
-
-```text
-授权管理域名 auth.example.com
-  → license-center:8787
-
-客户打包域名 build.example.com
-  → build-center:8788
-
-build-worker
-  → 在服务器内部领取任务并生成 ZIP
-```
-
-建议至少准备：
-
-- 一台 64 位 Linux 服务器，推荐 Ubuntu 22.04/24.04 或 Debian 12；
-- 2 核 CPU、2 GB 内存、20 GB 可用磁盘起步；
-- 两个已经解析到服务器公网 IP 的域名；
-- Docker Engine 和 Docker Compose V2；
-- 能申请受信任 HTTPS 证书的 80、443 端口。
-
-示例域名：
-
-```text
-授权中心：admin.example.com
-客户打包中心：build.example.com
-```
-
-请把示例域名替换成你自己的域名。
-
-## 一、部署前必须知道的规则
-
-### 1. 必须区分两个网站入口
-
-- `https://admin.example.com/admin`：卖家管理后台；
-- `https://build.example.com/build`：客户固定 Key 登录和打包中心；
-- `https://admin.example.com`：同时也是安装后主题访问的授权 API 地址。
-
-对应 `.env`：
-
-```dotenv
-PUBLIC_BASE_URL=https://admin.example.com
-BUILD_CENTER_PUBLIC_URL=https://build.example.com/build
-```
-
-`PUBLIC_BASE_URL` 不要填写 `/admin`，`BUILD_CENTER_PUBLIC_URL` 需要保留 `/build`。
-
-### 2. 不要公开运行数据
-
-以下内容不能放进网站公开目录、下载目录或 Git：
-
-- `.env`；
-- SQLite 数据库；
-- Ed25519 签名私钥；
-- 构建成品和上传的主题包；
-- Docker 数据卷备份。
-
-### 3. 四个数据卷都要备份
-
-当前 Compose 使用：
-
-- `appgog-db`：授权、管理员、版本和激活记录；
-- `appgog-keys`：Ed25519 签名私钥和公钥；
-- `appgog-artifacts`：上传源码包和客户构建成品；
-- `appgog-uploads`：上传临时文件。
-
-数据库和签名私钥必须一起保留。丢失签名私钥后，旧激活凭证无法继续由原身份签发。
-
-### 4. 禁止执行的数据删除命令
-
-正常停止使用：
-
-```bash
-docker compose down
-```
-
-不要执行：
-
-```bash
-docker compose down -v
-```
-
-`-v` 会删除数据库、签名密钥和构建成品卷。
-
-## 二、公共安装步骤
-
-无论使用宝塔、1Panel 还是纯 Docker，都先把项目放在固定目录。
-
-```bash
-sudo mkdir -p /opt/appgog
-sudo chown -R "$USER":"$USER" /opt/appgog
-git clone https://github.com/Jerry2586/Universal-authorization.git /opt/appgog
-cd /opt/appgog
-```
-
-如果目录已经存在并且是本项目：
-
-```bash
-cd /opt/appgog
-git pull --ff-only
-```
-
-不要把项目直接放在宝塔或 1Panel 的公开静态网站目录中。推荐统一放在 `/opt/appgog`。
-
-## 三、纯 Docker Compose 部署
-
-### 第 1 步：安装 Docker
-
-如果服务器已经能正常执行下面两个命令，可以跳过安装：
-
-```bash
-docker version
+```sh
+docker --version
 docker compose version
 ```
 
-Ubuntu 建议使用 Docker 官方仓库安装 Docker Engine、Buildx 和 Compose 插件。安装完成后验证：
+把 CMS ZIP 解压到 /opt/appgog/APPGOG-CMS，确认该目录里能看到 compose.yaml、Dockerfile、scripts。不要放在公开网站根目录。也可以将已授权访问的私有 Git 仓库克隆到这个目录；GitHub 登录是源码下载权限，与系统后台账号无关。
 
-```bash
-sudo systemctl enable --now docker
-sudo docker run --rm hello-world
-sudo docker compose version
+下面所有命令均在该目录执行：
+
+```sh
+cd /opt/appgog/APPGOG-CMS
 ```
 
-### 第 2 步：生成配置并首次启动
+## 2. 只填写两个域名
 
-项目脚本会生成独立随机 Token、管理员密码和 `.env`：
+**全新安装**时复制配置：
 
-```bash
-cd /opt/appgog
-chmod +x scripts/install-linux.sh
-./scripts/install-linux.sh
+```sh
+cp .env.docker.example .env
 ```
 
-终端会显示管理员账号和随机密码。请立即保存密码。
-
-脚本只在 `.env` 不存在时生成配置；已经存在的 `.env` 不会被覆盖。
-
-### 第 3 步：改成正式生产配置
-
-编辑配置：
-
-```bash
-nano /opt/appgog/.env
-```
-
-至少修改：
+用面板文件编辑器打开 .env，把内容改成自己的两个真实域名。例如：
 
 ```dotenv
-NODE_ENV=production
-LICENSE_PORT=8787
-BUILD_PORT=8788
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=脚本生成的管理员密码
-PUBLIC_BASE_URL=https://admin.example.com
-BUILD_CENTER_PUBLIC_URL=https://build.example.com/build
+AUTH_DOMAIN=sq.appgog.top
+BUILD_DOMAIN=db.appgog.top
 ```
 
-以下值必须保持为脚本生成的独立随机值，不能改成示例文字，也不能让多个变量使用相同值：
+不用填写管理员密码、数据库密码、内部 Token 或签名密钥；首次初始化自动生成并保存。域名不要带 /admin、/build 等路径。两个域名的 DNS A 记录指向本服务器 IPv4 地址；有 AAAA 记录时 IPv6 也必须正确。
 
-```dotenv
-KEY_HASH_PEPPER=...
-ADMIN_TOKEN=...
-WORKER_TOKEN=...
-SESSION_SECRET=...
-DELIVERY_ENCRYPTION_KEY=...
-INTERNAL_SERVICE_TOKEN=...
+**已有安装不要执行 cp 覆盖原 .env**，先看本文的“旧部署升级”。
+
+## 3. 一条命令启动
+
+```sh
+sh scripts/docker.sh install
 ```
 
-限制 `.env` 权限：
+脚本构建镜像、运行一次性初始化、启动服务并等待健康检查。首次需要联网下载 Node 基础镜像；构建失败时检查服务器访问镜像仓库的网络。
 
-```bash
-chmod 600 /opt/appgog/.env
+```sh
+sh scripts/docker.sh status
+sh scripts/docker.sh credentials
 ```
 
-重新构建并启动：
+credentials 显示初始管理员账号和随机密码，默认账号 admin。请私密保存，登录后在后台修改密码；修改后该文件仍是初始记录，不是重置密码功能。
 
-```bash
-cd /opt/appgog
-docker compose up -d --build
-docker compose ps
-```
+正常状态：initialize 为 Exited (0)，license-center 和 build-center 为 healthy，build-worker 为运行中。initialize 是一次性任务，正常退出不表示故障。Worker 是否真正能打包，还可以通过上传主题并创建任务检查。
 
-三个服务应当处于运行状态，授权中心和打包中心最终应显示 healthy。
+## 4. 面板绑定两个域名与 HTTPS
 
-### 第 4 步：检查本机服务
+在宝塔 / aaPanel 中创建两个反向代理站点，或在已有两个空白站点中添加反代：
 
-```bash
-curl -i http://127.0.0.1:8787/health
-curl -i http://127.0.0.1:8788/health
-```
+| 站点域名 | 反向代理目标 | 最终入口 |
+| --- | --- | --- |
+| 授权域名，例如 sq.appgog.top | http://127.0.0.1:8787 | https://sq.appgog.top/admin |
+| 打包域名，例如 db.appgog.top | http://127.0.0.1:8788 | https://db.appgog.top/build |
 
-正常响应包含：
+对整个站点 / 反代，代理目标不用追加 /admin 或 /build。两个站点分别申请并启用 SSL 证书，启用 HTTPS。保留真实 Host、X-Forwarded-For 和 X-Forwarded-Proto，请勿缓存后台/API 响应。
 
-```json
-{"ok":true}
-```
-
-### 第 5 步：配置 Nginx 双域名代理
-
-授权中心站点：
+Nginx 站点配置建议：
 
 ```nginx
-server {
-    listen 80;
-    server_name admin.example.com;
-
-    client_max_body_size 150m;
-
-    location / {
-        proxy_pass http://127.0.0.1:8787;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 30s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-    }
-}
+client_max_body_size 140m;
+# 以下指令放进面板现有的 location / 中，不要重复创建 location /
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_read_timeout 300s;
 ```
 
-客户打包站点：
+应用默认接收最多 128 MiB 的主题 ZIP。DNS、证书和反代只需首次配置一次；日常代码更新不需要重配。
 
-```nginx
-server {
-    listen 80;
-    server_name build.example.com;
+**1Panel**：同样创建两个反向代理网站并申请证书。如果 OpenResty 使用 host 网络模式，直接使用上表的 127.0.0.1。若它运行在独立 Docker bridge 网络里，127.0.0.1 指向 OpenResty 自己，此时应把它接入本项目网络，再用服务名反代：
 
-    client_max_body_size 150m;
-
-    location / {
-        proxy_pass http://127.0.0.1:8788;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 30s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-    }
-}
+```sh
+# 先在 1Panel 容器列表确认 OpenResty 的真实容器名称
+# 将下方 OPENRESTY_CONTAINER 替换为这个名称
+docker network connect appgog_default OPENRESTY_CONTAINER
 ```
 
-配置完成后为两个域名申请 HTTPS 证书，并设置 HTTP 自动跳转 HTTPS。
+对应目标改为 http://license-center:8787 和 http://build-center:8788。将此网络设置同时保存在 OpenResty 的编排配置中，避免它重建后丢失。使用自定义 APPGOG_PROJECT 时网络前缀跟随项目名改变。默认业务端口仅绑定宿主机回环地址，不需要对公网开放 8787/8788。
 
-### 第 6 步：最终验收
+纯 Linux 服务器也使用相同的 Compose；自行用已有 Nginx / Caddy 配置这两个反代和证书。该安装包不接管面板占用的 80/443，也不自动修改 DNS。
 
-浏览器访问：
+## 5. 日常使用
 
-```text
-https://admin.example.com/admin
-https://build.example.com/build
+管理员登录授权域名 /admin，上传真实主题版本、管理用户与授权。客户只在打包域名 /build 输入固定授权 Key，选择版本和绑定域名后打包。首次部署不会自动创建演示客户或演示 Key。
+
+## 6. 以后覆盖更新
+
+先把新版本代码覆盖到**原项目目录**，保留 .env 和 backups 文件夹，然后执行：
+
+```sh
+sh scripts/docker.sh update
 ```
 
-终端检查：
+使用 Git 管理源码时可以先 git pull --ff-only，再执行同一条更新命令。代码构建成功后，脚本短暂停止业务写入并生成完整备份，再重建容器、检查健康。构建失败不会先停止原服务。
 
-```bash
-curl -i https://admin.example.com/health
-curl -i https://build.example.com/health
+数据和密钥在持久化卷中，覆盖源码或重建容器不会主动清空它们。保持项目名 appgog；不要换成另一个 Compose 项目，也不要删除数据卷或执行 docker compose down -v。仅执行 docker compose restart 不会更新镜像或重新加载初始化配置，请使用上述脚本。
+
+当前交付使用**源码构建镜像**，不是已发布到镜像仓库的自动拉取版本，因此不能只执行 docker compose pull 就期待拿到新代码。升级有短暂停机，不宣称零停机。
+
+更换域名时修改 .env，并配置对应 DNS、证书、反代，再执行 update。已有客户安装包包含原授权服务地址：有在用客户时应保留旧域名转发服务，或另行安排客户端迁移，单改平台配置不会改写已发出的安装包。
+
+## 7. 完整备份
+
+```sh
+sh scripts/docker.sh backup
 ```
 
-不要把 8787、8788 加入云服务器公网安全组。公网只开放 80、443 和你需要的 SSH/面板管理端口。
+文件生成在 backups/appgog-时间-进程号.tar.gz，包含数据库（含 WAL）、签名公私钥、内部凭证、初始账号记录、主题源码、构建成品和上传文件。备份期间短暂停止写入，结束后恢复原来正在运行的服务。
 
-## 四、宝塔面板部署
+**备份包含私钥和凭证，文件没有额外加密，请只存放到你控制的私密存储中。** 同时保存本次代码版本/ZIP 和 .env，便于按同一版本恢复。不要只备份 SQLite，否则会丢失签名身份和解密资料。
 
-宝塔方式仍然使用项目自带的 Docker Compose。宝塔负责文件管理、Docker 管理、Nginx 反向代理和证书。
+## 8. 换服务器迁移 / 从备份恢复
 
-### 第 1 步：准备环境
+新服务器安装 Docker、上传同一版本代码和备份。复制 .env.docker.example 为 .env，填两个域名。**先恢复，不要先执行 install**：
 
-1. 登录宝塔面板。
-2. 在软件商店安装 Docker 管理器或确认服务器 Docker 已安装。
-3. 安装 Nginx。
-4. 在宝塔终端执行：
-
-```bash
-docker version
-docker compose version
+```sh
+cd /opt/appgog/APPGOG-CMS
+sh scripts/docker.sh restore /绝对路径/appgog-备份.tar.gz
 ```
 
-两个命令都成功后继续。
+脚本只向空的数据卷恢复；已有运行中服务或非空目标目录时拒绝覆盖。恢复完自动启动并使用新 .env 的域名。随后切换 DNS，配置反代和证书。迁移时优先保留原域名，以便已安装的客户主题继续找到授权中心。切流前停止旧服务器写入，避免两边数据各自变化。
 
-### 第 2 步：拉取项目
+恢复备份会将业务恢复到备份时刻。代码回滚不等于数据库回滚；不保证旧代码兼容升级后的数据库结构。需要回退时在新空项目恢复升级前备份并使用对应代码版本，验证后再切换反代。
 
-在宝塔终端执行：
+## 9. 已有旧 Docker 部署升级
 
-```bash
-sudo mkdir -p /opt/appgog
-sudo chown -R "$USER":"$USER" /opt/appgog
-git clone https://github.com/Jerry2586/Universal-authorization.git /opt/appgog
-cd /opt/appgog
-chmod +x scripts/install-linux.sh
-./scripts/install-linux.sh
+新 compose.yaml 保留 appgog-db、appgog-keys、appgog-artifacts、appgog-uploads 四个逻辑卷名，并增加三个服务配置卷。升级前保存原 .env、原 compose.production.yaml（若有）、原代码版本，以及旧数据库/密钥/文件卷的完整备份。
+
+确认旧 Compose 项目名是 appgog，且挂载的是这四个卷；原先用 appgog-data 单卷或自定义卷路径的安装需要先安排数据搬迁，不能直接套用。不要删除旧卷来消除初始化错误。
+
+保留旧 .env 的所有原始秘密值与管理员配置；可以追加 AUTH_DOMAIN、BUILD_DOMAIN，也可继续使用原 PUBLIC_BASE_URL、BUILD_CENTER_PUBLIC_URL。首次启动会校验原签名密钥，并将原凭证导入新配置卷。发现旧数据但缺少原凭证时主动停止，不会生成新密钥破坏原授权。
+
+在原项目目录执行 sh scripts/docker.sh install 完成首次转换；之后统一用 update。保留的 compose.legacy.yaml 仅供旧版手工部署参考，不与新版同时启动。使用过独立节点、外部数据库或自定义挂载的安装应单独核对后迁移。
+
+## 10. 排查故障
+
+```sh
+sh scripts/docker.sh status
+docker compose logs --tail=100 initialize
+docker compose logs --tail=100 license-center build-center build-worker
 ```
 
-保存脚本输出的管理员密码。
-
-如果服务器无法访问 GitHub，可以在本地下载仓库 ZIP，通过宝塔文件管理上传到 `/opt/appgog` 并解压，然后执行安装脚本。
-
-### 第 3 步：修改 `.env`
-
-通过宝塔文件管理编辑 `/opt/appgog/.env`：
-
-```dotenv
-NODE_ENV=production
-PUBLIC_BASE_URL=https://admin.example.com
-BUILD_CENTER_PUBLIC_URL=https://build.example.com/build
-```
-
-其他随机密钥保持不变。保存后在终端执行：
-
-```bash
-cd /opt/appgog
-chmod 600 .env
-docker compose up -d --build
-docker compose ps
-```
-
-### 第 4 步：创建授权中心网站
-
-1. 宝塔左侧进入“网站”。
-2. 添加站点，域名填写 `admin.example.com`。
-3. 不需要 PHP 和数据库。
-4. 为该站点添加反向代理：
-   - 代理名称：`appgog-license`；
-   - 目标 URL：`http://127.0.0.1:8787`；
-   - 发送域名：`$host`。
-5. 在站点配置中把上传限制调整到至少 `150m`。
-6. 申请 Let's Encrypt 证书并开启强制 HTTPS。
-
-### 第 5 步：创建客户打包网站
-
-1. 再添加站点，域名填写 `build.example.com`。
-2. 添加反向代理：
-   - 代理名称：`appgog-build`；
-   - 目标 URL：`http://127.0.0.1:8788`；
-   - 发送域名：`$host`。
-3. 上传限制调整到至少 `150m`。
-4. 申请证书并开启强制 HTTPS。
-
-### 第 6 步：宝塔防火墙
-
-允许公网访问：
-
-- 80；
-- 443；
-- 宝塔面板端口；
-- SSH 端口。
-
-不要对公网开放：
-
-- 8787；
-- 8788。
-
-如果云厂商还有安全组，也需要在云安全组中执行相同限制。
-
-### 第 7 步：宝塔验收
-
-```bash
-cd /opt/appgog
-docker compose ps
-docker compose logs --tail=100 license-center
-docker compose logs --tail=100 build-center
-docker compose logs --tail=100 build-worker
-```
-
-然后分别访问管理后台和打包中心。
-
-## 五、1Panel 部署
-
-1Panel 推荐使用“容器 → 编排 → 路径选择”导入仓库中的 `compose.yaml`。
-
-### 第 1 步：安装 Docker
-
-进入 1Panel 的“容器”页面。如果提示 Docker 未安装或未运行，先按面板提示安装并启动 Docker。
-
-在服务器终端确认：
-
-```bash
-docker version
-docker compose version
-```
-
-### 第 2 步：拉取项目并生成 `.env`
-
-在 1Panel 终端执行：
-
-```bash
-sudo mkdir -p /opt/appgog
-sudo chown -R "$USER":"$USER" /opt/appgog
-git clone https://github.com/Jerry2586/Universal-authorization.git /opt/appgog
-cd /opt/appgog
-chmod +x scripts/install-linux.sh
-./scripts/install-linux.sh
-```
-
-保存管理员密码，然后修改 `/opt/appgog/.env`：
-
-```dotenv
-NODE_ENV=production
-PUBLIC_BASE_URL=https://admin.example.com
-BUILD_CENTER_PUBLIC_URL=https://build.example.com/build
-```
-
-执行：
-
-```bash
-chmod 600 /opt/appgog/.env
-```
-
-### 第 3 步：在 1Panel 导入编排
-
-1. 打开“容器”。
-2. 进入“编排”。
-3. 点击“创建编排”。
-4. 选择“路径选择”。
-5. 选择 `/opt/appgog/compose.yaml`。
-6. 编排名称填写 `appgog`。
-7. 创建并启动。
-
-如果编排已经由安装脚本启动，1Panel 可能把它识别为 Local Compose；这种情况可以直接在终端继续用 `docker compose` 管理，不需要重复创建第二套容器。
-
-检查容器状态：
-
-```bash
-cd /opt/appgog
-docker compose ps
-```
-
-### 第 4 步：创建两个反向代理网站
-
-在 1Panel 的“网站”中创建两个“反向代理”网站。
-
-第一个网站：
-
-```text
-主域名：admin.example.com
-代理地址：http://127.0.0.1:8787
-```
-
-第二个网站：
-
-```text
-主域名：build.example.com
-代理地址：http://127.0.0.1:8788
-```
-
-分别为两个网站：
-
-1. 申请 ACME/Let's Encrypt 证书；
-2. 开启 HTTPS；
-3. 开启 HTTP 跳转 HTTPS；
-4. 将请求体大小限制设置为至少 150 MB；
-5. 保留 Host、X-Real-IP、X-Forwarded-For 和 X-Forwarded-Proto 请求头。
-
-### 第 5 步：1Panel 防火墙
-
-只放行 80、443、SSH 和 1Panel 管理端口。不要放行 8787、8788。
-
-## 六、首次使用流程
-
-1. 打开 `https://admin.example.com/admin`。
-2. 使用 `.env` 中的 `ADMIN_USERNAME` 和首次生成的管理员密码登录。
-3. 上传一个可以直接安装到 Xboard 的主题 ZIP 并发布版本。
-4. 创建客户授权，填写客户编号、域名、更新期限和构建额度。
-5. 保存只显示一次的长期固定 License Key。
-6. 客户访问 `https://build.example.com/build`。
-7. 客户输入固定 Key，选择版本并创建构建。
-8. 构建完成后保存一次性 Install Key 并下载 ZIP。
-9. 安装主题，在激活页输入固定 Key、Install Key 和 Xboard 后台地址。
-
-## 七、日常更新
-
-更新前先备份，然后执行：
-
-```bash
-cd /opt/appgog
-git pull --ff-only
-docker compose up -d --build
-docker compose ps
-```
-
-查看日志：
-
-```bash
-docker compose logs -f --tail=200
-```
-
-只查看一个服务：
-
-```bash
-docker compose logs -f --tail=200 license-center
-docker compose logs -f --tail=200 build-center
-docker compose logs -f --tail=200 build-worker
-```
-
-## 八、数据备份
-
-先查看真实卷名：
-
-```bash
-docker volume ls | grep appgog
-```
-
-默认项目名为 `appgog`，Docker 卷通常显示为：
-
-```text
-appgog_appgog-db
-appgog_appgog-keys
-appgog_appgog-artifacts
-appgog_appgog-uploads
-```
-
-创建备份目录：
-
-```bash
-BACKUP_DIR="/opt/appgog-backups/$(date +%Y%m%d-%H%M%S)"
-sudo mkdir -p "$BACKUP_DIR"
-sudo cp /opt/appgog/.env "$BACKUP_DIR/appgog.env"
-```
-
-建议在业务低峰期短暂停止服务后备份 SQLite：
-
-```bash
-cd /opt/appgog
-docker compose down
-
-docker run --rm -v appgog_appgog-db:/source:ro -v "$BACKUP_DIR":/backup alpine \
-  sh -c 'cd /source && tar czf /backup/database.tar.gz .'
-
-docker run --rm -v appgog_appgog-keys:/source:ro -v "$BACKUP_DIR":/backup alpine \
-  sh -c 'cd /source && tar czf /backup/signing-keys.tar.gz .'
-
-docker run --rm -v appgog_appgog-artifacts:/source:ro -v "$BACKUP_DIR":/backup alpine \
-  sh -c 'cd /source && tar czf /backup/artifacts.tar.gz .'
-
-docker run --rm -v appgog_appgog-uploads:/source:ro -v "$BACKUP_DIR":/backup alpine \
-  sh -c 'cd /source && tar czf /backup/uploads.tar.gz .'
-
-docker compose up -d
-```
-
-限制备份权限：
-
-```bash
-sudo chmod -R go-rwx "$BACKUP_DIR"
-```
-
-再把备份复制到另一台服务器或离线存储。只保存在原服务器上不算完整备份。
-
-## 九、常见问题
-
-### 1. 生产模式启动报 HTTPS 错误
-
-检查：
-
-```dotenv
-NODE_ENV=production
-PUBLIC_BASE_URL=https://admin.example.com
-BUILD_CENTER_PUBLIC_URL=https://build.example.com/build
-```
-
-两个地址都必须是 HTTPS。
-
-### 2. 页面显示 502 Bad Gateway
-
-检查容器和本机端口：
-
-```bash
-cd /opt/appgog
-docker compose ps
-curl -i http://127.0.0.1:8787/health
-curl -i http://127.0.0.1:8788/health
-```
-
-如果本机健康检查正常，问题通常在反向代理目标地址、防火墙或 Nginx 配置。
-
-### 3. 上传主题显示 413
-
-将宝塔、1Panel 或 Nginx 的请求体限制调整到至少：
-
-```nginx
-client_max_body_size 150m;
-```
-
-项目默认 ZIP 上限为 128 MB。
-
-### 4. 打包中心登录后无法创建任务
-
-查看：
-
-```bash
-docker compose logs --tail=200 build-center
-docker compose logs --tail=200 license-center
-```
-
-确认三个容器使用同一个 `.env` 中的 `INTERNAL_SERVICE_TOKEN`，不要在面板中单独改成不同值。
-
-### 5. Worker 不构建
-
-```bash
-docker compose logs --tail=200 build-worker
-```
-
-确认：
-
-- `build-worker` 正在运行；
-- `WORKER_TOKEN` 没有被单独修改；
-- `appgog-artifacts` 卷可以正常挂载；
-- 服务器磁盘空间充足。
-
-### 6. 修改 `.env` 管理员密码后仍无法登录
-
-管理员首次创建后保存在数据库中。仅修改 `.env` 不会自动修改已经存在的管理员密码。请使用后台管理员管理流程；如果是刚安装且没有业务数据，可以删除并重新初始化数据库卷，但这会永久删除全部授权数据，不应在有业务数据时操作。
-
-### 7. 重启后数据不见了
-
-先检查是否执行过 `docker compose down -v`，以及 Compose 项目名或数据卷名是否发生变化：
-
-```bash
-docker volume ls | grep appgog
-docker compose config
-```
-
-不要直接创建一套同名但指向新空卷的 Compose。
-
-## 十、正式上线检查清单
-
-- [ ] 两个域名均解析到当前服务器；
-- [ ] 两个域名均启用受信任 HTTPS 证书；
-- [ ] `.env` 中 `NODE_ENV=production`；
-- [ ] `PUBLIC_BASE_URL` 是授权中心 HTTPS 根地址；
-- [ ] `BUILD_CENTER_PUBLIC_URL` 是打包中心 HTTPS `/build` 地址；
-- [ ] 所有 Token 均为独立随机值且长度至少 32 字符；
-- [ ] 管理员密码已单独保存；
-- [ ] 公网没有开放 8787、8788；
-- [ ] `.env` 权限为 600；
-- [ ] 四个 Docker 数据卷已设置定期备份；
-- [ ] 备份已复制到另一台设备或离线存储；
-- [ ] 管理后台和客户打包中心均通过真实域名测试；
-- [ ] 使用测试授权完成过上传、打包、下载和激活闭环。
+- 初始化退出非零：检查域名是否仍是示例、原密钥是否缺失、旧 .env 是否完整；不要删除数据重试。
+- 502：先看服务健康，再核对反代目标与 OpenResty 网络模式。
+- 登录失败：新安装用 credentials 查看初始密码；改过密码用新密码。
+- 上传 413：检查面板站点 client_max_body_size 和应用上传限制。
+- 任务一直排队：检查 build-worker 的运行状态和错误日志。
+- 宿主机磁盘满：清理无用的旧备份/镜像并扩容，保留正在使用的数据卷。
+
+高级容量或有效期设置可在 .env 添加 MAX_SOURCE_UPLOAD_BYTES、OFFLINE_GRACE_SECONDS、ACTIVATION_TOKEN_TTL_SECONDS、BUILD_TICKET_TTL_SECONDS、WEB_SESSION_TTL_SECONDS，必须为正整数。显式设置后会保存在配置卷中；之后删掉 .env 对应行会继续沿用已保存值，要恢复默认请填写所需默认值再 update。密钥以首次初始化保存的身份为准，不支持靠修改 .env 静默轮换。

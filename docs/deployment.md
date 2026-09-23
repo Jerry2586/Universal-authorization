@@ -1,10 +1,10 @@
 # 部署说明
 
-日期：2026-09-22。
+日期：2026-09-23。
 
 需要从空服务器开始逐步操作时，请直接阅读 [宝塔、1Panel 与 Docker 完整部署教程](宝塔-1Panel-Docker部署教程.md)。
 
-## 单机正式拓扑
+## 跨服务器节点拓扑（高级）
 
 当前可运行版本由三个独立进程组成：
 
@@ -44,33 +44,13 @@ npm run cms:install -- --role build-center --license-url https://auth.example.co
 npm run cms:install -- --role worker --license-url https://auth.example.com --node-token WRK_xxx
 ```
 
-## Linux / Docker Compose
+## 默认：Docker 一体安装
 
-```sh
-chmod +x scripts/install-linux.sh
-./scripts/install-linux.sh
-```
+新 compose.yaml 一次启动初始化任务、授权中心、打包中心和共享文件卷的 Worker。仅填写 .env.docker.example 的两个域名，然后执行 sh scripts/docker.sh install。默认直接采用正式模式，自动生成内部秘密值和签名密钥。初始化任务以应用用户运行，完成后正常退出；业务进程只挂载各自必需的配置卷。
 
-脚本只在 `.env` 不存在时创建随机凭证，不会覆盖已有配置。首次启动默认是本机开发模式。公网部署前必须：
+更新使用 sh scripts/docker.sh update；完整备份使用 backup；新空服务器恢复使用 restore。详细命令及旧安装迁移请见前面的完整教程。新部署不再运行旧的开发配置生成流程。
 
-1. 把 `NODE_ENV` 改为 `production`。
-2. 把 `PUBLIC_BASE_URL` 改为授权 API 的真实 HTTPS 地址。
-3. 把 `BUILD_CENTER_PUBLIC_URL` 改为真实 HTTPS 打包站地址（包含 `/build`），并为 8787 和 8788 分别配置 HTTPS 反向代理域名。
-4. 防火墙只开放反向代理需要的端口；不要公开 SQLite 文件、密钥目录或 Docker 卷。
-5. 保存 `.env`、`appgog-db`、`appgog-keys`、`appgog-artifacts` 卷的离线备份。
-
-如果你此前使用旧版 `appgog-data` 单卷 Compose 部署，请先完整备份旧卷，手动将其 `data/`、`keys/`、`artifacts/`、`uploads/` 分别迁移到对应新卷后再启动新版；不要直接启动空的新卷，否则看起来会像新安装。旧卷不会被本次更新删除。
-
-常用命令：
-
-```sh
-docker compose ps
-docker compose logs -f --tail=200
-docker compose up -d --build
-docker compose down
-```
-
-`docker compose down` 不删除数据卷；不要使用 `down -v`，除非明确要永久删除数据库、签名密钥和构建成品。
+旧手工 Compose 保留在 compose.legacy.yaml；不要与新版同时启动。下面的节点凭证拓扑用于跨服务器部署，默认单机 Compose 使用自动生成的 INTERNAL_SERVICE_TOKEN / WORKER_TOKEN 和共享成品卷。
 
 ## 宝塔、1Panel、aaPanel
 

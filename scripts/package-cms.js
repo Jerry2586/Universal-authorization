@@ -7,7 +7,7 @@ const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const outputDirectory = join(root, 'dist');
 const output = join(outputDirectory, `APPGOG-CMS-${manifest.version}.zip`);
 const files = new Map();
-const rootFiles = ['.env.example', '.gitignore', 'compose.yaml', 'Dockerfile', 'package.json', 'README.md'];
+const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'compose.legacy.yaml', 'compose.yaml', 'Dockerfile', 'package.json', 'README.md'];
 const sourceDirectories = ['apps', 'packages', 'scripts', 'docs'];
 
 function addFile(path) {

@@ -14,3 +14,4 @@ var/uploads/*
 !var/uploads/.gitkeep
 var/demo/*
 !var/demo/.gitkeep
+backups/

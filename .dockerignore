@@ -5,3 +5,6 @@ var
 *.log
 tests
 docs
+dist
+backups
+runtime

@@ -8,7 +8,7 @@ COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts
 
-RUN mkdir -p /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads \
+RUN mkdir -p /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads /app/runtime/license /app/runtime/build /app/runtime/worker \
     && chown -R node:node /app
 
 USER node
