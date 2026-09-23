@@ -12,7 +12,8 @@ const sourceDirectories = ['apps', 'packages', 'scripts', 'docs'];
 
 function addFile(path) {
   const name = relative(root, path).split(sep).join('/');
-  files.set(`APPGOG-CMS/${name}`, readFileSync(path));
+  const contents = readFileSync(path);
+  files.set(`APPGOG-CMS/${name}`, name.endsWith('.sh') ? Buffer.from(contents.toString('utf8').replaceAll('\r\n', '\n')) : contents);
 }
 
 function walk(directory) {

@@ -52,6 +52,14 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     if (typeof value !== 'string' || value.length < 32 || /^(replace-with|development-)/.test(value)) throw new Error(`无效的生产凭证 ${name}`);
   }
   if (!identity.adminUsername || typeof identity.adminPassword !== 'string' || identity.adminPassword.length < 12) throw new Error('管理员初始配置无效');
+  identity.options ??= {};
+  for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
+    if (env[name] !== undefined && env[name] !== '') {
+      if (!/^[1-9][0-9]*$/.test(env[name]) || !Number.isSafeInteger(Number(env[name]))) throw new Error(name + ' 必须为正整数');
+      identity.options[name] = env[name];
+    }
+  }
+  envFile({ ...identity.secrets, ADMIN_USERNAME: identity.adminUsername, ADMIN_PASSWORD: identity.adminPassword });
   if (existing && (!existsSync(privatePath) || !existsSync(publicPath))) throw new Error('持久化签名密钥丢失，请恢复备份；禁止重新生成');
   if (!existing && !legacy) {
     const pair = generateKeyPairSync('ed25519');
@@ -64,13 +72,6 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   const fingerprint = createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
   if (existing && identity.keyFingerprint !== fingerprint) throw new Error('签名密钥指纹变化，拒绝启动');
   identity.keyFingerprint = fingerprint;
-  identity.options ??= {};
-  for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
-    if (env[name] !== undefined && env[name] !== '') {
-      if (!/^[1-9][0-9]*$/.test(env[name]) || !Number.isSafeInteger(Number(env[name]))) throw new Error(name + ' 必须为正整数');
-      identity.options[name] = env[name];
-    }
-  }
   atomic(identityPath, JSON.stringify(identity, null, 2));
   const shared = { NODE_ENV: 'production', PUBLIC_BASE_URL: authUrl };
   atomic(join(configRoot, 'license/runtime.env'), envFile({ ...shared, ...identity.options, ...identity.secrets,
