@@ -79,13 +79,21 @@ export async function runWorkerOnce({ baseUrl, token, workerId, artifactStore, p
   }
 }
 
+export function resolveWorkerToken(env = process.env) {
+  // Compose supplies an empty string for optional, unset node credentials.
+  const token = env.WORKER_NODE_TOKEN || env.WORKER_TOKEN;
+  if (!token || token.length < 32 || env.NODE_ENV === 'production' && /^(replace-with|development-)/.test(token)) {
+    throw new Error('Worker 节点凭证无效');
+  }
+  return token;
+}
 export async function startWorker() {
   loadLocalEnvironment();
   const baseUrl = new URL(process.env.INTERNAL_LICENSE_URL ?? 'http://127.0.0.1:8787');
   if (!['http:', 'https:'].includes(baseUrl.protocol)) throw new Error('INTERNAL_LICENSE_URL 协议无效');
-  const token = process.env.WORKER_NODE_TOKEN ?? process.env.WORKER_TOKEN;
+  const token = resolveWorkerToken();
   const workerId = process.env.WORKER_ID ?? `worker-${process.pid}`;
-  if (!token || token.length < 32 || process.env.NODE_ENV === 'production' && /^(replace-with|development-)/.test(token)) throw new Error('Worker 节点凭证无效');
+
   const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://127.0.0.1:8787';
   if (process.env.NODE_ENV === 'production' && new URL(publicBaseUrl).protocol !== 'https:') throw new Error('生产环境 PUBLIC_BASE_URL 必须使用 HTTPS');
   const keyResponse = await fetch(new URL('/api/v1/public-key', baseUrl));
