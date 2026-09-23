@@ -56,7 +56,10 @@ test('stable bootstrap downloads, verifies, installs, upgrades, and rejects down
   assert.match(bootstrap, /sha256sum -c/);
   assert.match(bootstrap, /ghfast\.top/);
   assert.match(bootstrap, /gh-proxy\.com/);
-  assert.match(bootstrap, /已是最新正式版本/);
+  assert.match(bootstrap, /running_version/);
+  assert.match(bootstrap, /State\.Health\.Status/);
+  assert.match(bootstrap, /源码与运行容器一致/);
+  assert.match(bootstrap, /自动修复并重新部署/);
   assert.match(bootstrap, /拒绝自动降级/);
   assert.match(bootstrap, /sh "\$WORK_DIR\/installer\.run" "\$@"/);
 });

@@ -774,12 +774,6 @@ if (mode === 'customer') {
     if (!document.hidden && !$('dashboard-view').hidden && state.data?.builds?.some((job) => ['queued', 'processing'].includes(job.status))) refresh();
   }, 5000);
 } else {
-  $('account-menu-toggle')?.addEventListener('click', () => {
-    const menu = $('account-menu');
-    const expanded = menu.hidden;
-    menu.hidden = !expanded;
-    $('account-menu-toggle').setAttribute('aria-expanded', String(expanded));
-  });
   $('open-account-center')?.addEventListener('click', openAccountCenter);
   $('refresh-admin').addEventListener('click', refresh);
   const uploadZone = $('source-upload');

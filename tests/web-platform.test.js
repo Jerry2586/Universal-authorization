@@ -76,6 +76,16 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   assert.equal(page.status, 200);
   assert.match(await page.text(), /data-portal="customer"/);
 
+  const portalAsset = await fetch(`${base}/assets/portal.js`);
+  assert.equal(portalAsset.status, 200);
+  assert.equal(portalAsset.headers.get('cache-control'), 'no-store');
+
+  const adminPage = await fetch(`${base}/admin`);
+  const adminHtml = await adminPage.text();
+  assert.match(adminHtml, /id="logout" class="header-logout"/);
+  assert.doesNotMatch(adminHtml, /id="account-menu"/);
+  assert.doesNotMatch(adminHtml, /返回首页/);
+
   const adminLogin = await send('/web/admin/login', {
     method: 'POST', body: { username: app.config.adminUsername, password: app.config.adminPassword },
   });

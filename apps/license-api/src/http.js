@@ -181,7 +181,7 @@ function serveStatic(pathname, response) {
   const type = MIME[extname(file).toLowerCase()] ?? 'application/octet-stream';
   response.writeHead(200, {
     ...securityHeaders(type),
-    'cache-control': type.startsWith('text/html') ? 'no-store' : 'public, max-age=300',
+    'cache-control': 'no-store',
     'content-length': statSync(file).size,
   });
   createReadStream(file).pipe(response);
