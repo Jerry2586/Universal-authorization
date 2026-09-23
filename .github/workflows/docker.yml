@@ -1,11 +1,11 @@
-name: Docker deployment
+name: Build, test and release
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -21,13 +21,55 @@ jobs:
         run: sh scripts/docker/verify.sh
       - name: Package self-extracting installer
         run: npm run cms:package
+      - name: Resolve and validate release version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          remote_sha=$(git ls-remote origin "refs/tags/$tag^{}" | awk '{print $1}')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')
+          fi
+          if [ -n "$remote_sha" ] && [ "$remote_sha" != "$GITHUB_SHA" ]; then
+            echo "Version $version is already published by commit $remote_sha; bump package.json before updating main." >&2
+            exit 1
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG_EXISTS=$([ -n "$remote_sha" ] && echo true || echo false)" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
           name: appgog-single-container-installer
           path: |
+            dist/*.zip
+            dist/*.zip.sha256
             dist/*.run
             dist/*.run.sha256
           retention-days: 30
+      - name: Publish matching GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$RELEASE_TAG_EXISTS" != true ]; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a "$RELEASE_TAG" -m "APPGOG $RELEASE_TAG"
+            git push origin "$RELEASE_TAG"
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              dist/*.zip dist/*.zip.sha256 dist/*.run dist/*.run.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/*.zip dist/*.zip.sha256 dist/*.run dist/*.run.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "APPGOG $RELEASE_TAG 单容器一体安装" \
+              --generate-notes \
+              --verify-tag
+          fi
       - name: Service diagnostics on failure
         if: failure()
         run: |
