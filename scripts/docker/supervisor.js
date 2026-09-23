@@ -25,7 +25,9 @@ export function supervise({ specs, cwd, env = {}, probe = async () => {}, log = 
   const ready = (async () => {
     for (const spec of specs) {
       if (stopping) throw new Error('startup interrupted');
-      const child = spawn(spec.command, spec.args, { cwd, env: { ...env, ...spec.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let child;
+      try { child = spawn(spec.command, spec.args, { cwd, env: { ...env, ...spec.env }, stdio: ['ignore', 'pipe', 'pipe'] }); }
+      catch (error) { throw new Error(spec.name + ': ' + error.message, { cause: error }); }
       children.push(child);
       for (const stream of [child.stdout, child.stderr]) {
         createInterface({ input: stream }).on('line', line => log('[' + spec.name + '] ' + line));
