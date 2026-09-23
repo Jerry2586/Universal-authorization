@@ -1,6 +1,6 @@
 import { createHash, randomInt } from 'node:crypto';
 
-export function createBuildInjection({ product, version, buildId, packageId, packageSecret, licenseServer, publicKey }) {
+export function createBuildInjection({ product, version, buildId, packageId, packageSecret, packageManifestToken, watermark, licenseServer, publicKey }) {
   const chunks = splitAndShuffle(packageSecret);
   return {
     product,
@@ -9,6 +9,8 @@ export function createBuildInjection({ product, version, buildId, packageId, pac
     package_id: packageId,
     license_server: licenseServer,
     public_key: publicKey,
+    package_manifest_token: packageManifestToken,
+    watermark,
     package_proof_parts: chunks.parts,
     package_proof_order: chunks.order,
     manifest_checksum: createHash('sha256').update(`${buildId}:${packageId}:${version}`).digest('hex'),

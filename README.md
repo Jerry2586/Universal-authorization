@@ -1,6 +1,6 @@
-# APPGOG 主题授权与打包系统
+# APPGOG打包授权系统 v1.0.0
 
-这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活 CMS。一套源码支持四种角色：完整 CMS、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
+这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
 ## Linux 一行安装 + 专业管理菜单
 
@@ -26,22 +26,23 @@ sudo sh scripts/install-linux.sh
 appgog status
 appgog logs build-worker
 appgog update
+appgog rollback
 appgog backup
 appgog doctor
 ```
 
-为避免破坏宝塔、aaPanel、1Panel、Nginx 或已有网站，一键安装器**不会抢占或修改 80/443**。安装后仍需把两个域名解析到服务器，并配置 HTTPS 反向代理到 `127.0.0.1:8787` 与 `127.0.0.1:8788`。管理菜单会持续显示正确目标。
+安装器会确认 80/443 未被其他服务占用、检查两个域名的 DNS A 记录是否指向当前服务器，并在支持的系统中开放防火墙端口。随后由 Compose 内置 Caddy 自动申请和续期 HTTPS 证书，并分别代理授权中心与打包中心。正式生产路线不再依赖服务器面板、外部 Nginx/OpenResty 或手工证书流程。
 
 ## Docker 一体部署：只填写两个域名
 
 一套代码自动部署 Node.js 运行环境、SQLite 数据库、授权中心、打包中心和 Worker。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。手动 Docker 安装要求 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
 
-**完整傻瓜教程：[宝塔 / aaPanel / 1Panel / Docker 部署、更新和备份迁移](docs/宝塔-1Panel-Docker部署教程.md)。**
+完整安装、更新、回滚、备份和恢复步骤见 [Docker/Linux 部署说明](docs/deployment.md)。
 
-全新安装：解压 CMS ZIP 或下载本私有仓库到 /opt/appgog/APPGOG-CMS，然后执行：
+全新安装：解压正式发布 ZIP 或下载私有仓库到 `/opt/appgog`，然后执行：
 
 ```sh
-cd /opt/appgog/APPGOG-CMS
+cd /opt/appgog
 cp .env.docker.example .env
 ```
 
@@ -59,20 +60,21 @@ sh scripts/docker.sh install
 sh scripts/docker.sh credentials
 ```
 
-在面板里做一次 DNS、SSL 和两个站点的反代配置：
+确认 DNS 已生效后启动。Caddy 自动提供以下 HTTPS 入口：
 
-| 域名 | 反向代理目标 | 入口 |
+| 域名 | 内部目标 | 入口 |
 | --- | --- | --- |
-| AUTH_DOMAIN | http://127.0.0.1:8787 | /admin |
-| BUILD_DOMAIN | http://127.0.0.1:8788 | /build |
-
-1Panel 的 OpenResty 若运行在独立 bridge 网络中，需要接入项目网络后用服务名反代，具体见完整教程。不要把 127.0.0.1 当成所有容器都通用的宿主机地址。
+| AUTH_DOMAIN | license-center:8787 | `https://AUTH_DOMAIN/admin` |
+| BUILD_DOMAIN | build-center:8788 | `https://BUILD_DOMAIN/build` |
 
 以后覆盖代码并保留 .env，然后执行：
 
 ```sh
 # 构建新代码 → 完整备份 → 重建服务 → 健康检查
 sh scripts/docker.sh update
+
+# 更新后需要回到更新前镜像
+sh scripts/docker.sh rollback
 
 # 单独备份（短暂停止写入）
 sh scripts/docker.sh backup
@@ -81,11 +83,11 @@ sh scripts/docker.sh backup
 sh scripts/docker.sh restore /绝对路径/备份.tar.gz
 ```
 
-备份包含数据库、签名密钥、内部凭证、上传源码和构建成品，请私密保存。更新不删除数据卷；不要执行 docker compose down -v。当前从源码构建镜像，尚未提供只执行 docker compose pull 的镜像发布方式。
+备份包含数据库、签名密钥、内部凭证、上传源码和构建成品，输出为 AES-256/PBKDF2 加密文件；首次备份生成 `.backup-key`，必须与备份分开离线保存。更新不删除数据卷；不要执行 docker compose down -v。当前从源码构建镜像，尚未提供只执行 docker compose pull 的镜像发布方式。
 
 **旧部署：不要覆盖原 .env。** 保留原秘密值、签名密钥和项目名 appgog，先完整备份，再按完整教程的“已有旧 Docker 部署升级”转换。新配置发现旧数据但缺少原凭证时会拒绝启动，避免原授权失效。
 
-## 高级：CMS 手动安装与跨服务器分离部署
+## 高级：手动安装与跨服务器分离部署
 
 普通用户在一台服务器完整安装：
 
@@ -94,7 +96,7 @@ npm run cms:install -- --role all-in-one --public-url https://auth.example.com
 npm run cms:start
 ```
 
-完成后访问 `/admin`，打开“CMS 与节点”，即可管理平台域名、服务开关和独立节点。安装器会生成正式环境密钥和首个管理员密码；`.env` 已存在时默认拒绝覆盖。
+完成后访问 `/admin`，打开“系统与节点”，即可管理平台域名、服务开关和独立节点。安装器会生成正式环境密钥和首个管理员密码；`.env` 已存在时默认拒绝覆盖。
 
 分离部署时，先安装唯一授权中心：
 
@@ -113,7 +115,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 CMS 安装 ZIP（自动排除 `.env`、数据库、密钥、成品和 Git 历史）：
+生成可交付的干净 v1.0.0 安装 ZIP（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 npm run cms:package
@@ -124,18 +126,19 @@ npm run cms:package
 ## 已完成的闭环
 
 1. 卖家在 `/admin` 上传一个已经可以安装到 Xboard 的主题 ZIP，并发布版本。
-2. 卖家给客户签发长期固定 License Key，并绑定一个域名。
+2. 卖家给客户签发长期固定 License Key；可预先绑定域名，也可由客户首次登录后永久绑定。
 3. 客户在 `/build` 使用固定 Key 登录，选择版本并提交打包。
 4. 每次打包生成独立的 Build ID、Package ID、Package Secret 和一次性 Install Key。
-5. 独立 Worker 检查 ZIP 安全性、注入激活运行时和构建清单，并生成客户专属 ZIP。
-6. 客户下载安装包，并在主题激活页输入本次 Install Key、长期固定 Key 和 Xboard 后台地址。
-7. 授权服务器校验包身份、域名和安装环境，签发 Ed25519 激活凭证。
-8. 更新或重装时，客户继续使用长期固定 Key 重新打包，得到新的 ZIP 和新的 Install Key。
+5. 独立 Worker 检查 ZIP 安全性、移除 Source Map、注入每包水印、AES-256-GCM 加密身份载荷、随机运行时路径和构建清单，并生成客户专属 ZIP。
+6. 客户下载安装包，在安装解锁页只输入本次一次性 Install Key；成功后 Key 立即作废，但正式功能仍锁定。
+7. 客户首次进入 APPGOG 后台，只输入长期固定 License Key 完成正式激活。
+8. 授权服务器校验 Install Receipt、包身份、域名和安装环境，签发 Ed25519 激活凭证。
+9. 更新或重装时，客户继续使用长期固定 Key 重新打包，得到新的 ZIP 和新的 Install Key。
 
 ## 当前能力
 
-- 长期固定 License Key、域名绑定、换域名、暂停、恢复、撤销和 Key 轮换。
-- 每次构建独立身份和一次性 Install Key，Install Key 激活成功后不能重复使用。
+- 长期固定 License Key、客户首次域名绑定、受控迁移审批、暂停、恢复、撤销和 Key 轮换。
+- 每次构建独立身份和一次性 Install Key，Install Key 完成安装解锁后立即作废；正式激活另行使用固定 License Key。
 - 激活凭证绑定域名、Xboard 后台 Origin、Installation ID、Build 和 Package。
 - Ed25519 数字签名与本地验签；固定 Key、安装 Key、刷新 Secret 等只保存 HMAC 摘要。
 - 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；客户和管理员独立 HttpOnly Cookie 与 CSRF 防护，成员可停用并撤销会话。
@@ -143,14 +146,14 @@ npm run cms:package
 - 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。
 - 版本公告由服务端签名，客户可在有效更新期内下载更新包或按策略重新构建历史版本回滚包。
 - 管理后台可上传/发布主题 ZIP、签发授权、查看构建、激活和审计记录。
-- 客户中心可查看授权、创建构建、查看进度、显示 Install Key 和下载成品。
+- 客户中心可查看授权、过去 24 小时剩余额度、创建构建、查看进度、显示 Install Key，并通过 5 分钟短期会话票据下载成品。
 - 安全 ZIP 解析：阻止目录穿越、加密 ZIP、压缩炸弹、符号链接、可执行文件和普通 PHP。
 - 自动验证 Xboard 主题的 `config.json` 以及 `index.html` 或 `dashboard.blade.php`。
-- 构建完成前验证实际成品 SHA-256 和 ZIP 结构。
+- 构建完成前验证实际成品 SHA-256、签名包身份、AES-256-GCM 加密包身份、逐文件摘要与 Package Secret HMAC；替换文件、清单、运行时、加密载荷或签名 Token 会被拒绝。
 - 授权中心只公开管理页面和授权 API；客户打包中心只公开客户页面并通过独立内部凭证代理客户接口。
-- 独立 Worker 只领取构建任务和上报结果，不持有 Ed25519 签名私钥或管理员凭证。
+- 独立 Worker 只领取构建任务和上报结果，不持有 Ed25519 签名私钥或管理员凭证；Compose 默认启用只读根文件系统、移除 Linux capabilities、禁止提权并限制 CPU、内存和 PID。
 - SQLite、本地文件存储和独立 Worker；均有可替换接口，便于以后迁移 PostgreSQL、S3 和容器 Worker。
-- 27 个自动测试覆盖完整打包激活、双 Key、离线宽限、角色和会话隔离、CMS 节点凭证、版本签名、跨服务器构建、队列租约和失败回滚。
+- 54 个自动测试覆盖完整两阶段打包激活、固定 Key 状态与跨产品拒绝、域名绑定与迁移、激活数量、离线宽限、短期下载票据、角色与会话隔离、服务节点凭证、AES-GCM 包身份、制品完整性、跨服务器构建、队列租约、Docker/Caddy 和失败回滚；当前 Windows 环境为 53 项通过、0 失败，另有 1 项 POSIX Shell 语法测试跳过。
 
 ## 目录
 
@@ -185,7 +188,7 @@ var/                 本地数据库、密钥、上传源包和构建成品
 
 `setup.ps1` 会生成 `.env`、随机安全凭证和管理员密码；`.env` 已被 Git 忽略。已有 `.env` 时不会覆盖。
 
-Linux、Docker Compose 和服务器面板部署见 `docs/deployment.md`；完整的宝塔、1Panel 和纯 Docker 操作步骤见 `docs/宝塔-1Panel-Docker部署教程.md`。
+Linux、Docker Compose、自动 HTTPS、更新回滚和迁移见 `docs/deployment.md`。正式生产只支持统一 Docker/Caddy 路线。
 
 也可以直接启动分层版本：
 
@@ -212,7 +215,8 @@ npm run start:split
 4. 保存只显示一次的长期固定 License Key。
 5. 打开打包中心 `http://127.0.0.1:8788/build`，使用固定 Key 登录并创建构建。
 6. 等待任务完成，保存一次性 Install Key 并下载专属 ZIP。
-7. 把 ZIP 安装到 Xboard，在主题激活页填写本次 Install Key、固定 Key 和后台地址。
+7. 把 ZIP 安装到 Xboard，先只填写一次性 Install Key 完成安装解锁。
+8. 首次进入 APPGOG 后台，再填写长期固定 License Key 完成正式激活。
 
 生成演示主题：
 
@@ -230,7 +234,7 @@ npm test
 
 ## 准确的产品边界
 
-当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、随机包身份注入、激活保护和重新打包；尚未对全部 JS/CSS 实施源码混淆或任意目录乱序。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令。独立 Worker 已支持通过授权中心 HTTP 接口传输源码和成品，可部署在另一台服务器；授权中心仍是单机 SQLite，不提供多授权中心并行写入或自动数据库高可用。
+当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、删除 Source Map、为 JS/CSS 注入每包水印、对授权运行时执行每包标识符随机化，并生成随机保护目录与 AES-256-GCM 加密包身份载荷。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令；通用第三方业务 JS/CSS 也不会被激进改写，以避免破坏真实主题兼容性。独立 Worker 已支持通过授权中心 HTTP 接口传输源码和成品，可部署在另一台服务器；授权中心仍是单机 SQLite，不提供多授权中心并行写入或自动数据库高可用。
 
 如果要直接上传 APPGOG 的原始 Vue 工程并自动编译，需要提供真实源码、依赖版本、构建命令和最终 Xboard 安装目录结构，再在现有 `BuildEngine` 接口后接入隔离容器构建适配器。网站、授权、Key、队列和激活流程无需推倒重做。
 

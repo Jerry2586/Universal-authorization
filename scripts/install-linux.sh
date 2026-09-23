@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-INSTALL_DIR=${APPGOG_INSTALL_DIR:-/opt/appgog/APPGOG-CMS}
+INSTALL_DIR=${APPGOG_INSTALL_DIR:-/opt/appgog}
 REPOSITORY=${APPGOG_REPOSITORY:-https://github.com/Jerry2586/Universal-authorization.git}
 VERSION=${APPGOG_VERSION:-}
 SOURCE_SHA256=${APPGOG_SOURCE_SHA256:-}
@@ -10,6 +10,7 @@ BUILD_DOMAIN=${BUILD_DOMAIN:-}
 SOURCE_DIR=${APPGOG_SOURCE_DIR:-}
 SKIP_DOCKER=${APPGOG_SKIP_DOCKER_INSTALL:-false}
 SKIP_START=false
+SKIP_DNS_CHECK=false
 NON_INTERACTIVE=false
 OPEN_MENU=true
 
@@ -24,13 +25,14 @@ APPGOG Linux 一键安装器
 参数：
   --auth-domain DOMAIN       授权中心域名
   --build-domain DOMAIN      客户打包中心域名
-  --install-dir PATH         安装目录（默认 /opt/appgog/APPGOG-CMS）
+  --install-dir PATH         安装目录（默认 /opt/appgog）
   --repository URL           Git 仓库或 .tar.gz/.tgz/.zip 发布包
   --version REF              Git 分支、标签或提交
   --sha256 HASH              校验下载发布包的 SHA-256
   --source-dir PATH          从本地源码复制安装
   --skip-docker-install      不自动安装 Docker
   --skip-start               不启动容器
+  --skip-dns-check           仅用于离线预装；跳过 DNS 指向检查
   --non-interactive          禁止交互
   --no-menu                  完成后不打开菜单
 EOF
@@ -50,6 +52,7 @@ while [ "$#" -gt 0 ]; do
     --source-dir) [ "$#" -ge 2 ] || fail '--source-dir 缺少值'; SOURCE_DIR=$2; shift 2 ;;
     --skip-docker-install) SKIP_DOCKER=true; shift ;;
     --skip-start) SKIP_START=true; shift ;;
+    --skip-dns-check) SKIP_DNS_CHECK=true; shift ;;
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     --no-menu) OPEN_MENU=false; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -59,6 +62,11 @@ done
 
 [ "$(id -u)" -eq 0 ] || fail '请使用 root 或 sudo 运行。'
 [ "$(uname -s 2>/dev/null || true)" = Linux ] || fail '仅支持 Linux。'
+ARCH=$(uname -m 2>/dev/null || true)
+case "$ARCH" in
+  x86_64|amd64|aarch64|arm64) ;;
+  *) fail "不支持的 CPU 架构：${ARCH:-unknown}；仅支持 x86_64/amd64 和 aarch64/arm64。" ;;
+esac
 case "$INSTALL_DIR" in /|''|/opt|/usr|/var|/home) fail '安装目录过于宽泛。' ;; /*) ;; *) fail '安装目录必须是绝对路径。' ;; esac
 [ -r /etc/os-release ] || fail '无法识别 Linux 发行版。'
 . /etc/os-release
@@ -76,11 +84,11 @@ install_packages() {
   case "$DISTRO" in
     ubuntu|debian)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar gzip unzip
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar gzip unzip openssl
       ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
-      "$manager" install -y ca-certificates curl git tar gzip unzip
+      "$manager" install -y ca-certificates curl git tar gzip unzip openssl
       ;;
     *) fail "不支持自动安装依赖的发行版：$DISTRO" ;;
   esac
@@ -90,6 +98,7 @@ install_docker() {
   if compose_supported; then
     if ! docker info >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then systemctl enable --now docker; fi
     docker info >/dev/null 2>&1 || fail 'Docker 已安装但服务不可访问。'
+    docker buildx version >/dev/null 2>&1 || fail 'Docker Buildx 不可用；请安装 docker-buildx-plugin 后重试。'
     log "Docker 已安装：$(docker --version)"
     return
   fi
@@ -123,10 +132,41 @@ install_docker() {
   esac
   systemctl enable --now docker
   compose_supported || fail 'Docker 安装后 Compose 仍低于 2.24 或不可用。'
+  docker buildx version >/dev/null 2>&1 || fail 'Docker 安装后 Buildx 仍不可用。'
 }
 
 valid_domain() {
   case "$1" in ''|*://*|*/*|*:*|*[!A-Za-z0-9.-]*|.*|*.) return 1 ;; *.*) return 0 ;; *) return 1 ;; esac
+}
+
+preflight_network() {
+  disk_path=$(dirname -- "$INSTALL_DIR")
+  while [ ! -d "$disk_path" ] && [ "$disk_path" != / ]; do disk_path=$(dirname -- "$disk_path"); done
+  available_kb=$(df -Pk "$disk_path" 2>/dev/null | awk 'NR == 2 { print $4 }')
+  case "$available_kb" in ''|*[!0-9]*) fail "无法检查安装目录所在磁盘：$disk_path" ;; esac
+  [ "$available_kb" -ge 4194304 ] || fail '安装磁盘可用空间不足 4 GiB；请清理空间后重试。'
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)(80|443)$' && fail '80 或 443 端口已被占用；统一 Docker HTTPS 入口需要独占这两个端口。'
+  fi
+  [ "$SKIP_DNS_CHECK" = false ] || return 0
+  public_ip=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)
+  [ -n "$public_ip" ] || fail '无法检测服务器公网 IPv4；可在离线预装时显式使用 --skip-dns-check。'
+  for domain in "$AUTH_DOMAIN" "$BUILD_DOMAIN"; do
+    resolved=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)
+    [ -n "$resolved" ] || fail "域名 $domain 尚未解析。请先配置 DNS A 记录指向 $public_ip。"
+    printf '%s\n' "$resolved" | grep -Fx "$public_ip" >/dev/null || fail "域名 $domain 未指向本机公网地址 $public_ip。"
+  done
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    ufw allow 80/tcp >/dev/null
+    ufw allow 443/tcp >/dev/null
+    ufw allow 443/udp >/dev/null
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-service=http >/dev/null
+    firewall-cmd --permanent --add-service=https >/dev/null
+    firewall-cmd --permanent --add-port=443/udp >/dev/null
+    firewall-cmd --reload >/dev/null
+  fi
 }
 
 verify_download() {
@@ -206,7 +246,7 @@ download_source() {
 write_env() {
   [ ! -f "$INSTALL_DIR/.env" ] || fail "为保护旧安装，不会覆盖 $INSTALL_DIR/.env"
   umask 077
-  printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\n' "$AUTH_DOMAIN" "$BUILD_DOMAIN" > "$INSTALL_DIR/.env"
+  printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=1.0.0\n' "$AUTH_DOMAIN" "$BUILD_DOMAIN" > "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
 }
 
@@ -232,14 +272,22 @@ APPGOG 安装完成
 安装目录：$INSTALL_DIR
 管理菜单：appgog
 
-请把两个域名 DNS 指向本服务器，并配置 HTTPS 反向代理：
-  $AUTH_DOMAIN  -> http://127.0.0.1:8787
-  $BUILD_DOMAIN -> http://127.0.0.1:8788
-
 输入 appgog credentials 查看初始管理员账号密码。
-安装器不会接管 80/443，避免破坏已有面板和网站。
+统一 Docker 部署已通过 Caddy 自动申请并续期 HTTPS 证书。
 ============================================================
 EOF
+}
+
+wait_public_https() {
+  for endpoint in "https://$AUTH_DOMAIN/health" "https://$BUILD_DOMAIN/health"; do
+    attempts=0
+    until curl -fsS --max-time 10 "$endpoint" >/dev/null 2>&1; do
+      attempts=$((attempts + 1))
+      [ "$attempts" -lt 36 ] || fail "公网 HTTPS 健康检查失败：$endpoint。请检查 DNS、80/443 防火墙和 Caddy 日志。"
+      sleep 5
+    done
+    log "公网 HTTPS 已就绪：$endpoint"
+  done
 }
 
 log "检测系统：${PRETTY_NAME:-$DISTRO}"
@@ -247,6 +295,7 @@ prompt_domain AUTH_DOMAIN '授权中心域名'
 prompt_domain BUILD_DOMAIN '客户打包中心域名'
 [ "$AUTH_DOMAIN" != "$BUILD_DOMAIN" ] || fail '两个域名必须不同。'
 install_docker
+preflight_network
 detect_local_source
 if [ -n "$SOURCE_DIR" ]; then
   log "从本地源码安装到 $INSTALL_DIR"; copy_local_source
@@ -260,6 +309,7 @@ install_command
 if [ "$SKIP_START" = false ]; then
   log '构建镜像并启动 APPGOG'
   (cd "$INSTALL_DIR" && sh scripts/docker.sh install)
+  wait_public_https
 fi
 print_result
 

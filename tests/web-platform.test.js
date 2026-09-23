@@ -27,6 +27,7 @@ function setup() {
     publicBaseUrl: 'http://127.0.0.1:8787',
     activationTokenTtlSeconds: 604800,
     buildTicketTtlSeconds: 900,
+    downloadTicketTtlSeconds: 300,
     webSessionTtlSeconds: 28800,
     artifactRoot: join(tempRoot, 'artifacts'),
     uploadRoot: join(tempRoot, 'uploads'),
@@ -142,7 +143,44 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   assert.equal(restored.data.status, 'active');
 });
 
-test('队列适配器与业务协议隔离：只可领取一次，返回 Build 与安装 Key', () => {
+test('Caddy 私网反代后的限流按合法 X-Forwarded-For 区分客户', async (t) => {
+  const app = setup();
+  const server = createServer(createHttpHandler({
+    service: app.service, sessions: app.sessions, portal: app.portal, artifactStore: app.artifactStore,
+    config: app.config, publicKey: app.publicKey.export({ type: 'spki', format: 'pem' }),
+  }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    app.close();
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  for (let index = 0; index < 13; index += 1) {
+    const response = await fetch(`${base}/web/customer/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${index + 1}` },
+      body: JSON.stringify({ license_key: 'APPGOG-INVALID-KEY' }),
+    });
+    assert.equal(response.status, 401);
+  }
+  for (let index = 0; index < 12; index += 1) {
+    const response = await fetch(`${base}/web/customer/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.10' },
+      body: JSON.stringify({ license_key: 'APPGOG-INVALID-KEY' }),
+    });
+    assert.equal(response.status, 401);
+  }
+  const limited = await fetch(`${base}/web/customer/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.10' },
+    body: JSON.stringify({ license_key: 'APPGOG-INVALID-KEY' }),
+  });
+  assert.equal(limited.status, 429);
+});
+
+test('队列适配器与业务协议隔离：只可领取一次，返回 Build 与安装 Key', async () => {
   const app = setup();
   const issued = app.service.issueLicense({ customerRef: 'ORDER-2', domain: 'demo.example.com' });
   const product = app.repository.productByCode('appgog');
@@ -163,23 +201,120 @@ test('队列适配器与业务协议隔离：只可领取一次，返回 Build �
   assert.equal(leased.job.id, job.id);
   assert.ok(leased.build.installKey.startsWith('INS-'));
   assert.equal(app.portal.leaseBuild('worker-test'), null);
-  const outputZip = writeZip(new Map([
-    ['APPGOG/config.json', Buffer.from('{"name":"APPGOG"}')],
-    ['APPGOG/index.html', Buffer.from('<!doctype html><html><head></head><body>Protected</body></html>')],
-  ]));
-  const outputHash = createHash('sha256').update(outputZip).digest('hex');
-  app.artifactStore.put('jobs/fake-test.zip', outputZip);
+  const output = await app.buildEngine.build({
+    sourceRef: leased.source.source_ref,
+    product: leased.build.product,
+    version: leased.build.version,
+    buildId: leased.build.buildId,
+    packageId: leased.build.packageId,
+    packageSecret: leased.build.packageSecret,
+    packageManifestToken: leased.build.packageManifestToken,
+    watermark: leased.build.watermark,
+    domain: leased.build.domain,
+  });
+  const outputHash = output.sha256;
+  app.artifactStore.put('jobs/fake-test.zip', output.buffer);
   const completed = app.portal.completeBuild('worker-test', job.id, {
     build_id: leased.build.buildId,
     artifact_ref: 'jobs/fake-test.zip',
     artifact_sha256: outputHash,
     install_key: leased.build.installKey,
+    package_proof: leased.build.packageSecret,
   });
   assert.equal(completed.status, 'succeeded');
   const detail = app.portal.buildDetails(login.session, job.id);
   assert.equal(detail.install_key, leased.build.installKey);
   assert.equal(detail.artifact_sha256, outputHash);
+  const overview = app.portal.customerOverview(login.session);
+  assert.equal(overview.license.builds_used_last_24_hours, 1);
+  assert.equal(overview.license.builds_remaining, 2);
   app.close();
+});
+
+test('客户下载必须使用短期、不可篡改且绑定当前会话的票据', async (t) => {
+  const app = setup();
+  const issued = app.service.issueLicense({ customerRef: 'ORDER-DOWNLOAD', domain: 'download.example.com' });
+  const product = app.repository.productByCode('appgog');
+  const sourceZip = writeZip(new Map([
+    ['APPGOG/config.json', Buffer.from('{"name":"APPGOG"}')],
+    ['APPGOG/index.html', Buffer.from('<!doctype html><html><head></head><body>APPGOG</body></html>')],
+  ]));
+  app.artifactStore.put('sources/download.zip', sourceZip);
+  app.repository.createSourceVersion({
+    productId: product.id, version: '1.18.0', displayName: 'APPGOG 1.18.0', sourceKind: 'official',
+    sourceRef: 'sources/download.zip', status: 'active', now: '2026-09-22T04:00:00.000Z',
+  });
+  const directSession = app.sessions.loginCustomer(issued.licenseKey).session;
+  const job = app.portal.enqueueCustomerBuild(directSession, { version: '1.18.0', domain: 'download.example.com' });
+  const leased = app.portal.leaseBuild('worker-download');
+  const output = await app.buildEngine.build({
+    sourceRef: leased.source.source_ref,
+    product: leased.build.product,
+    version: leased.build.version,
+    buildId: leased.build.buildId,
+    packageId: leased.build.packageId,
+    packageSecret: leased.build.packageSecret,
+    packageManifestToken: leased.build.packageManifestToken,
+    watermark: leased.build.watermark,
+    domain: leased.build.domain,
+  });
+  app.artifactStore.put('jobs/download.zip', output.buffer);
+  app.portal.completeBuild('worker-download', job.id, {
+    build_id: leased.build.buildId,
+    artifact_ref: 'jobs/download.zip',
+    artifact_sha256: output.sha256,
+    install_key: leased.build.installKey,
+    package_proof: leased.build.packageSecret,
+  });
+
+  const server = createServer(createHttpHandler({
+    service: app.service, sessions: app.sessions, portal: app.portal, artifactStore: app.artifactStore,
+    config: app.config, publicKey: app.publicKey.export({ type: 'spki', format: 'pem' }),
+  }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    app.close();
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  async function loginCustomer(licenseKey) {
+    const response = await fetch(`${base}/web/customer/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ license_key: licenseKey }),
+    });
+    const data = await response.json();
+    return { cookie: response.headers.get('set-cookie').split(';')[0], csrf: data.csrf_token };
+  }
+  const customer = await loginCustomer(issued.licenseKey);
+  const direct = await fetch(`${base}/web/customer/builds/${job.id}/download`, { headers: { cookie: customer.cookie } });
+  assert.equal(direct.status, 403);
+  assert.equal((await direct.json()).error.code, 'DOWNLOAD_TICKET_REQUIRED');
+
+  const ticketResponse = await fetch(`${base}/web/customer/builds/${job.id}/download-ticket`, {
+    method: 'POST', headers: { cookie: customer.cookie, 'x-csrf-token': customer.csrf },
+  });
+  assert.equal(ticketResponse.status, 201);
+  const ticket = await ticketResponse.json();
+  assert.match(ticket.download_url, /ticket=/);
+  assert.ok(new Date(ticket.expires_at) > new Date());
+
+  const download = await fetch(`${base}${ticket.download_url}`, { headers: { cookie: customer.cookie } });
+  assert.equal(download.status, 200);
+  assert.equal(download.headers.get('x-appgog-sha256'), output.sha256);
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), output.buffer);
+
+  const tamperedUrl = new URL(`${base}${ticket.download_url}`);
+  const rawTicket = tamperedUrl.searchParams.get('ticket');
+  tamperedUrl.searchParams.set('ticket', `${rawTicket.slice(0, -1)}${rawTicket.endsWith('a') ? 'b' : 'a'}`);
+  const tampered = await fetch(tamperedUrl, { headers: { cookie: customer.cookie } });
+  assert.equal(tampered.status, 403);
+  assert.equal((await tampered.json()).error.code, 'DOWNLOAD_TICKET_INVALID');
+
+  const other = app.service.issueLicense({ customerRef: 'ORDER-OTHER', domain: 'other.example.com' });
+  const otherCustomer = await loginCustomer(other.licenseKey);
+  const crossSession = await fetch(`${base}${ticket.download_url}`, { headers: { cookie: otherCustomer.cookie } });
+  assert.equal(crossSession.status, 403);
+  assert.equal((await crossSession.json()).error.code, 'DOWNLOAD_TICKET_INVALID');
 });
 
 test('构建失败撤销本次包与安装 Key，不永久占用打包额度', () => {

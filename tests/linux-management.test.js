@@ -21,22 +21,33 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   const installer = text(scripts.installer);
   assert.match(installer, /docker-ce docker-ce-cli containerd\.io docker-buildx-plugin docker-compose-plugin/);
   assert.match(installer, /minor.*-ge 24/);
+  assert.match(installer, /x86_64\|amd64\|aarch64\|arm64/);
+  assert.match(installer, /docker buildx version/);
+  assert.match(installer, /4194304/);
+  assert.match(installer, /add-port=443\/udp/);
   assert.match(installer, /verify_download/);
-  assert.match(installer, /\/opt\/appgog\/APPGOG-CMS/);
+  assert.match(installer, /\/opt\/appgog/);
   assert.match(installer, /\[ ! -f "\$INSTALL_DIR\/\.env" \] \|\| fail/);
   assert.match(installer, /chmod 600 "\$INSTALL_DIR\/\.env"/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
-  assert.match(installer, /不会接管 80\/443/);
+  assert.match(installer, /preflight_network/);
+  assert.match(installer, /DNS A 记录/);
+  assert.match(installer, /Caddy 自动申请并续期 HTTPS/);
+  assert.match(installer, /wait_public_https/);
 });
 
 test('management menu exposes safe lifecycle, logs, configuration, backup, restore, and diagnostics', () => {
   const manager = text(scripts.manager);
-  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'credentials', 'update', 'backup', 'restore', 'doctor']) {
+  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'credentials', 'update', 'rollback', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'cleanup']) {
     assert.ok(manager.includes(command), `管理脚本缺少 ${command}`);
   }
   assert.match(manager, /确认保存配置/);
   assert.match(manager, /backups\/env-/);
   assert.match(manager, /危险操作会再次要求确认/);
+  assert.match(manager, /operations\.log/);
+  assert.match(manager, /配置差异/);
+  assert.match(manager, /最近备份/);
+  assert.match(manager, /更新状态/);
 });
 
 test('Docker operations keep destructive volume removal out of the supported workflow', () => {
@@ -44,6 +55,20 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /install\|start|install\)/);
   assert.match(docker, /doctor\(\)/);
   assert.match(docker, /logs\(\)/);
+  assert.match(docker, /appgog-platform:rollback/);
+  assert.match(docker, /diagnostics\(\)/);
+  assert.match(docker, /repair_permissions\(\)/);
+  assert.match(docker, /docker image prune -f/);
+  assert.match(docker, /compose stop caddy build-worker build-center license-center/);
+  assert.match(docker, /aes-256-cbc/);
+  assert.match(docker, /pbkdf2/);
+  assert.match(docker, /\.backup-key/);
+  assert.match(docker, /DNS A 记录可解析/);
+  assert.match(docker, /TLS 证书到期/);
+  assert.match(docker, /Ed25519 签名密钥完整/);
+  assert.match(docker, /mktemp .*appgog-restore/);
+  assert.match(docker, /备份解密失败/);
+  assert.ok(!docker.includes('openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "$BACKUP_KEY_FILE" -in "$archive" \\\n          | compose'));
   assert.ok(!docker.includes('down -v'));
   assert.ok(!docker.includes('volume rm'));
 });

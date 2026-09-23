@@ -102,10 +102,14 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   assert.equal(detail.status, 200);
   assert.equal(detail.data.status, 'succeeded');
   assert.match(detail.data.install_key, /^INS-/);
-  const result = await fetch(`${buildUrl}/web/customer/builds/${queued.data.id}/download`, { headers: { cookie: customerCookie } });
+  const ticket = await send(buildUrl, `/web/customer/builds/${queued.data.id}/download-ticket`, {
+    method: 'POST', cookie: customerCookie, csrf: customerCsrf,
+  });
+  assert.equal(ticket.status, 201);
+  const result = await fetch(`${buildUrl}${ticket.data.download_url}`, { headers: { cookie: customerCookie } });
   assert.equal(result.status, 200);
   const output = Buffer.from(await result.arrayBuffer());
   assert.equal(createHash('sha256').update(output).digest('hex'), result.headers.get('x-appgog-sha256'));
-  assert.ok([...readZip(output).keys()].some((path) => path.includes('appgog-license/runtime.')));
+  assert.ok([...readZip(output).keys()].some((path) => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(path)));
   assert.equal((await send(buildUrl, '/web/admin/overview', { cookie: customerCookie })).status, 404);
 });

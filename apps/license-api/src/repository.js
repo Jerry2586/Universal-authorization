@@ -5,8 +5,8 @@ export function createRepository(database) {
     insertProduct: database.prepare(`INSERT INTO products (id, code, name, created_at) VALUES (?, ?, ?, ?)`),
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
     insertLicense: database.prepare(`
-      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, status, bound_domain, update_until, max_builds_per_day, generation, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, status, bound_domain, update_until, max_builds_per_day, max_activations, generation, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `),
     licenseByHash: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name
@@ -61,13 +61,37 @@ export function createRepository(database) {
     `),
     installKeyByBuildId: database.prepare(`SELECT * FROM install_keys WHERE build_id = ?`),
     consumeInstallKey: database.prepare(`UPDATE install_keys SET status = 'consumed', consumed_at = ? WHERE id = ? AND status = 'available'`),
+    insertInstallReceipt: database.prepare(`
+      INSERT INTO install_receipts (
+        id, license_id, build_id, receipt_secret_hash, domain, backend_origin,
+        installation_id, status, generation, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unlocked', ?, ?)
+    `),
+    installReceiptById: database.prepare(`
+      SELECT install_receipts.*, builds.package_id, builds.package_secret_hash, builds.version,
+        builds.status AS build_status, licenses.status AS license_status,
+        licenses.bound_domain, licenses.generation AS license_generation,
+        products.code AS product_code
+      FROM install_receipts
+      JOIN builds ON builds.id = install_receipts.build_id
+      JOIN licenses ON licenses.id = install_receipts.license_id
+      JOIN products ON products.id = licenses.product_id
+      WHERE install_receipts.id = ?
+    `),
+    activateInstallReceipt: database.prepare(`
+      UPDATE install_receipts SET status = 'activated', activated_at = ?
+      WHERE id = ? AND status = 'unlocked'
+    `),
+    markBuildUnlocked: database.prepare(`
+      UPDATE builds SET status = 'package_unlocked' WHERE id = ? AND status = 'ready'
+    `),
     insertActivation: database.prepare(`
       INSERT INTO activations (id, license_id, build_id, domain, backend_origin, installation_id, status, generation, refresh_secret_hash, last_seen_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
     `),
     supersedeActivations: database.prepare(`
       UPDATE activations SET status = 'superseded', revoked_at = ?
-      WHERE license_id = ? AND domain = ? AND status = 'active'
+      WHERE license_id = ? AND domain = ? AND backend_origin = ? AND installation_id = ? AND status = 'active'
     `),
     activationById: database.prepare(`
       SELECT activations.*, licenses.status AS license_status, licenses.generation AS license_generation,
@@ -79,6 +103,54 @@ export function createRepository(database) {
       WHERE activations.id = ?
     `),
     updateActivationSeen: database.prepare(`UPDATE activations SET last_seen_at = ? WHERE id = ?`),
+    activeActivationForEnvironment: database.prepare(`
+      SELECT activations.id FROM activations
+      JOIN licenses ON licenses.id = activations.license_id
+      WHERE activations.license_id = ? AND activations.domain = ? AND activations.backend_origin = ?
+        AND activations.installation_id = ? AND activations.status = 'active'
+        AND activations.generation = licenses.generation
+      LIMIT 1
+    `),
+    countActiveActivationsForLicense: database.prepare(`
+      SELECT COUNT(*) AS count FROM activations
+      JOIN licenses ON licenses.id = activations.license_id
+      WHERE activations.license_id = ? AND activations.status = 'active'
+        AND activations.generation = licenses.generation
+    `),
+    revokeInstallReceiptsByLicense: database.prepare(`
+      UPDATE install_receipts SET status = 'revoked', revoked_at = ? WHERE license_id = ? AND status = 'unlocked'
+    `),
+    revokeActivationsByLicense: database.prepare(`
+      UPDATE activations SET status = 'revoked', revoked_at = ? WHERE license_id = ? AND status = 'active'
+    `),
+    insertDomainMigration: database.prepare(`
+      INSERT INTO domain_migration_requests (
+        id, license_id, previous_domain, requested_domain, status, reason, requested_at
+      ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
+    `),
+    domainMigrationById: database.prepare(`
+      SELECT domain_migration_requests.*, licenses.customer_ref, licenses.status AS license_status,
+        licenses.bound_domain, licenses.generation, products.code AS product_code
+      FROM domain_migration_requests
+      JOIN licenses ON licenses.id = domain_migration_requests.license_id
+      JOIN products ON products.id = licenses.product_id
+      WHERE domain_migration_requests.id = ?
+    `),
+    pendingDomainMigrationByLicense: database.prepare(`
+      SELECT * FROM domain_migration_requests WHERE license_id = ? AND status = 'pending' LIMIT 1
+    `),
+    listDomainMigrations: database.prepare(`
+      SELECT domain_migration_requests.*, licenses.customer_ref, licenses.bound_domain, products.code AS product_code
+      FROM domain_migration_requests
+      JOIN licenses ON licenses.id = domain_migration_requests.license_id
+      JOIN products ON products.id = licenses.product_id
+      ORDER BY CASE domain_migration_requests.status WHEN 'pending' THEN 0 ELSE 1 END,
+        domain_migration_requests.requested_at DESC LIMIT ?
+    `),
+    decideDomainMigration: database.prepare(`
+      UPDATE domain_migration_requests SET status = ?, reviewed_at = ?, reviewed_by = ?, review_note = ?
+      WHERE id = ? AND status = 'pending'
+    `),
     insertAudit: database.prepare(`
       INSERT INTO audit_events (id, actor_type, actor_id, action, subject_type, subject_id, metadata_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -256,7 +328,7 @@ export function createRepository(database) {
       queries.insertLicense.run(
         values.id, values.productId, values.customerRef, values.keyPrefix, values.keyHash,
         values.status, values.boundDomain ?? null, values.updateUntil ?? null,
-        values.maxBuildsPerDay, values.now, values.now,
+        values.maxBuildsPerDay, values.maxActivations, values.now, values.now,
       );
       return queries.licenseById.get(values.id);
     },
@@ -292,7 +364,19 @@ export function createRepository(database) {
     installKeyByHash: (hash) => queries.installKeyByHash.get(hash),
     installKeyByBuildId: (buildId) => queries.installKeyByBuildId.get(buildId),
     consumeInstallKey: (id, now) => queries.consumeInstallKey.run(now, id).changes === 1,
-    supersedeActivations: (licenseId, domain, now) => queries.supersedeActivations.run(now, licenseId, domain),
+    createInstallReceipt(values) {
+      queries.insertInstallReceipt.run(
+        values.id, values.licenseId, values.buildId, values.receiptSecretHash,
+        values.domain, values.backendOrigin, values.installationId, values.generation, values.now,
+      );
+      return queries.installReceiptById.get(values.id);
+    },
+    installReceiptById: (id) => queries.installReceiptById.get(id),
+    activateInstallReceipt: (id, now) => queries.activateInstallReceipt.run(now, id).changes === 1,
+    markBuildUnlocked: (id) => queries.markBuildUnlocked.run(id).changes === 1,
+    supersedeActivations: (licenseId, domain, backendOrigin, installationId, now) => (
+      queries.supersedeActivations.run(now, licenseId, domain, backendOrigin, installationId)
+    ),
     createActivation(values) {
       queries.insertActivation.run(
         values.id, values.licenseId, values.buildId, values.domain, values.backendOrigin,
@@ -302,6 +386,24 @@ export function createRepository(database) {
     },
     activationById: (id) => queries.activationById.get(id),
     updateActivationSeen: (id, now) => queries.updateActivationSeen.run(now, id),
+    activeActivationForEnvironment: (licenseId, domain, backendOrigin, installationId) => queries.activeActivationForEnvironment.get(licenseId, domain, backendOrigin, installationId),
+    countActiveActivationsForLicense: (licenseId) => queries.countActiveActivationsForLicense.get(licenseId).count,
+    createDomainMigration(values) {
+      const id = values.id ?? newId('dmr');
+      queries.insertDomainMigration.run(
+        id, values.licenseId, values.previousDomain, values.requestedDomain, values.reason ?? '', values.now,
+      );
+      return queries.domainMigrationById.get(id);
+    },
+    domainMigrationById: (id) => queries.domainMigrationById.get(id),
+    pendingDomainMigrationByLicense: (licenseId) => queries.pendingDomainMigrationByLicense.get(licenseId),
+    listDomainMigrations: (limit = 100) => queries.listDomainMigrations.all(limit),
+    decideDomainMigration(id, status, reviewerId, reviewNote, now) {
+      const changed = queries.decideDomainMigration.run(status, now, reviewerId, reviewNote ?? null, id).changes;
+      return changed === 1 ? queries.domainMigrationById.get(id) : null;
+    },
+    revokeInstallReceiptsByLicense: (licenseId, now) => queries.revokeInstallReceiptsByLicense.run(now, licenseId).changes,
+    revokeActivationsByLicense: (licenseId, now) => queries.revokeActivationsByLicense.run(now, licenseId).changes,
     audit({ actorType, actorId = null, action, subjectType, subjectId = null, metadata = {}, now }) {
       queries.insertAudit.run(newId('evt'), actorType, actorId, action, subjectType, subjectId, JSON.stringify(metadata), now);
     },

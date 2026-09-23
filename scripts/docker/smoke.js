@@ -10,9 +10,9 @@ const build = 'http://build-center:8788';
 const marker = '/app/var/uploads/docker-ci.json';
 const identity = JSON.parse(readFileSync('/app/runtime/license/identity.json', 'utf8'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-async function send(base, path, { body, cookie, csrf, zip } = {}) {
+async function send(base, path, { body, cookie, csrf, zip, method } = {}) {
   const response = await fetch(base + path, {
-    method: body ? 'POST' : 'GET',
+    method: method ?? (body ? 'POST' : 'GET'),
     headers: { ...(body ? { 'content-type': zip ? 'application/zip' : 'application/json' } : {}), ...(cookie ? { cookie } : {}), ...(csrf ? { 'x-csrf-token': csrf } : {}) },
     ...(body ? { body: zip ? body : JSON.stringify(body) } : {}),
   });
@@ -53,11 +53,12 @@ for (let attempt = 0; attempt < 60; attempt++) {
 }
 assert.equal(detail.status, 'succeeded');
 assert.match(detail.install_key, /^INS-/);
-const response = await fetch(build + '/web/customer/builds/' + saved.jobId + '/download', { headers: { cookie: customer.cookie } });
+const ticket = await send(build, '/web/customer/builds/' + saved.jobId + '/download-ticket', { ...options, method: 'POST' });
+const response = await fetch(build + ticket.data.download_url, { headers: { cookie: customer.cookie } });
 assert.equal(response.status, 200);
 const output = Buffer.from(await response.arrayBuffer());
 assert.equal(sha(output), response.headers.get('x-appgog-sha256'));
-assert.ok([...readZip(output).keys()].some(path => path.includes('appgog-license/runtime.')));
+assert.ok([...readZip(output).keys()].some(path => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(path)));
 if (process.argv[2] === 'create') {
   saved.outputHash = sha(output);
   saved.installKey = detail.install_key;

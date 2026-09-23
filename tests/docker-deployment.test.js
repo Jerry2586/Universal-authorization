@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { initialize, secretNames } from '../scripts/docker/initialize.js';
@@ -62,4 +62,23 @@ test('Docker preserves custom policy settings and rejects invalid replacements',
   assert.match(runtime, /OFFLINE_GRACE_SECONDS=86400/);
   assert.match(runtime, /MAX_SOURCE_UPLOAD_BYTES=1048576/);
   assert.throws(() => initialize({ root, env: { ...env, OFFLINE_GRACE_SECONDS: '-1' } }), /正整数/);
+});
+
+test('Compose includes managed HTTPS ingress and persists certificate state', () => {
+  const compose = readFileSync(join(resolve(import.meta.dirname, '..'), 'compose.yaml'), 'utf8');
+  const caddy = readFileSync(join(resolve(import.meta.dirname, '..'), 'Caddyfile'), 'utf8');
+  assert.match(compose, /caddy:2\.10-alpine/);
+  assert.match(compose, /"80:80"/);
+  assert.match(compose, /"443:443"/);
+  assert.match(compose, /appgog-caddy-data:\/data/);
+  assert.match(caddy, /\{\$AUTH_DOMAIN\}/);
+  assert.match(caddy, /reverse_proxy license-center:8787/);
+  assert.match(caddy, /\{\$BUILD_DOMAIN\}/);
+  assert.match(caddy, /reverse_proxy build-center:8788/);
+  assert.match(compose, /build-worker:[\s\S]*read_only: true/);
+  assert.match(compose, /build-worker:[\s\S]*cap_drop:[\s\S]*- ALL/);
+  assert.match(compose, /build-worker:[\s\S]*no-new-privileges:true/);
+  assert.match(compose, /build-worker:[\s\S]*pids_limit: 256/);
+  assert.match(compose, /build-worker:[\s\S]*mem_limit: 1g/);
+  assert.match(compose, /build-worker:[\s\S]*cpus: "1\.5"/);
 });

@@ -1,18 +1,20 @@
-# APPGOG 授权系统架构（冻结版 v1）
+# APPGOG打包授权系统架构（v1.0.0）
 
-日期：2026-09-22
+日期：2026-09-23
 
 ## 一、用户看到的流程
 
 ```text
 购买 APPGOG
   → 获得长期固定 Key
-  → 在打包站输入固定 Key、版本和域名
+  → 在打包站使用固定 Key 登录，首次绑定域名并选择版本
   → 下载客户专属 ZIP 和本次一次性安装 Key
-  → 安装 ZIP
+  → 安装 ZIP，只输入本次一次性 Install Key
+  → 服务端验证包与环境，消费 Install Key 并签发 Install Receipt
+  → APPGOG 正式功能仍保持锁定
   → 第一次打开 APPGOG 后台
-  → 输入本次安装 Key、固定 Key 和 Xboard 后台地址
-  → 激活成功
+  → 只输入长期固定 License Key
+  → 服务端验证 Install Receipt、包、域名和环境后正式激活
   → 开放 APPGOG 后台
 ```
 
@@ -25,10 +27,11 @@
 | License Key | 长期 | 是 | 购买资格、打包、更新、换域名、轮换 Key |
 | Build Ticket | 约 15 分钟、一次性 | 否 | 授权本次 Worker 构建 |
 | Package Secret | 每个 ZIP 唯一 | 否 | 证明运行代码确实来自该构建 |
-| Install Key | 每个 ZIP 一个、成功后作废 | 是 | 第一次打开后台时激活 |
+| Install Key | 每个 ZIP 一个、安装解锁成功后作废 | 是 | 第一阶段安装解锁 |
+| Install Receipt | 每次成功安装解锁一个 | 否 | 证明第一阶段已完成并绑定安装环境 |
 | Activation Token | 短期、可刷新 | 否 | 本地运行时验签和环境绑定 |
 
-固定 Key 不进入主题包；安装 Key 不能登录打包站；Package Secret 不能代替在线激活；签名私钥永不进入 Worker 或客户 ZIP。
+固定 Key 不进入主题包；安装 Key 不能登录打包站；Install Receipt 不能代替固定 Key；Package Secret 不能代替在线激活；签名私钥永不进入 Worker 或客户 ZIP。
 
 ## 三、数据关系
 
@@ -37,8 +40,10 @@ erDiagram
   PRODUCT ||--o{ LICENSE : grants
   LICENSE ||--o{ BUILD_TICKET : authorizes
   LICENSE ||--o{ BUILD : owns
+  LICENSE ||--o{ DOMAIN_MIGRATION_REQUEST : requests
   BUILD_TICKET ||--|| BUILD : produces
   BUILD ||--|| INSTALL_KEY : unlocks
+  BUILD ||--|| INSTALL_RECEIPT : records
   BUILD ||--o{ ACTIVATION : activates
   LICENSE ||--o{ ACTIVATION : controls
 
@@ -47,6 +52,7 @@ erDiagram
     string bound_domain
     int generation
     string status
+    int max_activations
   }
   BUILD {
     string package_id
@@ -61,12 +67,17 @@ erDiagram
     int generation
     string status
   }
+  DOMAIN_MIGRATION_REQUEST {
+    string previous_domain
+    string requested_domain
+    string status
+  }
 ```
 
 ## 四、必须保持的安全规则
 
 1. 数据库只保存 License Key、Build Ticket、Package Secret、Install Key 和 Refresh Secret 的 HMAC-SHA-256 摘要，不保存明文。
-2. 固定 Key 第一次打包时绑定域名；换域名必须走明确的解绑/迁移流程。
+2. 固定 Key 可由卖家预绑定，也可由客户首次登录后绑定；换域名必须提交迁移申请并由授权管理员审批。
 3. Build Ticket 与 Install Key 的消费必须位于数据库写事务中，不能先查询再异步更新。
 4. 每个 Build 都有独立 Package Secret，打包器可拆分和乱序注入，但它只是抗批量复制层，不是根信任。
 5. 根信任是授权服务器的 Ed25519 私钥。客户包只持有公钥。
@@ -74,7 +85,8 @@ erDiagram
 7. 后台页面隐藏不等于授权。APPGOG 的设置读取、保存和关键配置接口都必须在服务端或可信运行层再次验签。
 8. 正常运行优先本地验签，按周期联网刷新；授权服务器短暂故障不能立即让客户站点白屏。
 9. Key 轮换增加 License generation。旧 Key 立刻不能打包，旧激活在下一次刷新时失效。
-10. 所有签发、打包、激活、轮换、解绑和撤销操作必须写审计日志。
+10. 成品完成前必须同时校验整包 SHA-256、Ed25519 签名包身份、逐文件 SHA-256 与 Package Secret HMAC。
+11. 所有签发、打包、激活、轮换、域名绑定/迁移和撤销操作必须写审计日志。
 
 ## 五、复制到其他服务器为何失败
 
@@ -103,4 +115,4 @@ Ed25519 签名
 - 允许卖家撤销、轮换和审计；
 - 显著提高批量破解成本。
 
-代码混淆、片段乱序和文件名变化是保护层，不能代替服务端绑定和数字签名。
+构建流水线会删除 Source Map、向 JS/CSS 注入每包水印、随机化授权运行时标识符与保护目录，并通过 Package Secret 派生 AES-256-GCM 密钥加密包身份载荷。这些措施是提高静态提取和跨包拼接成本的保护层，不能代替服务端绑定和数字签名；为保证未知 Xboard 主题兼容性，不对所有第三方业务代码实施激进控制流重写。

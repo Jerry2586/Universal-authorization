@@ -166,6 +166,55 @@ test('customer overview exposes key prefix and domain, not customer reference or
   assert.doesNotMatch(JSON.stringify(overview.data), /PRIVATE-CUSTOMER-REFERENCE/);
 });
 
+test('客户中心完成首次域名绑定并提交迁移，只有管理员可审批', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-DOMAIN-FLOW', domain: null });
+  const customer = await app.customer(issued.license_key);
+  assert.equal(customer.status, 200);
+
+  const initial = await app.send('/web/customer/overview', { cookie: customer.cookie });
+  assert.equal(initial.data.license.bound_domain, null);
+  const noCsrf = await app.send('/web/customer/domain/bind', {
+    method: 'POST', cookie: customer.cookie, body: { domain: 'https://WWW.Flow.Example.com/' },
+  });
+  assert.equal(noCsrf.status, 403);
+  const bound = await app.send('/web/customer/domain/bind', {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { domain: 'https://WWW.Flow.Example.com/' },
+  });
+  assert.equal(bound.status, 200);
+  assert.equal(bound.data.bound_domain, 'flow.example.com');
+
+  const requested = await app.send('/web/customer/domain-migrations', {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { domain: 'next.example.com', reason: '客户正式业务域名需要按计划完成迁移' },
+  });
+  assert.equal(requested.status, 201);
+  assert.equal(requested.data.status, 'pending');
+  const overview = await app.send('/web/customer/overview', { cookie: customer.cookie });
+  assert.equal(overview.data.domain_migration.requested_domain, 'next.example.com');
+
+  const forbidden = await app.send(`/web/admin/domain-migrations/${requested.data.id}/review`, {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { decision: 'approved' },
+  });
+  assert.equal(forbidden.status, 401);
+  const adminOverview = await app.send('/web/admin/overview', { cookie: owner.cookie });
+  assert.ok(adminOverview.data.domain_migrations.some((item) => item.id === requested.data.id && item.status === 'pending'));
+
+  const approved = await app.send(`/web/admin/domain-migrations/${requested.data.id}/review`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { decision: 'approved', review_note: '已核验迁移窗口' },
+  });
+  assert.equal(approved.status, 200);
+  assert.equal(approved.data.bound_domain, 'next.example.com');
+  assert.equal(approved.data.generation, 2);
+  const after = await app.send('/web/customer/overview', { cookie: customer.cookie });
+  assert.equal(after.data.license.bound_domain, 'next.example.com');
+  assert.equal(after.data.domain_migration, null);
+});
+
 test('release metadata and update window allow old published builds but reject newer releases', async (t) => {
   const app = await fixture(t, '2026-09-20T08:00:00.000Z');
   addPublishedVersion(app, {
@@ -205,7 +254,7 @@ test('release metadata and update window allow old published builds but reject n
   assert.equal(newBuild.data.error.code, 'UPDATE_WINDOW_EXPIRED');
 });
 
-test('activation requires both matching fixed license Key and one-time install Key', async (t) => {
+test('安装解锁与正式激活必须分两次提交，禁止双 Key 一步激活', async (t) => {
   const app = await fixture(t);
   const licensed = app.service.issueLicense({ customerRef: 'ORDER-DOUBLE-KEY', domain: 'activate.example.com' });
   const unrelated = app.service.issueLicense({ customerRef: 'ORDER-OTHER', domain: 'other.example.com' });
@@ -215,22 +264,52 @@ test('activation requires both matching fixed license Key and one-time install K
     });
     return app.service.claimBuild({ buildTicket: ticket.buildTicket });
   }
-  function activate(build, licenseKey, installationId) {
-    return app.send('/api/v1/activations', {
+  function unlock(build, installationId) {
+    return app.send('/api/v1/install-unlocks', {
       method: 'POST', body: {
-        ...(licenseKey === undefined ? {} : { license_key: licenseKey }),
         install_key: build.installKey, build_id: build.buildId,
         package_proof: build.packageSecret, domain: 'activate.example.com',
         backend_url: 'https://activate.example.com', installation_id: installationId,
       },
     });
   }
+  function activate(build, receipt, licenseKey, installationId) {
+    return app.send('/api/v1/activations', {
+      method: 'POST', body: {
+        ...(licenseKey === undefined ? {} : { license_key: licenseKey }),
+        ...(receipt ? {
+          install_receipt_id: receipt.install_receipt_id,
+          install_receipt_secret: receipt.install_receipt_secret,
+        } : {}),
+        build_id: build.buildId,
+        package_proof: build.packageSecret, domain: 'activate.example.com',
+        backend_url: 'https://activate.example.com', installation_id: installationId,
+      },
+    });
+  }
   const build = makeBuild();
-  const missing = await activate(build, undefined, 'installation_missing_key_1');
-  assert.ok(missing.status >= 400 && missing.status < 500, `missing fixed Key: ${missing.status}`);
-  const wrong = await activate(build, unrelated.licenseKey, 'installation_wrong_key_2');
+  const direct = await app.send('/api/v1/activations', {
+    method: 'POST', body: {
+      install_key: build.installKey, license_key: licensed.licenseKey,
+      build_id: build.buildId, package_proof: build.packageSecret,
+      domain: 'activate.example.com', backend_url: 'https://activate.example.com',
+      installation_id: 'installation_direct_shortcut_1',
+    },
+  });
+  assert.equal(direct.status, 400);
+  assert.equal(direct.data.error.code, 'INSTALL_RECEIPT_REQUIRED');
+
+  const unlocked = await unlock(build, 'installation_two_stage_2');
+  assert.equal(unlocked.status, 201);
+  assert.match(unlocked.data.install_receipt_id, /^irc_/);
+  assert.equal(app.database.prepare('SELECT COUNT(*) AS count FROM activations').get().count, 0);
+
+  const missing = await activate(build, unlocked.data, undefined, 'installation_two_stage_2');
+  assert.equal(missing.status, 400);
+  assert.equal(missing.data.error.code, 'LICENSE_KEY_REQUIRED');
+  const wrong = await activate(build, unlocked.data, unrelated.licenseKey, 'installation_two_stage_2');
   assert.ok(wrong.status >= 400 && wrong.status < 500, `unrelated fixed Key: ${wrong.status}`);
-  const correct = await activate(build, licensed.licenseKey, 'installation_correct_key_3');
+  const correct = await activate(build, unlocked.data, licensed.licenseKey, 'installation_two_stage_2');
   assert.equal(correct.status, 201);
   assert.match(correct.data.activation_token, /^[^.]+\.[^.]+\.[^.]+$/);
 });
@@ -401,6 +480,12 @@ test('已有 SQLite 数据库自动追加新字段并保留原管理员身份', 
       assert.equal(owner.is_owner, 1);
       assert.ok(upgraded.prepare('PRAGMA table_info(source_versions)').all().some((column) => column.name === 'release_notes'));
       assert.ok(upgraded.prepare('PRAGMA table_info(build_jobs)').all().some((column) => column.name === 'intent'));
+      assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'install_receipts'").get());
+      assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'domain_migration_requests'").get());
+      assert.ok(upgraded.prepare('PRAGMA table_info(licenses)').all().some((column) => column.name === 'max_activations'));
+      const migration = upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-baseline'").get();
+      assert.ok(migration?.applied_at);
+      assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-domain-normalization'").get());
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

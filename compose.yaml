@@ -25,6 +25,8 @@ services:
       - appgog-license-config:/app/runtime/license
       - appgog-build-config:/app/runtime/build
       - appgog-worker-config:/app/runtime/worker
+      - appgog-caddy-data:/app/runtime/caddy-data
+      - appgog-caddy-config:/app/runtime/caddy-config
 
   license-center:
     <<: *app
@@ -71,6 +73,16 @@ services:
   build-worker:
     <<: *app
     command: ["node", "apps/build-worker/src/server.js"]
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: "1.5"
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
     depends_on:
       license-center:
         condition: service_healthy
@@ -80,6 +92,32 @@ services:
       - appgog-worker-config:/app/runtime/worker:ro
       - appgog-artifacts:/app/var/artifacts
 
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      license-center:
+        condition: service_healthy
+      build-center:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - appgog-caddy-data:/data
+      - appgog-caddy-config:/config
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
 volumes:
   appgog-db:
   appgog-keys:
@@ -88,3 +126,5 @@ volumes:
   appgog-license-config:
   appgog-build-config:
   appgog-worker-config:
+  appgog-caddy-data:
+  appgog-caddy-config:

@@ -17,8 +17,6 @@ export function publicBuildJob(job) {
     version: job.requested_version,
     intent: job.intent ?? 'install',
     base_version: job.base_version ?? null,
-    intent: job.intent ?? 'install',
-    base_version: job.base_version ?? null,
     domain: job.requested_domain,
     source_kind: job.source_kind,
     status: job.status,

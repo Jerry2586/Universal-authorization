@@ -11,6 +11,7 @@ export function canonicalizeDomain(input) {
     host = host.split('/')[0].split(':')[0];
   }
   host = domainToASCII(host.replace(/^\.+|\.+$/g, ''));
+  if (host.startsWith('www.') && host.slice(4).includes('.')) host = host.slice(4);
   invariant(host && (isIP(host) || host.includes('.')), 'DOMAIN_INVALID', '授权域名格式无效');
   return host;
 }

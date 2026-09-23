@@ -17,7 +17,7 @@ function secret(bytes = 48) { return randomBytes(bytes).toString('base64url'); }
 function line(key, value) { return `${key}=${String(value).replaceAll('\r', '').replaceAll('\n', '')}`; }
 
 if (args.includes('--help')) {
-  console.log(`APPGOG CMS 安装配置器
+  console.log(`APPGOG打包授权系统 安装配置器
 
 用法：
   npm run cms:install -- --role all-in-one
@@ -30,7 +30,7 @@ if (args.includes('--help')) {
   --output          环境文件路径，默认 .env
   --public-url      本服务公开地址
   --license-url     授权中心地址（独立打包中心和 Worker 必填）
-  --node-token      在授权中心“CMS 与节点”创建的节点凭证
+  --node-token      在授权中心“系统与节点”创建的节点凭证
   --admin-user      首个管理员账号，默认 admin
   --admin-password  首个管理员密码；留空时自动生成
   --force           覆盖已有环境文件`);
@@ -70,6 +70,7 @@ if (role === 'all-in-one' || role === 'license-center') {
     line('ACTIVATION_TOKEN_TTL_SECONDS', '604800'),
     line('OFFLINE_GRACE_SECONDS', '2592000'),
     line('BUILD_TICKET_TTL_SECONDS', '900'),
+    line('DOWNLOAD_TICKET_TTL_SECONDS', '300'),
     line('WEB_SESSION_TTL_SECONDS', '28800'),
     line('MAX_SOURCE_UPLOAD_BYTES', '134217728'),
     line('EMBEDDED_WORKER', role === 'all-in-one' ? 'true' : 'false'),
@@ -92,7 +93,7 @@ if (role === 'all-in-one' || role === 'license-center') {
 }
 
 writeFileSync(output, `${values.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
-console.log(`APPGOG CMS 配置已写入：${output}`);
+console.log(`APPGOG打包授权系统配置已写入：${output}`);
 console.log(`安装角色：${role}`);
 if (generatedPassword) {
   console.log(`管理员账号：${option('admin-user', 'admin')}`);

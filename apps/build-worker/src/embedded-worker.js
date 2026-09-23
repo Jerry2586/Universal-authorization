@@ -18,6 +18,8 @@ export function startEmbeddedWorker({ portal, buildEngine, artifactStore, worker
         buildId: leased.build.buildId,
         packageId: leased.build.packageId,
         packageSecret: leased.build.packageSecret,
+        packageManifestToken: leased.build.packageManifestToken,
+        watermark: leased.build.watermark,
         domain: leased.build.domain,
       });
       portal.updateBuildProgress(workerId, leased.job.id, { progress: 82, message: '正在生成可安装 ZIP' });
@@ -28,6 +30,7 @@ export function startEmbeddedWorker({ portal, buildEngine, artifactStore, worker
         artifact_ref: artifactRef,
         artifact_sha256: result.sha256,
         install_key: leased.build.installKey,
+        package_proof: leased.build.packageSecret,
       });
     } catch (error) {
       if (leased?.job?.id) {

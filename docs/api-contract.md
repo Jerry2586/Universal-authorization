@@ -16,19 +16,23 @@
 | `POST /web/admin/login` | 管理员账号密码 | 输入 `{ "username": "...", "password": "..." }` 登录 |
 | `GET /web/session?actor=admin\|customer` | 对应已登录会话 | 当前身份和 CSRF Token；打包中心仅允许 customer |
 | `POST /web/logout?actor=admin\|customer` | 对应已登录会话 | 退出并清除该身份 Cookie，不影响另一身份 |
-| `GET /web/customer/overview` | 客户 | 当前授权、可用版本、最近构建 |
+| `GET /web/customer/overview` | 客户 | 当前授权、过去 24 小时已用/剩余构建额度、可用版本、最近构建 |
+| `POST /web/customer/domain/bind` | 客户 | 首次绑定域名；仅未绑定状态可执行，输入 `{ "domain": "example.com" }` |
+| `POST /web/customer/domain-migrations` | 客户 | 提交受控域名迁移申请，输入新域名和 8–500 字迁移原因 |
 | `POST /web/customer/builds` | 客户 | 输入 `{ "version": "1.0.0", "domain": "demo.example.com" }` 创建任务 |
 | `GET /web/customer/builds/{id}` | 所属客户 | 任务状态、成品 SHA-256 和本次 Install Key |
-| `GET /web/customer/builds/{id}/download` | 所属客户 | 下载已完成 ZIP；返回 `X-Appgog-Sha256` |
+| `POST /web/customer/builds/{id}/download-ticket` | 所属客户 + CSRF | 创建约 5 分钟有效、不可猜测并绑定当前会话和构建任务的下载票据 |
+| `GET /web/customer/builds/{id}/download?ticket=...` | 所属客户 + 有效票据 | 下载已完成 ZIP；返回 `X-Appgog-Sha256` |
 | `GET /web/admin/overview` | 管理员 | 统计、授权、版本、构建、激活与审计 |
 | `POST /web/admin/licenses` | 管理员 | 签发长期固定 Key；明文 Key 只在本次响应中显示 |
 | `POST /web/admin/versions` | 管理员 | 登记尚未发布的草稿版本 |
 | `POST /web/admin/versions/upload?product_code=appgog&version=1.0.0&display_name=APPGOG` | 管理员 | 请求体为 ZIP 原始字节，`Content-Type: application/zip`；检查并发布可安装主题版本 |
 | `POST /web/admin/licenses/{id}/rotate-key` | 管理员 | 轮换固定 Key，返回只显示一次的新 Key |
 | `POST /web/admin/licenses/{id}/domain` | 管理员 | 输入 `{ "domain": "new.example.com" }` 换绑域名 |
+| `POST /web/admin/domain-migrations/{id}/review` | 授权管理员 | 输入 `{ "decision": "approved\|rejected", "review_note": "..." }` 审批客户迁移申请 |
 | `POST /web/admin/licenses/{id}/status` | 管理员 | 输入 `{ "status": "active" }`，也支持 `suspended`、`revoked` |
 
-当前构建下载要求客户会话，成品引用不直接暴露为公共静态 URL。`Install Key` 在已完成构建详情中可再次查看；它只有首次成功激活可用一次，不应把“只使用一次”误解为“只展示一次”。
+当前构建下载同时要求客户会话和短期 HMAC 下载票据；票据绑定会话 ID、构建任务、随机 nonce 和过期时间，成品引用不直接暴露为公共静态 URL。`Install Key` 在已完成构建详情中可再次查看；它只有首次成功安装解锁可用一次，不应把“只使用一次”误解为“只展示一次”。域名迁移批准后 License generation 增加，未使用 Install Receipt 被撤销，旧激活下次刷新时按域名迁移失效。
 
 ## 管理自动化接口
 
@@ -46,6 +50,8 @@
 }
 ```
 
+`domain` 可省略；此时客户登录打包中心后必须先执行首次域名绑定，绑定完成前不能创建构建。
+
 ## 构建协议
 
 客户页面推荐使用 `/web/customer/builds`，队列自动完成后续构建。以下是给可信集成使用的底层协议：
@@ -59,14 +65,14 @@ Worker 内部队列接口均使用 `Authorization: Bearer <WORKER_TOKEN>`：
 |---|---|
 | `POST /api/v1/worker/jobs/lease` | 输入 `worker_id`，租约下一任务；无任务时返回 `{ "task": null }` |
 | `POST /api/v1/worker/jobs/{id}/progress` | 输入 `worker_id`、`progress`、`message` 更新进度 |
-| `POST /api/v1/worker/jobs/{id}/complete` | 输入 `worker_id`、`build_id`、`artifact_ref`、`artifact_sha256`、`install_key`；服务端验证真实 ZIP 和租约 |
+| `POST /api/v1/worker/jobs/{id}/complete` | 输入 `worker_id`、`build_id`、`artifact_ref`、`artifact_sha256`、`install_key`、`package_proof`；服务端验证租约、整包 SHA-256、Install Key、Package Secret、签名包身份、AES-GCM 加密身份载荷、随机保护路径、Source Map 清理、逐文件摘要和 HMAC |
 | `POST /api/v1/worker/jobs/{id}/fail` | 输入 `worker_id`、`code`、`message` 失败回滚 |
 
-## 安装后激活
+## 两阶段安装与激活
 
 `GET /api/v1/public-key` 返回 Ed25519 公钥。安装后的主题使用公钥本地验签。
 
-`POST /api/v1/activations`：
+第一阶段调用 `POST /api/v1/install-unlocks`，只提交一次性 Install Key：
 
 ```json
 {
@@ -79,7 +85,24 @@ Worker 内部队列接口均使用 `Authorization: Bearer <WORKER_TOKEN>`：
 }
 ```
 
-成功后返回 `activation_id`、`activation_token`、`refresh_secret`、`expires_at`。Install Key 成功激活后永久消费。客户可控服务器上的实际 APPGOG 服务端应在不可公开访问的目录安全保存刷新 Secret 和安装身份。
+成功后立即消费 Install Key，并返回 `install_receipt_id`、`install_receipt_secret`、`unlocked_at`。此时只完成安装解锁，APPGOG 正式功能仍必须保持锁定。
+
+第二阶段调用 `POST /api/v1/activations`，只由用户输入长期固定 License Key；Install Receipt 由本地安装状态自动带上：
+
+```json
+{
+  "license_key": "APPGOG-XXXX-XXXX-XXXX-XXXX",
+  "install_receipt_id": "irc_...",
+  "install_receipt_secret": "IRC_...",
+  "build_id": "bld_...",
+  "package_proof": "PKG_...",
+  "domain": "demo.example.com",
+  "backend_url": "https://panel.example.com",
+  "installation_id": "installation_random_value"
+}
+```
+
+成功后返回 `activation_id`、`activation_token`、`refresh_secret`、`expires_at`。服务端会再次核对 License、Install Receipt、Build/Package、域名、Origin、Installation ID 和 generation。不存在同时提交 Install Key 与固定 License Key 完成全部激活的兼容接口。客户可控服务器上的实际 APPGOG 服务端应在不可公开访问的目录安全保存 Install Receipt、刷新 Secret 和安装身份。
 
 `POST /api/v1/activations/refresh`：
 

@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { DomainError, invariant } from '../../../packages/core/src/errors.js';
 import { hashPassword, verifyPassword } from '../../../packages/core/src/password.js';
 import { hashSecret } from '../../../packages/core/src/security.js';
@@ -80,6 +81,52 @@ function safeEqual(left, right) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function trustedProxyAddress(address) {
+  const value = String(address ?? '').toLowerCase().replace(/^::ffff:/, '');
+  if (value === '::1' || value === '127.0.0.1' || value.startsWith('10.') || value.startsWith('192.168.')) return true;
+  const match = value.match(/^172\.(\d+)\./);
+  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return true;
+  return value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80:');
+}
+
+function clientAddress(request) {
+  const direct = String(request.socket.remoteAddress ?? 'unknown');
+  if (!trustedProxyAddress(direct)) return direct;
+  const forwarded = String(request.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
+  return isIP(forwarded) ? forwarded : direct;
+}
+
+function issueDownloadTicket(config, session, jobId) {
+  const expiresAt = Date.now() + (config.downloadTicketTtlSeconds ?? 300) * 1000;
+  const payload = Buffer.from(JSON.stringify({
+    v: 1,
+    j: jobId,
+    s: session.id,
+    e: Math.floor(expiresAt / 1000),
+    n: randomBytes(12).toString('base64url'),
+  }), 'utf8').toString('base64url');
+  const signature = createHmac('sha256', config.sessionSecret)
+    .update(`appgog-download:${payload}`, 'utf8')
+    .digest('base64url');
+  return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+function verifyDownloadTicket(config, token, session, jobId) {
+  const [payload, signature, extra] = String(token ?? '').split('.');
+  invariant(payload && signature && !extra, 'DOWNLOAD_TICKET_REQUIRED', '下载地址无效或已过期，请重新领取', 403);
+  const expected = createHmac('sha256', config.sessionSecret)
+    .update(`appgog-download:${payload}`, 'utf8')
+    .digest('base64url');
+  invariant(safeEqual(signature, expected), 'DOWNLOAD_TICKET_INVALID', '下载地址无效或已被篡改', 403);
+  let claims;
+  try { claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); }
+  catch { throw new DomainError('DOWNLOAD_TICKET_INVALID', '下载地址无效或已被篡改', 403); }
+  invariant(claims.v === 1 && claims.j === jobId && claims.s === session.id,
+    'DOWNLOAD_TICKET_INVALID', '下载地址不属于当前登录会话或构建任务', 403);
+  invariant(Number.isSafeInteger(claims.e) && claims.e > Math.floor(Date.now() / 1000),
+    'DOWNLOAD_TICKET_EXPIRED', '下载地址已过期，请重新领取', 403);
+}
+
 function requireToken(request, expected, role) {
   if (!safeEqual(bearer(request), expected)) {
     throw new DomainError('UNAUTHORIZED', `${role} 凭证无效`, 401);
@@ -144,7 +191,7 @@ function serveStatic(pathname, response) {
 function publicCorsHeaders(request) {
   const pathname = new URL(request.url, 'http://localhost').pathname;
   const releaseFeed = pathname === '/api/v1/releases/latest';
-  if (!releaseFeed && pathname !== '/api/v1/activations' && pathname !== '/api/v1/activations/refresh') return {};
+  if (!releaseFeed && pathname !== '/api/v1/install-unlocks' && pathname !== '/api/v1/activations' && pathname !== '/api/v1/activations/refresh') return {};
   const origin = request.headers.origin;
   if (!origin) return {};
   try {
@@ -232,7 +279,14 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'GET' && url.pathname === '/health') {
-        return json(response, 200, { ok: true, service: 'appgog-license-api', version: 1 });
+        const stats = portal.repository.dashboardStats(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+        return json(response, 200, {
+          ok: true,
+          service: 'appgog-license-api',
+          version: '1.0.0',
+          database: 'ok',
+          queue: { pending: stats.queuedJobs },
+        });
       }
 
       if (method === 'GET' && url.pathname === '/api/v1/public-key') {
@@ -248,7 +302,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       if (method === 'POST' && url.pathname === '/web/customer/login') {
         invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('customer_login_enabled'),
           'BUILD_CENTER_MAINTENANCE', '客户打包中心正在维护', 503);
-        rateLimit(`customer-login:${request.socket.remoteAddress}`, 12, 15 * 60 * 1000);
+        rateLimit(`customer-login:${clientAddress(request)}`, 12, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = sessions.loginCustomer(body.license_key);
         return json(response, 200, {
@@ -258,9 +312,9 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'POST' && url.pathname === '/web/admin/login') {
-        rateLimit(`admin-login:${request.socket.remoteAddress}`, 8, 15 * 60 * 1000);
+        rateLimit(`admin-login:${clientAddress(request)}`, 8, 15 * 60 * 1000);
         const body = await readJson(request);
-        const result = sessions.loginAdmin(body.username, body.password, request.socket.remoteAddress);
+        const result = sessions.loginAdmin(body.username, body.password, clientAddress(request));
         return json(response, 200, { actor: 'admin', username: result.admin.username,
           display_name: result.admin.display_name, role: result.admin.role, permissions: result.admin.permissions,
           csrf_token: result.csrfToken }, {
@@ -301,6 +355,18 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         return json(response, 201, portal.enqueueCustomerBuild(session, body));
       }
 
+      if (method === 'POST' && url.pathname === '/web/customer/domain/bind') {
+        const session = requireWebSession(request, sessions, 'customer', true);
+        const body = await readJson(request);
+        return json(response, 200, portal.bindCustomerDomain(session, body));
+      }
+
+      if (method === 'POST' && url.pathname === '/web/customer/domain-migrations') {
+        const session = requireWebSession(request, sessions, 'customer', true);
+        const body = await readJson(request);
+        return json(response, 201, portal.requestCustomerDomainMigration(session, body));
+      }
+
       const customerBuildMatch = url.pathname.match(/^\/web\/customer\/builds\/([^/]+)$/);
       if (method === 'GET' && customerBuildMatch) {
         const session = requireWebSession(request, sessions, 'customer');
@@ -308,8 +374,21 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       const customerDownloadMatch = url.pathname.match(/^\/web\/customer\/builds\/([^/]+)\/download$/);
+      const customerDownloadTicketMatch = url.pathname.match(/^\/web\/customer\/builds\/([^/]+)\/download-ticket$/);
+      if (method === 'POST' && customerDownloadTicketMatch) {
+        const session = requireWebSession(request, sessions, 'customer', true);
+        portal.artifactForDownload(session, customerDownloadTicketMatch[1]);
+        rateLimit(`download-ticket:${session.id}`, 60, 15 * 60 * 1000);
+        const ticket = issueDownloadTicket(config, session, customerDownloadTicketMatch[1]);
+        return json(response, 201, {
+          download_url: `/web/customer/builds/${encodeURIComponent(customerDownloadTicketMatch[1])}/download?ticket=${encodeURIComponent(ticket.token)}`,
+          expires_at: ticket.expiresAt,
+        });
+      }
+
       if (method === 'GET' && customerDownloadMatch) {
         const session = requireWebSession(request, sessions, 'customer');
+        verifyDownloadTicket(config, url.searchParams.get('ticket'), session, customerDownloadMatch[1]);
         const artifact = portal.artifactForDownload(session, customerDownloadMatch[1]);
         const size = artifactStore.size(artifact.key);
         response.writeHead(200, {
@@ -325,7 +404,10 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         const admin = sessions.requireAdmin(sessionToken(request, 'admin'), 'dashboard.view');
         const overview = portal.adminOverview();
         if (!admin.permissions.includes('*')) {
-          if (!admin.permissions.includes('license.view')) overview.licenses = [];
+          if (!admin.permissions.includes('license.view')) {
+            overview.licenses = [];
+            overview.domain_migrations = [];
+          }
           if (!admin.permissions.includes('version.view')) overview.versions = [];
           if (!admin.permissions.includes('build.view')) overview.builds = [];
           if (!admin.permissions.includes('activation.view')) overview.activations = [];
@@ -398,6 +480,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
           productCode: body.product_code, customerRef: body.customer_ref,
           domain: body.domain, updateUntil: body.update_until,
           maxBuildsPerDay: body.max_builds_per_day,
+          maxActivations: body.max_activations,
           actorId: admin.actor_id,
         });
         return json(response, 201, {
@@ -469,6 +552,18 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         return json(response, 200, { license_id: license.id, bound_domain: license.bound_domain, generation: license.generation });
       }
 
+      const domainMigrationReviewMatch = url.pathname.match(/^\/web\/admin\/domain-migrations\/([^/]+)\/review$/);
+      if (method === 'POST' && domainMigrationReviewMatch) {
+        const admin = requireWebSession(request, sessions, 'admin', true, 'license.manage');
+        const body = await readJson(request);
+        return json(response, 200, portal.reviewDomainMigration({
+          requestId: domainMigrationReviewMatch[1],
+          decision: body.decision,
+          reviewNote: body.review_note,
+          actorId: admin.actor_id,
+        }));
+      }
+
       const webStatusMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/status$/);
       if (method === 'POST' && webStatusMatch) {
         const admin = requireWebSession(request, sessions, 'admin', true, 'license.manage');
@@ -484,6 +579,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
           productCode: body.product_code, customerRef: body.customer_ref,
           domain: body.domain, updateUntil: body.update_until,
           maxBuildsPerDay: body.max_builds_per_day,
+          maxActivations: body.max_activations,
         });
         return json(response, 201, {
           license_id: result.license.id, license_key: result.licenseKey,
@@ -504,6 +600,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'POST' && url.pathname === '/api/v1/builds/authorize') {
+        rateLimit(`build-authorize:${clientAddress(request)}`, 30, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = service.authorizeBuild({ licenseKey: body.license_key, version: body.version, domain: body.domain });
         return json(response, 201, {
@@ -571,12 +668,31 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         return json(response, 200, portal.failBuild(workerId, failMatch[1], body));
       }
 
+      if (method === 'POST' && url.pathname === '/api/v1/install-unlocks') {
+        invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
+        rateLimit(`install-unlock:${clientAddress(request)}`, 30, 15 * 60 * 1000);
+        const body = await readJson(request);
+        const result = service.unlockInstall({
+          installKey: body.install_key, buildId: body.build_id,
+          packageProof: body.package_proof, domain: body.domain,
+          backendUrl: body.backend_url, installationId: body.installation_id,
+        });
+        return json(response, 201, {
+          install_receipt_id: result.receiptId,
+          install_receipt_secret: result.receiptSecret,
+          unlocked_at: result.unlockedAt,
+        }, corsHeaders);
+      }
+
       if (method === 'POST' && url.pathname === '/api/v1/activations') {
         invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
-        rateLimit(`activate:${request.socket.remoteAddress}`, 30, 15 * 60 * 1000);
+        rateLimit(`activate:${clientAddress(request)}`, 30, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = service.activate({
-          installKey: body.install_key, licenseKey: body.license_key, buildId: body.build_id,
+          licenseKey: body.license_key,
+          installReceiptId: body.install_receipt_id,
+          installReceiptSecret: body.install_receipt_secret,
+          buildId: body.build_id,
           packageProof: body.package_proof, domain: body.domain,
           backendUrl: body.backend_url, installationId: body.installation_id,
         });
@@ -588,7 +704,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
 
       if (method === 'POST' && url.pathname === '/api/v1/activations/refresh') {
         invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
-        rateLimit(`refresh:${request.socket.remoteAddress}`, 120, 15 * 60 * 1000);
+        rateLimit(`refresh:${clientAddress(request)}`, 120, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = service.refresh({
           activationId: body.activation_id, refreshSecret: body.refresh_secret,

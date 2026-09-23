@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalizeBackendOrigin, canonicalizeDomain } from '../../../packages/core/src/canonicalize.js';
 import { invariant } from '../../../packages/core/src/errors.js';
 import {
-  keyPrefix, newBuildTicket, newId, newInstallKey, newLicenseKey, newPackageSecret, newRefreshSecret,
+  keyPrefix, newBuildTicket, newId, newInstallKey, newInstallReceiptSecret, newLicenseKey, newPackageSecret, newRefreshSecret,
 } from '../../../packages/core/src/identifiers.js';
 import { hashSecret, secretMatches } from '../../../packages/core/src/security.js';
 import { signCompactToken } from '../../../packages/core/src/signing.js';
@@ -46,6 +46,21 @@ export function createLicenseService({ database, repository, config, privateKey,
       iat: Math.floor(nowDate.getTime() / 1000),
       exp: Math.floor(nowDate.getTime() / 1000) + config.activationTokenTtlSeconds,
       offline_until: Math.floor(nowDate.getTime() / 1000) + config.activationTokenTtlSeconds + (config.offlineGraceSeconds ?? 2592000),
+      capabilities: ['settings:read', 'settings:write', 'theme:enable', 'xboard:connect', 'protected:read', 'updates:read'],
+    };
+  }
+
+  function packageManifestPayload({ buildId, packageId, product, version, domain, watermark }, nowDate) {
+    return {
+      iss: config.publicBaseUrl,
+      typ: 'package-manifest',
+      product,
+      build_id: buildId,
+      package_id: packageId,
+      version,
+      domain,
+      watermark,
+      iat: Math.floor(nowDate.getTime() / 1000),
     };
   }
 
@@ -72,10 +87,11 @@ export function createLicenseService({ database, repository, config, privateKey,
       };
     },
 
-    issueLicense({ productCode = 'appgog', customerRef, domain = null, updateUntil = null, maxBuildsPerDay = 3, actorId = null }) {
+    issueLicense({ productCode = 'appgog', customerRef, domain = null, updateUntil = null, maxBuildsPerDay = 3, maxActivations = 1, actorId = null }) {
       const product = this.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       invariant(customerRef?.trim(), 'CUSTOMER_REQUIRED', '必须提供客户编号');
       invariant(Number.isInteger(maxBuildsPerDay) && maxBuildsPerDay >= 1 && maxBuildsPerDay <= 50, 'BUILD_LIMIT_INVALID', '每日打包上限必须为 1 到 50 的整数');
+      invariant(Number.isInteger(maxActivations) && maxActivations >= 1 && maxActivations <= 20, 'ACTIVATION_LIMIT_INVALID', '激活数量上限必须为 1 到 20 的整数');
       if (updateUntil) invariant(!Number.isNaN(new Date(updateUntil).getTime()), 'UPDATE_DATE_INVALID', '更新到期时间无效');
       const plainKey = newLicenseKey(product.code);
       const now = iso(clock);
@@ -89,6 +105,7 @@ export function createLicenseService({ database, repository, config, privateKey,
         boundDomain: domain ? canonicalizeDomain(domain) : null,
         updateUntil,
         maxBuildsPerDay,
+        maxActivations,
         now,
       });
       repository.audit({ actorType: 'admin', actorId, action: 'license.issued', subjectType: 'license', subjectId: license.id, now });
@@ -132,6 +149,72 @@ export function createLicenseService({ database, repository, config, privateKey,
       });
     },
 
+    bindLicenseDomain({ licenseId, domain, actorId = licenseId }) {
+      const normalized = canonicalizeDomain(domain);
+      const now = iso(clock);
+      return transaction(database, () => {
+        const current = repository.licenseById(licenseId);
+        invariant(current, 'LICENSE_NOT_FOUND', '授权不存在', 404);
+        invariant(current.status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(!current.bound_domain, 'DOMAIN_ALREADY_BOUND', '授权域名已经绑定，换域名必须提交迁移申请', 409);
+        const license = repository.bindDomain(licenseId, normalized, now);
+        invariant(license.bound_domain === normalized, 'DOMAIN_BIND_RACE', '授权域名正在被另一个请求绑定', 409);
+        repository.audit({
+          actorType: 'customer', actorId, action: 'license.domain_bound', subjectType: 'license', subjectId: licenseId,
+          metadata: { domain: normalized }, now,
+        });
+        return license;
+      });
+    },
+
+    requestDomainMigration({ licenseId, domain, reason = '', actorId = licenseId }) {
+      const normalized = canonicalizeDomain(domain);
+      const note = String(reason ?? '').trim();
+      invariant(note.length >= 8 && note.length <= 500, 'DOMAIN_MIGRATION_REASON_INVALID', '域名迁移原因必须为 8–500 个字符');
+      const now = iso(clock);
+      return transaction(database, () => {
+        const license = repository.licenseById(licenseId);
+        invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);
+        invariant(license.status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(license.bound_domain, 'DOMAIN_NOT_BOUND', '请先完成首次域名绑定', 409);
+        invariant(license.bound_domain !== normalized, 'DOMAIN_UNCHANGED', '新域名与当前绑定域名相同', 409);
+        invariant(!repository.pendingDomainMigrationByLicense(licenseId), 'DOMAIN_MIGRATION_PENDING', '已有待审核的域名迁移申请', 409);
+        const request = repository.createDomainMigration({
+          licenseId, previousDomain: license.bound_domain, requestedDomain: normalized, reason: note, now,
+        });
+        repository.audit({
+          actorType: 'customer', actorId, action: 'license.domain_migration_requested',
+          subjectType: 'domain_migration', subjectId: request.id,
+          metadata: { previous_domain: license.bound_domain, requested_domain: normalized }, now,
+        });
+        return request;
+      });
+    },
+
+    reviewDomainMigration({ requestId, decision, reviewerId, reviewNote = '' }) {
+      invariant(['approved', 'rejected'].includes(decision), 'DOMAIN_MIGRATION_DECISION_INVALID', '域名迁移审批结果无效');
+      const now = iso(clock);
+      return transaction(database, () => {
+        const request = repository.domainMigrationById(requestId);
+        invariant(request, 'DOMAIN_MIGRATION_NOT_FOUND', '域名迁移申请不存在', 404);
+        invariant(request.status === 'pending', 'DOMAIN_MIGRATION_REVIEWED', '域名迁移申请已经处理', 409);
+        invariant(request.license_status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(request.bound_domain === request.previous_domain, 'DOMAIN_MIGRATION_STALE', '授权域名已变化，请重新提交迁移申请', 409);
+        if (decision === 'approved') {
+          repository.changeLicenseDomain(request.license_id, request.requested_domain, now);
+          repository.revokeInstallReceiptsByLicense(request.license_id, now);
+        }
+        const reviewed = repository.decideDomainMigration(requestId, decision, reviewerId, String(reviewNote ?? '').trim().slice(0, 500), now);
+        invariant(reviewed, 'DOMAIN_MIGRATION_RACE', '域名迁移申请正在被另一个管理员处理', 409);
+        repository.audit({
+          actorType: 'admin', actorId: reviewerId, action: `license.domain_migration_${decision}`,
+          subjectType: 'domain_migration', subjectId: requestId,
+          metadata: { previous_domain: request.previous_domain, requested_domain: request.requested_domain }, now,
+        });
+        return { request: reviewed, license: repository.licenseById(request.license_id) };
+      });
+    },
+
     claimBuild({ buildTicket, artifactSha256 = null, installKeyTtlSeconds = null }) {
       const nowDate = clock();
       const now = nowDate.toISOString();
@@ -147,6 +230,7 @@ export function createLicenseService({ database, repository, config, privateKey,
         const installKey = newInstallKey();
         const buildId = newId('bld');
         const packageId = `pkg_${createHash('sha256').update(`${buildId}:${packageSecret}`).digest('hex').slice(0, 32)}`;
+        const watermark = createHash('sha256').update(`${ticket.license_id}:${buildId}:${packageId}`).digest('hex');
         const build = repository.createBuild({
           id: buildId,
           licenseId: ticket.license_id,
@@ -177,6 +261,10 @@ export function createLicenseService({ database, repository, config, privateKey,
           packageId,
           packageSecret,
           installKey,
+          watermark,
+          packageManifestToken: signCompactToken(packageManifestPayload({
+            buildId, packageId, product: ticket.product_code, version: build.version, domain: build.domain, watermark,
+          }, nowDate), privateKey),
         };
       });
     },
@@ -211,9 +299,8 @@ export function createLicenseService({ database, repository, config, privateKey,
       return this.claimBuild({ buildTicket });
     },
 
-    activate({ installKey, licenseKey, buildId, packageProof, domain, backendUrl, installationId }) {
+    unlockInstall({ installKey, buildId, packageProof, domain, backendUrl, installationId }) {
       invariant(installationId?.trim().length >= 12, 'INSTALLATION_ID_INVALID', '安装环境 ID 无效');
-      invariant(typeof licenseKey === 'string' && licenseKey.length >= 12, 'LICENSE_KEY_REQUIRED', '必须输入固定授权 Key');
       const normalizedDomain = canonicalizeDomain(domain);
       const backendOrigin = canonicalizeBackendOrigin(backendUrl);
       const nowDate = clock();
@@ -221,30 +308,79 @@ export function createLicenseService({ database, repository, config, privateKey,
       return transaction(database, () => {
         const keyRecord = repository.installKeyByHash(hashSecret(installKey, config.pepper));
         invariant(keyRecord, 'INSTALL_KEY_NOT_FOUND', '本次安装 Key 无效', 404);
-        const fixedLicense = repository.licenseByHash(hashSecret(licenseKey, config.pepper));
-        invariant(fixedLicense && fixedLicense.id === keyRecord.license_id, 'LICENSE_KEY_MISMATCH', '固定授权 Key 与本次安装包不匹配', 403);
         invariant(keyRecord.status === 'available', 'INSTALL_KEY_USED', '本次安装 Key 已经使用', 409);
         if (keyRecord.expires_at) invariant(new Date(keyRecord.expires_at) >= nowDate, 'INSTALL_KEY_EXPIRED', '本次安装 Key 已过期', 410);
         invariant(keyRecord.build_id === buildId, 'BUILD_MISMATCH', '安装 Key 与当前安装包不匹配', 403);
         invariant(keyRecord.domain === normalizedDomain && keyRecord.bound_domain === normalizedDomain, 'DOMAIN_MISMATCH', '当前域名与打包授权域名不一致', 403);
         invariant(keyRecord.license_status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
-        invariant(keyRecord.build_status !== 'revoked', 'BUILD_REVOKED', '当前安装包已被撤销', 403);
+        invariant(keyRecord.build_status === 'ready', 'BUILD_NOT_UNLOCKABLE', '当前安装包状态不允许安装解锁', 409);
         invariant(secretMatches(packageProof, repository.buildById(buildId).package_secret_hash, config.pepper), 'PACKAGE_PROOF_INVALID', '安装包身份校验失败', 403);
         invariant(repository.consumeInstallKey(keyRecord.id, now), 'INSTALL_KEY_RACE', '安装 Key 正在被另一个环境使用', 409);
+        invariant(repository.markBuildUnlocked(buildId), 'BUILD_UNLOCK_RACE', '当前安装包正在被另一个环境解锁', 409);
 
-        repository.supersedeActivations(keyRecord.license_id, normalizedDomain, now);
+        const receiptSecret = newInstallReceiptSecret();
+        const receipt = repository.createInstallReceipt({
+          id: newId('irc'), licenseId: keyRecord.license_id, buildId,
+          receiptSecretHash: hashSecret(receiptSecret, config.pepper),
+          domain: normalizedDomain, backendOrigin, installationId: installationId.trim(),
+          generation: keyRecord.license_generation, now,
+        });
+        repository.audit({
+          actorType: 'installation', actorId: receipt.id, action: 'installation.unlocked',
+          subjectType: 'install_receipt', subjectId: receipt.id,
+          metadata: { domain: normalizedDomain, backend_origin: backendOrigin, build_id: buildId }, now,
+        });
+        return { receiptId: receipt.id, receiptSecret, unlockedAt: now };
+      });
+    },
+
+    activate({ licenseKey, installReceiptId, installReceiptSecret, buildId, packageProof, domain, backendUrl, installationId }) {
+      invariant(installationId?.trim().length >= 12, 'INSTALLATION_ID_INVALID', '安装环境 ID 无效');
+      invariant(typeof licenseKey === 'string' && licenseKey.length >= 12, 'LICENSE_KEY_REQUIRED', '必须输入固定授权 Key');
+      invariant(typeof installReceiptId === 'string' && installReceiptId.startsWith('irc_'), 'INSTALL_RECEIPT_REQUIRED', '缺少有效的安装解锁凭证');
+      invariant(typeof installReceiptSecret === 'string' && installReceiptSecret.startsWith('IRC_'), 'INSTALL_RECEIPT_REQUIRED', '缺少有效的安装解锁凭证');
+      const normalizedDomain = canonicalizeDomain(domain);
+      const backendOrigin = canonicalizeBackendOrigin(backendUrl);
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const receipt = repository.installReceiptById(installReceiptId);
+        invariant(receipt, 'INSTALL_RECEIPT_NOT_FOUND', '安装解锁凭证不存在', 404);
+        invariant(secretMatches(installReceiptSecret, receipt.receipt_secret_hash, config.pepper), 'INSTALL_RECEIPT_INVALID', '安装解锁凭证无效', 401);
+        invariant(receipt.status === 'unlocked', 'INSTALL_RECEIPT_USED', '安装解锁凭证已用于正式激活', 409);
+        invariant(receipt.build_id === buildId, 'BUILD_MISMATCH', '安装解锁凭证与当前安装包不匹配', 403);
+        invariant(receipt.domain === normalizedDomain && receipt.bound_domain === normalizedDomain, 'DOMAIN_MISMATCH', '当前域名与安装解锁凭证不一致', 403);
+        invariant(receipt.backend_origin === backendOrigin, 'BACKEND_MISMATCH', 'Xboard 后台地址与安装解锁凭证不一致', 403);
+        invariant(receipt.installation_id === installationId.trim(), 'INSTALLATION_MISMATCH', '当前安装环境与安装解锁凭证不一致', 403);
+        invariant(receipt.build_status === 'package_unlocked', 'BUILD_NOT_UNLOCKED', '当前安装包尚未完成安装解锁', 409);
+        invariant(receipt.license_status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(receipt.generation === receipt.license_generation, 'LICENSE_ROTATED', '固定 Key 已轮换，请重新构建并安装', 403);
+        invariant(secretMatches(packageProof, receipt.package_secret_hash, config.pepper), 'PACKAGE_PROOF_INVALID', '安装包身份校验失败', 403);
+
+        const fixedLicense = repository.licenseByHash(hashSecret(licenseKey, config.pepper));
+        invariant(fixedLicense && fixedLicense.id === receipt.license_id, 'LICENSE_KEY_MISMATCH', '固定授权 Key 与当前安装包不匹配', 403);
+        invariant(fixedLicense.status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(fixedLicense.generation === receipt.generation, 'LICENSE_ROTATED', '固定 Key 已轮换，请重新构建并安装', 403);
+        const sameEnvironment = repository.activeActivationForEnvironment(
+          receipt.license_id, normalizedDomain, backendOrigin, installationId.trim(),
+        );
+        const activeCount = repository.countActiveActivationsForLicense(receipt.license_id);
+        invariant(sameEnvironment || activeCount < fixedLicense.max_activations, 'ACTIVATION_LIMIT_REACHED', '该授权已达到允许的激活数量', 409);
+        invariant(repository.activateInstallReceipt(receipt.id, now), 'INSTALL_RECEIPT_RACE', '安装解锁凭证正在被另一个请求使用', 409);
+
+        repository.supersedeActivations(receipt.license_id, normalizedDomain, backendOrigin, installationId.trim(), now);
         const refreshSecret = newRefreshSecret();
         const activation = repository.createActivation({
-          id: newId('act'), licenseId: keyRecord.license_id, buildId,
+          id: newId('act'), licenseId: receipt.license_id, buildId,
           domain: normalizedDomain, backendOrigin, installationId: installationId.trim(),
-          generation: keyRecord.license_generation,
+          generation: receipt.generation,
           refreshSecretHash: hashSecret(refreshSecret, config.pepper), now,
         });
         repository.markBuildActivated(buildId, now);
         repository.audit({
           actorType: 'installation', actorId: activation.id, action: 'activation.created',
           subjectType: 'activation', subjectId: activation.id,
-          metadata: { domain: normalizedDomain, backend_origin: backendOrigin, build_id: buildId }, now,
+          metadata: { domain: normalizedDomain, backend_origin: backendOrigin, build_id: buildId, install_receipt_id: receipt.id }, now,
         });
         return {
           activationId: activation.id,
@@ -262,6 +398,7 @@ export function createLicenseService({ database, repository, config, privateKey,
       invariant(activation, 'ACTIVATION_NOT_FOUND', '激活记录不存在', 404);
       invariant(activation.status === 'active', 'ACTIVATION_INACTIVE', '激活记录已失效', 403);
       invariant(activation.license_status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+      invariant(activation.domain === activation.bound_domain, 'LICENSE_DOMAIN_MISMATCH', '授权域名已经迁移，请重新打包并激活', 403);
       invariant(activation.license_generation === activation.generation, 'LICENSE_ROTATED', '固定 Key 已轮换，请重新打包并激活', 403);
       invariant(activation.domain === normalizedDomain && activation.installation_id === installationId, 'ENVIRONMENT_MISMATCH', '当前域名或安装环境与授权不匹配', 403);
       if (backendUrl) invariant(activation.backend_origin === canonicalizeBackendOrigin(backendUrl), 'BACKEND_MISMATCH', 'Xboard 后台地址与授权不匹配', 403);
@@ -278,7 +415,11 @@ export function createLicenseService({ database, repository, config, privateKey,
       invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);
       const plainKey = newLicenseKey(license.product_code);
       const now = iso(clock);
-      const updated = repository.rotateLicense(licenseId, keyPrefix(plainKey), hashSecret(plainKey, config.pepper), now);
+      const updated = transaction(database, () => {
+        const result = repository.rotateLicense(licenseId, keyPrefix(plainKey), hashSecret(plainKey, config.pepper), now);
+        repository.revokeInstallReceiptsByLicense(licenseId, now);
+        return result;
+      });
       repository.audit({ actorType: 'admin', actorId, action: 'license.key_rotated', subjectType: 'license', subjectId: licenseId, now });
       return { license: updated, licenseKey: plainKey };
     },
@@ -289,7 +430,11 @@ export function createLicenseService({ database, repository, config, privateKey,
       const normalized = canonicalizeDomain(domain);
       invariant(license.bound_domain !== normalized, 'DOMAIN_UNCHANGED', '新域名与当前绑定域名相同', 409);
       const now = iso(clock);
-      const updated = repository.changeLicenseDomain(licenseId, normalized, now);
+      const updated = transaction(database, () => {
+        const result = repository.changeLicenseDomain(licenseId, normalized, now);
+        repository.revokeInstallReceiptsByLicense(licenseId, now);
+        return result;
+      });
       repository.audit({
         actorType: 'admin', actorId, action: 'license.domain_changed', subjectType: 'license', subjectId: licenseId,
         metadata: { previous_domain: license.bound_domain, domain: normalized }, now,
@@ -303,7 +448,11 @@ export function createLicenseService({ database, repository, config, privateKey,
       invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);
       invariant(license.status !== 'revoked' || status === 'revoked', 'LICENSE_REVOKED_FINAL', '已撤销授权不能恢复', 409);
       const now = iso(clock);
-      const updated = repository.changeLicenseStatus(licenseId, status, now);
+      const updated = transaction(database, () => {
+        const result = repository.changeLicenseStatus(licenseId, status, now);
+        if (status === 'revoked') repository.revokeInstallReceiptsByLicense(licenseId, now);
+        return result;
+      });
       repository.audit({
         actorType: 'admin', actorId, action: `license.${status}`, subjectType: 'license', subjectId: licenseId,
         metadata: { previous_status: license.status }, now,

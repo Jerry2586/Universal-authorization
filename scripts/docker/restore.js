@@ -4,7 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { resolve, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-export const backupRoots = ['var/data', 'var/keys', 'var/artifacts', 'var/uploads', 'runtime/license', 'runtime/build', 'runtime/worker'];
+export const backupRoots = ['var/data', 'var/keys', 'var/artifacts', 'var/uploads', 'runtime/license', 'runtime/build', 'runtime/worker', 'runtime/caddy-data', 'runtime/caddy-config'];
 export function validateEntries(names, listing) {
   for (const name of names) {
     const clean = name.replace(/\/$/, '');

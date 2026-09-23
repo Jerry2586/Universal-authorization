@@ -43,7 +43,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
     cmsSettings() {
       const saved = repository.listSettings();
       return {
-        platform_name: saved.platform_name ?? 'APPGOG Licensing CMS',
+        platform_name: saved.platform_name ?? 'APPGOG打包授权系统',
         installation_role: config.role ?? (config.surface === 'combined' ? 'all-in-one' : 'license-center'),
         license_public_url: saved.license_public_url ?? config.publicBaseUrl,
         build_public_url: saved.build_public_url ?? config.buildCenterPublicUrl,
@@ -110,6 +110,8 @@ export function createPortalService({ repository, queue, licenseService, artifac
       const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
       const versions = repository.listActiveSourceVersions(license.product_code);
       const latestVersion = versions[0]?.version ?? null;
+      const migration = repository.pendingDomainMigrationByLicense(license.id);
+      const buildsUsed = repository.recentBuildCount(license.id, new Date(clock().getTime() - 24 * 60 * 60 * 1000).toISOString());
       return {
         license: {
           product: license.product_code,
@@ -118,8 +120,18 @@ export function createPortalService({ repository, queue, licenseService, artifac
           bound_domain: license.bound_domain,
           update_until: license.update_until,
           max_builds_per_day: license.max_builds_per_day,
+          builds_used_last_24_hours: buildsUsed,
+          builds_remaining: Math.max(0, license.max_builds_per_day - buildsUsed),
           generation: license.generation,
         },
+        domain_migration: migration ? {
+          id: migration.id,
+          previous_domain: migration.previous_domain,
+          requested_domain: migration.requested_domain,
+          status: migration.status,
+          reason: migration.reason,
+          requested_at: migration.requested_at,
+        } : null,
         versions: versions.map((version) => ({
           version: version.version,
           display_name: version.display_name,
@@ -139,6 +151,37 @@ export function createPortalService({ repository, queue, licenseService, artifac
         current_version: currentVersion,
         latest_version: latestVersion,
         builds: builds.map(publicBuildJob),
+      };
+    },
+
+    bindCustomerDomain(session, { domain }) {
+      customerLicense(session);
+      const license = licenseService.bindLicenseDomain({ licenseId: session.actor_id, domain, actorId: session.actor_id });
+      return { bound_domain: license.bound_domain, generation: license.generation };
+    },
+
+    requestCustomerDomainMigration(session, { domain, reason }) {
+      customerLicense(session);
+      const request = licenseService.requestDomainMigration({
+        licenseId: session.actor_id, domain, reason, actorId: session.actor_id,
+      });
+      return {
+        id: request.id,
+        previous_domain: request.previous_domain,
+        requested_domain: request.requested_domain,
+        status: request.status,
+        requested_at: request.requested_at,
+      };
+    },
+
+    reviewDomainMigration({ requestId, decision, reviewNote, actorId }) {
+      const result = licenseService.reviewDomainMigration({ requestId, decision, reviewNote, reviewerId: actorId });
+      return {
+        id: result.request.id,
+        status: result.request.status,
+        reviewed_at: result.request.reviewed_at,
+        bound_domain: result.license.bound_domain,
+        generation: result.license.generation,
       };
     },
 
@@ -272,6 +315,18 @@ export function createPortalService({ repository, queue, licenseService, artifac
           active_activation_count: license.active_activation_count,
           created_at: license.created_at,
         })),
+        domain_migrations: repository.listDomainMigrations(100).map((request) => ({
+          id: request.id,
+          license_id: request.license_id,
+          customer_ref: request.customer_ref,
+          previous_domain: request.previous_domain,
+          requested_domain: request.requested_domain,
+          status: request.status,
+          reason: request.reason,
+          requested_at: request.requested_at,
+          reviewed_at: request.reviewed_at,
+          review_note: request.review_note,
+        })),
         builds: repository.listBuildJobs(100).map(publicBuildJob),
         activations: repository.listActivations(100).map((activation) => ({
           id: activation.id,
@@ -387,7 +442,21 @@ export function createPortalService({ repository, queue, licenseService, artifac
       }
       const actualHash = createHash('sha256').update(artifactBuffer).digest('hex');
       invariant(actualHash === result.artifact_sha256.toLowerCase(), 'ARTIFACT_HASH_MISMATCH', '构建成品哈希与实际文件不一致', 409);
-      buildEngine.validateSource(artifactBuffer);
+      invariant(secretMatches(result.package_proof, build.package_secret_hash, config.pepper), 'PACKAGE_PROOF_INVALID', 'Worker 返回的 Package Secret 与构建身份不匹配', 409);
+      const watermark = createHash('sha256').update(`${build.license_id}:${build.id}:${build.package_id}`).digest('hex');
+      buildEngine.verifyArtifact({
+        buffer: artifactBuffer,
+        packageSecret: result.package_proof,
+        expected: {
+          issuer: config.publicBaseUrl,
+          product: build.product_code,
+          version: build.version,
+          build_id: build.id,
+          package_id: build.package_id,
+          domain: build.domain,
+          watermark,
+        },
+      });
       const installKeyRecord = repository.installKeyByBuildId(build.id);
       invariant(installKeyRecord && secretMatches(result.install_key, installKeyRecord.key_hash, config.pepper), 'INSTALL_KEY_MISMATCH', 'Worker 安装 Key 与构建身份不匹配', 409);
       const completed = queue.complete(jobId, {

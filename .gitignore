@@ -15,3 +15,4 @@ var/uploads/*
 var/demo/*
 !var/demo/.gitkeep
 backups/
+.backup-key

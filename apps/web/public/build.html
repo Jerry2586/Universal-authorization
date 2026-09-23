@@ -73,7 +73,7 @@
           <div class="stats-grid stats-grid-three">
             <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>授权状态</span><strong id="license-status">—</strong><small>实时验证</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-blue">⌁</div><div><span>绑定域名</span><strong id="license-domain">—</strong><small>唯一激活域名</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>每日构建额度</span><strong id="license-limit">—</strong><small>按授权策略限制</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>过去 24 小时构建额度</span><strong id="license-limit">—</strong><small>剩余 / 总额度</small></div></article>
           </div>
 
           <div class="customer-grid">
@@ -116,7 +116,9 @@
             </section>
             <section class="surface detail-surface"><dl class="details"><div><dt>固定 Key 前缀</dt><dd id="license-prefix">—</dd></div><div><dt>授权域名</dt><dd id="license-domain-detail">—</dd></div><div><dt>更新服务有效期</dt><dd id="update-until">—</dd></div></dl></section>
           </div>
-          <div class="notice-card"><span>i</span><div><strong>域名或 Key 需要变更？</strong><p>为防止授权被盗用，换域名和固定 Key 轮换需要由卖家管理员操作，历史构建与审计记录会继续保留。</p></div></div>
+          <section class="surface form-surface" id="domain-bind-panel" hidden><div class="surface-head"><div><span class="overline">DOMAIN BINDING</span><h3>首次绑定授权域名</h3><p>绑定后只能通过受控迁移流程修改，请填写 APPGOG 实际业务域名。</p></div></div><form id="domain-bind-form" class="form-stack form-compact"><label class="field"><span>业务域名</span><input name="domain" required placeholder="example.com"></label><button class="button button-primary" type="submit">确认永久绑定</button></form></section>
+          <section class="surface form-surface" id="domain-migration-panel" hidden><div class="surface-head"><div><span class="overline">DOMAIN MIGRATION</span><h3>申请迁移授权域名</h3><p id="domain-migration-status">管理员批准后旧激活会在刷新时失效，新域名需重新构建和激活。</p></div></div><form id="domain-migration-form" class="form-stack form-compact"><label class="field"><span>新业务域名</span><input name="domain" required placeholder="new.example.com"></label><label class="field"><span>迁移原因</span><textarea name="reason" minlength="8" maxlength="500" required placeholder="说明换域名原因和迁移安排"></textarea></label><button class="button button-secondary" type="submit">提交迁移申请</button></form></section>
+          <div class="notice-card"><span>i</span><div><strong>固定 Key 需要轮换？</strong><p>固定 Key 轮换仍由卖家管理员执行；域名首次绑定和迁移申请可在本页完成，历史构建与审计记录会继续保留。</p></div></div>
         </section>
       </div>
     </main>

@@ -27,20 +27,58 @@ const MIGRATIONS = Object.freeze({
     ['intent', "TEXT NOT NULL DEFAULT 'install'"],
     ['base_version', 'TEXT'],
   ],
+  licenses: [
+    ['max_activations', 'INTEGER NOT NULL DEFAULT 1'],
+  ],
 });
 
 function migrate(database) {
-  for (const [table, columns] of Object.entries(MIGRATIONS)) {
-    const existing = new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
-    for (const [name, definition] of columns) {
-      if (!existing.has(name)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  const baselineVersion = '2026-09-23-v1.0.0-baseline';
+  if (!database.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(baselineVersion)) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      for (const [table, columns] of Object.entries(MIGRATIONS)) {
+        const existing = new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
+        for (const [name, definition] of columns) {
+          if (!existing.has(name)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+        }
+      }
+      database.exec(`UPDATE source_versions SET published_at = created_at WHERE status = 'active' AND published_at IS NULL`);
+      database.exec(`UPDATE admin_users SET role = 'owner', is_owner = 1 WHERE id = (
+        SELECT id FROM admin_users ORDER BY created_at ASC, id ASC LIMIT 1
+      ) AND NOT EXISTS (SELECT 1 FROM admin_users WHERE is_owner = 1)`);
+      database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(baselineVersion, new Date().toISOString());
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
     }
   }
-  database.exec(`UPDATE source_versions SET published_at = created_at WHERE status = 'active' AND published_at IS NULL`);
-  // Existing installs predate roles; the bootstrap administrator is the original owner.
-  database.exec(`UPDATE admin_users SET role = 'owner', is_owner = 1 WHERE id = (
-    SELECT id FROM admin_users ORDER BY created_at ASC, id ASC LIMIT 1
-  ) AND NOT EXISTS (SELECT 1 FROM admin_users WHERE is_owner = 1)`);
+
+  const domainVersion = '2026-09-23-v1.0.0-domain-normalization';
+  if (!database.prepare('SELECT version FROM schema_migrations WHERE version = ?').get(domainVersion)) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const domainColumns = [
+        ['licenses', 'bound_domain'],
+        ['build_tickets', 'requested_domain'],
+        ['builds', 'domain'],
+        ['install_receipts', 'domain'],
+        ['activations', 'domain'],
+        ['build_jobs', 'requested_domain'],
+        ['domain_migration_requests', 'previous_domain'],
+        ['domain_migration_requests', 'requested_domain'],
+      ];
+      for (const [table, column] of domainColumns) {
+        database.exec(`UPDATE ${table} SET ${column} = substr(${column}, 5) WHERE lower(${column}) LIKE 'www.%'`);
+      }
+      database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(domainVersion, new Date().toISOString());
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
 }
 
 export function openDatabase(path) {

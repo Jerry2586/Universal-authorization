@@ -22,6 +22,13 @@ function activation(privateKey, overrides = {}) {
   }, privateKey);
 }
 
+function packageManifest(privateKey) {
+  return signCompactToken({
+    typ: 'package-manifest', product: 'appgog', build_id: 'bld_runtime', package_id: 'pkg_runtime',
+    version: '1.17.1', domain: 'demo.example.com', iat: Math.floor(FIXED_NOW / 1000) - 3600,
+  }, privateKey);
+}
+
 function fakeElement(tagName) {
   return {
     tagName, id: '', textContent: '', style: { cssText: '' }, children: [], value: '',
@@ -31,7 +38,7 @@ function fakeElement(tagName) {
   };
 }
 
-function installBrowser({ token, fetchImpl, publicKey }) {
+function installBrowser({ token, fetchImpl, publicKey, manifestToken }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
     location: globalThis.location, fetch: globalThis.fetch, DateNow: Date.now,
@@ -64,7 +71,7 @@ function installBrowser({ token, fetchImpl, publicKey }) {
   Date.now = () => FIXED_NOW;
   browserLicenseRuntime({
     p: 'appgog', v: '1.17.1', b: 'bld_runtime', i: 'pkg_runtime',
-    u: 'https://license.example.com', k: publicKeyDer(publicKey), s: [], o: [],
+    u: 'https://license.example.com', k: publicKeyDer(publicKey), s: [], o: [], m: manifestToken,
   });
   return {
     values, elements, classes,
@@ -96,7 +103,7 @@ test('SDK 仅在显式开启时接受服务端签名的 offline_until', () => {
 
 test('网络失败时在签名离线期限内放行并显示离线提示', async () => {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-  const browser = installBrowser({ token: activation(privateKey), publicKey, fetchImpl: async () => { throw new Error('offline'); } });
+  const browser = installBrowser({ token: activation(privateKey), publicKey, manifestToken: packageManifest(privateKey), fetchImpl: async () => { throw new Error('offline'); } });
   try {
     await browser.settle();
     assert.equal(browser.classes.has('__appgog_locked'), false);
@@ -108,7 +115,7 @@ test('网络失败时在签名离线期限内放行并显示离线提示', async
 test('明确 4xx 拒绝会锁定且清除缓存凭证，不进入离线宽限', async () => {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const browser = installBrowser({
-    token: activation(privateKey), publicKey,
+    token: activation(privateKey), publicKey, manifestToken: packageManifest(privateKey),
     fetchImpl: async () => ({ ok: false, status: 403, async json() { return { error: { message: '授权已撤销' } }; } }),
   });
   try {
@@ -129,7 +136,7 @@ test('成功刷新会验签并更新本地凭证', async () => {
     offline_until: Math.floor(FIXED_NOW / 1000) + 172800,
   });
   const browser = installBrowser({
-    token: activation(privateKey), publicKey,
+    token: activation(privateKey), publicKey, manifestToken: packageManifest(privateKey),
     fetchImpl: async (url) => {
       if (String(url).includes('/activations/refresh')) return { ok: true, status: 200, async json() { return { activation_token: refreshed }; } };
       return { ok: false, status: 404, async json() { return {}; } };
@@ -155,7 +162,7 @@ test('版本通知只接受与 release_token 完全一致的签名字段', async
   }, privateKey);
   let tampered = true;
   const browser = installBrowser({
-    token: active, publicKey,
+    token: active, publicKey, manifestToken: packageManifest(privateKey),
     fetchImpl: async (url) => {
       if (!String(url).includes('/releases/latest')) throw new Error('unexpected request');
       return {
@@ -184,7 +191,7 @@ test('版本通知只接受与 release_token 完全一致的签名字段', async
   } finally { browser.restore(); }
 });
 
-test('生成的激活界面提交一次性 Key 与固定授权 Key，版本 feed 使用 release_token', () => {
+test('生成的运行时先提交一次性 Install Key，再使用 Install Receipt 与固定 Key 激活', () => {
   const { publicKey } = generateKeyPairSync('ed25519');
   const source = createBrowserLicenseRuntime({
     injection: {
@@ -193,8 +200,13 @@ test('生成的激活界面提交一次性 Key 与固定授权 Key，版本 feed
     },
     publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
   });
-  assert.match(source, /license_key: fixedInput\.value\.trim\(\)/);
+  assert.match(source, /post\('\/api\/v1\/install-unlocks'/);
   assert.match(source, /install_key: installInput\.value\.trim\(\)/);
+  assert.match(source, /post\('\/api\/v1\/activations'/);
+  assert.match(source, /license_key: fixedInput\.value\.trim\(\)/);
+  assert.match(source, /install_receipt_id: saved\.install_receipt_id/);
+  assert.match(source, /install_receipt_secret: saved\.install_receipt_secret/);
+  assert.doesNotMatch(source, /install_key: installInput\.value\.trim\(\), license_key:/);
   assert.match(source, /result\.release_token/);
   assert.match(source, /feed\.version !== latest\.version/);
   assert.doesNotThrow(() => new Function(source));

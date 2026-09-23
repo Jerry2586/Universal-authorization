@@ -31,6 +31,10 @@ export function newInstallKey() {
   return `INS-${randomText(4)}-${randomText(4)}-${randomText(4)}`;
 }
 
+export function newInstallReceiptSecret() {
+  return `IRC_${randomBytes(32).toString('base64url')}`;
+}
+
 export function newRefreshSecret() {
   return `RFS_${randomBytes(32).toString('base64url')}`;
 }

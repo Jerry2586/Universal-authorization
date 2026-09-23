@@ -8,3 +8,4 @@ docs
 dist
 backups
 runtime
+.backup-key

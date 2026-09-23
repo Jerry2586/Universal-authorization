@@ -44,6 +44,8 @@ export async function runWorkerOnce({ baseUrl, token, workerId, artifactStore, p
       buildId: build.buildId,
       packageId: build.packageId,
       packageSecret: build.packageSecret,
+      packageManifestToken: build.packageManifestToken,
+      watermark: build.watermark,
       domain: build.domain,
     });
     await post(`/api/v1/worker/jobs/${job.id}/progress`, { worker_id: workerId, progress: 82, message: '正在写入客户专属成品' });
@@ -63,6 +65,7 @@ export async function runWorkerOnce({ baseUrl, token, workerId, artifactStore, p
       artifact_ref: artifactRef,
       artifact_sha256: artifactSha256,
       install_key: build.installKey,
+      package_proof: build.packageSecret,
     });
     return true;
   } catch (error) {

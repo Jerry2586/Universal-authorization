@@ -13,6 +13,7 @@ export const TICKET_STATUS = Object.freeze({
 
 export const BUILD_STATUS = Object.freeze({
   READY: 'ready',
+  PACKAGE_UNLOCKED: 'package_unlocked',
   ACTIVATED: 'activated',
   REVOKED: 'revoked',
 });
@@ -20,6 +21,12 @@ export const BUILD_STATUS = Object.freeze({
 export const INSTALL_KEY_STATUS = Object.freeze({
   AVAILABLE: 'available',
   CONSUMED: 'consumed',
+  REVOKED: 'revoked',
+});
+
+export const INSTALL_RECEIPT_STATUS = Object.freeze({
+  UNLOCKED: 'unlocked',
+  ACTIVATED: 'activated',
   REVOKED: 'revoked',
 });
 

@@ -2,6 +2,11 @@ export const SCHEMA = `
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
@@ -20,6 +25,7 @@ CREATE TABLE IF NOT EXISTS licenses (
   bound_domain TEXT,
   update_until TEXT,
   max_builds_per_day INTEGER NOT NULL DEFAULT 3,
+  max_activations INTEGER NOT NULL DEFAULT 1,
   generation INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -63,6 +69,21 @@ CREATE TABLE IF NOT EXISTS install_keys (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS install_receipts (
+  id TEXT PRIMARY KEY,
+  license_id TEXT NOT NULL REFERENCES licenses(id),
+  build_id TEXT NOT NULL UNIQUE REFERENCES builds(id),
+  receipt_secret_hash TEXT NOT NULL UNIQUE,
+  domain TEXT NOT NULL,
+  backend_origin TEXT NOT NULL,
+  installation_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  activated_at TEXT,
+  revoked_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS activations (
   id TEXT PRIMARY KEY,
   license_id TEXT NOT NULL REFERENCES licenses(id),
@@ -77,6 +98,19 @@ CREATE TABLE IF NOT EXISTS activations (
   created_at TEXT NOT NULL,
   revoked_at TEXT,
   UNIQUE(build_id, domain, installation_id)
+);
+
+CREATE TABLE IF NOT EXISTS domain_migration_requests (
+  id TEXT PRIMARY KEY,
+  license_id TEXT NOT NULL REFERENCES licenses(id),
+  previous_domain TEXT NOT NULL,
+  requested_domain TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  requested_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  reviewed_by TEXT REFERENCES admin_users(id),
+  review_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -184,7 +218,10 @@ CREATE TABLE IF NOT EXISTS service_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_licenses_product ON licenses(product_id);
 CREATE INDEX IF NOT EXISTS idx_builds_license ON builds(license_id);
+CREATE INDEX IF NOT EXISTS idx_install_receipts_license ON install_receipts(license_id);
 CREATE INDEX IF NOT EXISTS idx_activations_license ON activations(license_id);
+CREATE INDEX IF NOT EXISTS idx_domain_migrations_license ON domain_migration_requests(license_id, requested_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_domain_migrations_pending ON domain_migration_requests(license_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON web_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_source_versions_product ON source_versions(product_id, status);

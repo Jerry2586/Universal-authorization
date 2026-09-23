@@ -25,7 +25,7 @@ function envFile(values) {
 
 export function initialize({ root = '/app', env = process.env } = {}) {
   const configRoot = join(root, 'runtime');
-  for (const name of ['license', 'build', 'worker']) mkdirSync(join(configRoot, name), { recursive: true });
+  for (const name of ['license', 'build', 'worker', 'caddy-data', 'caddy-config']) mkdirSync(join(configRoot, name), { recursive: true });
   for (const name of ['data', 'keys', 'artifacts', 'uploads']) mkdirSync(join(root, 'var', name), { recursive: true });
   const identityPath = join(configRoot, 'license', 'identity.json');
   const privatePath = join(root, 'var/keys/ed25519-private.pem');
@@ -53,7 +53,7 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   }
   if (!identity.adminUsername || typeof identity.adminPassword !== 'string' || identity.adminPassword.length < 12) throw new Error('管理员初始配置无效');
   identity.options ??= {};
-  for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
+  for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'DOWNLOAD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
     if (env[name] !== undefined && env[name] !== '') {
       if (!/^[1-9][0-9]*$/.test(env[name]) || !Number.isSafeInteger(Number(env[name]))) throw new Error(name + ' 必须为正整数');
       identity.options[name] = env[name];

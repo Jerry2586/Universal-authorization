@@ -8,9 +8,11 @@ function publicKeyDer(pem) {
 export function browserLicenseRuntime(config) {
   const root = document.documentElement;
   root.classList.add('__appgog_locked');
+  const runtimeSource = document.currentScript?.src || location.href;
   const storageKey = `appgog_license_${config.i}`;
   const installKey = `appgog_install_${config.p}`;
   let saved;
+  let integrityFailure = false;
   try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { saved = null; }
   let installationId = localStorage.getItem(installKey);
   if (!installationId) {
@@ -25,7 +27,10 @@ export function browserLicenseRuntime(config) {
     return Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0));
   };
   const parsed = (base64) => JSON.parse(new TextDecoder().decode(bytes(base64)));
-  const domain = () => location.hostname.toLowerCase().replace(/^\.+|\.+$/g, '');
+  const domain = () => {
+    const host = location.hostname.toLowerCase().replace(/^\.+|\.+$/g, '');
+    return host.startsWith('www.') && host.slice(4).includes('.') ? host.slice(4) : host;
+  };
   const origin = (value) => {
     try {
       const url = new URL(value);
@@ -34,6 +39,14 @@ export function browserLicenseRuntime(config) {
     } catch { return ''; }
   };
   const packageProof = () => config.o.map((index) => atob(config.s[index])).join('');
+  const hex = (value) => [...new Uint8Array(value)].map((item) => item.toString(16).padStart(2, '0')).join('');
+  const joined = (...arrays) => {
+    const length = arrays.reduce((sum, item) => sum + item.length, 0);
+    const output = new Uint8Array(length);
+    let offset = 0;
+    for (const item of arrays) { output.set(item, offset); offset += item.length; }
+    return output;
+  };
   const store = (value) => { saved = value; localStorage.setItem(storageKey, JSON.stringify(value)); };
   const publicKey = crypto.subtle.importKey('spki', bytes(config.k), { name: 'Ed25519' }, false, ['verify']);
 
@@ -59,6 +72,35 @@ export function browserLicenseRuntime(config) {
       || !Number.isSafeInteger(payload.exp) || payload.exp <= 0
       || !Number.isSafeInteger(payload.offline_until) || payload.offline_until < payload.exp) return null;
     return payload;
+  }
+
+  async function protectedIdentityValid() {
+    if (!config.x) return true;
+    try {
+      const response = await fetch(new URL(config.x, runtimeSource), { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) return false;
+      const raw = new Uint8Array(await response.arrayBuffer());
+      if (hex(await crypto.subtle.digest('SHA-256', raw)) !== config.h) return false;
+      const envelope = JSON.parse(new TextDecoder().decode(raw));
+      if (envelope.v !== 1 || envelope.a !== 'AES-256-GCM') return false;
+      const material = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(packageProof()));
+      const key = await crypto.subtle.importKey('raw', material, { name: 'AES-GCM' }, false, ['decrypt']);
+      const plaintext = await crypto.subtle.decrypt({
+        name: 'AES-GCM', iv: bytes(envelope.i),
+        additionalData: new TextEncoder().encode('APPGOG-PROTECTED-IDENTITY-v1'),
+      }, key, joined(bytes(envelope.c), bytes(envelope.t)));
+      const identity = JSON.parse(new TextDecoder().decode(plaintext));
+      return identity.product === config.p && identity.version === config.v && identity.build_id === config.b
+        && identity.package_id === config.i && identity.domain === domain() && identity.watermark === config.w;
+    } catch { return false; }
+  }
+
+  async function packageIdentityValid() {
+    const payload = await signedPayload(config.m);
+    return Boolean(payload && payload.typ === 'package-manifest' && payload.product === config.p
+      && payload.build_id === config.b && payload.package_id === config.i
+      && payload.version === config.v && payload.domain === domain()
+      && await protectedIdentityValid());
   }
 
   async function post(path, body) {
@@ -173,9 +215,14 @@ export function browserLicenseRuntime(config) {
     document.head.append(style);
     const gate = document.createElement('div'); gate.id = '__appgog_gate';
     const card = document.createElement('div'); card.id = '__appgog_card';
-    const title = document.createElement('h1'); title.textContent = 'APPGOG 授权激活';
+    const hasInstallReceipt = Boolean(saved?.install_receipt_id && saved?.install_receipt_secret && saved?.backend_origin);
+    const title = document.createElement('h1'); title.textContent = integrityFailure ? 'APPGOG 安装包完整性验证失败' : (hasInstallReceipt ? '激活 APPGOG' : '解锁 APPGOG 安装包');
     const description = document.createElement('p');
-    description.textContent = '输入本次安装 Key 与购买时获得的固定授权 Key，绑定当前域名与安装环境。';
+    description.textContent = integrityFailure
+      ? '当前文件不属于授权服务器签发的同一 Build/Package，或已被跨包替换。请重新下载并安装完整 ZIP。'
+      : hasInstallReceipt
+      ? '安装包已解锁。输入购买时获得的长期固定 License Key，完成正式激活。'
+      : '输入此 ZIP 对应的一次性 Install Key。验证成功后 Key 立即作废，但 APPGOG 功能仍保持锁定。';
     const form = document.createElement('form');
     const installLabel = document.createElement('label'); installLabel.textContent = '一次性安装 Key';
     const installInput = document.createElement('input'); installInput.required = true; installInput.autocomplete = 'off'; installInput.placeholder = 'INS-XXXX-XXXX-XXXX'; installInput.type = 'password'; installLabel.append(installInput);
@@ -183,29 +230,49 @@ export function browserLicenseRuntime(config) {
     const fixedInput = document.createElement('input'); fixedInput.required = true; fixedInput.autocomplete = 'off'; fixedInput.placeholder = 'APPGOG-XXXX-XXXX-XXXX-XXXX'; fixedInput.type = 'password'; fixedLabel.append(fixedInput);
     const backendLabel = document.createElement('label'); backendLabel.textContent = 'Xboard 后台地址';
     const backendInput = document.createElement('input'); backendInput.required = true; backendInput.type = 'url'; backendInput.value = location.origin; backendLabel.append(backendInput);
-    const button = document.createElement('button'); button.type = 'submit'; button.textContent = '验证并激活';
+    const button = document.createElement('button'); button.type = 'submit'; button.textContent = hasInstallReceipt ? '正式激活 APPGOG' : '验证并解锁安装包';
     const error = document.createElement('p'); error.id = '__appgog_error';
-    const metadata = document.createElement('div'); metadata.id = '__appgog_meta'; metadata.textContent = `授权域名：${domain()} · 版本：${config.v}`;
-    form.append(installLabel, fixedLabel, backendLabel, button, error);
+    const metadata = document.createElement('div'); metadata.id = '__appgog_meta'; metadata.textContent = `授权域名：${domain()} · 版本：${config.v} · 阶段：${hasInstallReceipt ? '正式激活' : '安装解锁'}`;
+    if (integrityFailure) {
+      button.disabled = true;
+      button.textContent = '请重新安装完整授权包';
+      form.append(button, error);
+    } else if (hasInstallReceipt) form.append(fixedLabel, button, error);
+    else form.append(installLabel, backendLabel, button, error);
     card.append(title, description, form, metadata); gate.append(card); document.body.append(gate);
     form.addEventListener('submit', async (event) => {
       event.preventDefault(); button.disabled = true; button.textContent = '正在验证…'; error.textContent = '';
       try {
-        const backendOrigin = origin(backendInput.value.trim());
-        if (!backendOrigin) throw new Error('Xboard 后台地址无效');
+        if (!hasInstallReceipt) {
+          const backendOrigin = origin(backendInput.value.trim());
+          if (!backendOrigin) throw new Error('Xboard 后台地址无效');
+          const receipt = await post('/api/v1/install-unlocks', {
+            install_key: installInput.value.trim(), build_id: config.b,
+            package_proof: packageProof(), domain: domain(),
+            backend_url: backendOrigin, installation_id: installationId,
+          });
+          store({ install_receipt_id: receipt.install_receipt_id,
+            install_receipt_secret: receipt.install_receipt_secret, backend_origin: backendOrigin });
+          installInput.value = '';
+          location.reload();
+          return;
+        }
         const result = await post('/api/v1/activations', {
-          install_key: installInput.value.trim(), license_key: fixedInput.value.trim(),
+          license_key: fixedInput.value.trim(), install_receipt_id: saved.install_receipt_id,
+          install_receipt_secret: saved.install_receipt_secret,
           build_id: config.b, package_proof: packageProof(), domain: domain(),
-          backend_url: backendOrigin, installation_id: installationId,
+          backend_url: saved.backend_origin, installation_id: installationId,
         });
-        const payload = await activationPayload(result.activation_token, backendOrigin);
+        const payload = await activationPayload(result.activation_token, saved.backend_origin);
         if (!payload || payload.exp <= now()) throw new Error('激活凭证本地验证失败');
         store({ activation_id: result.activation_id, activation_token: result.activation_token,
-          refresh_secret: result.refresh_secret, backend_origin: backendOrigin });
-        fixedInput.value = ''; installInput.value = '';
+          refresh_secret: result.refresh_secret, backend_origin: saved.backend_origin });
+        fixedInput.value = '';
         location.reload();
       } catch (failure) {
-        error.textContent = failure.message || '激活失败'; button.disabled = false; button.textContent = '验证并激活';
+        error.textContent = failure.message || (hasInstallReceipt ? '激活失败' : '安装解锁失败');
+        button.disabled = false;
+        button.textContent = hasInstallReceipt ? '正式激活 APPGOG' : '验证并解锁安装包';
       }
     });
   }
@@ -214,12 +281,25 @@ export function browserLicenseRuntime(config) {
     product: config.p, version: config.v, buildId: config.b, packageId: config.i,
     installationId, status: 'checking', checkUpdates,
   };
-  const start = () => { void checkStoredActivation().then((state) => state === 'locked' ? showGate() : unlock(state)).catch(showGate); };
+  const start = () => { void packageIdentityValid().then((valid) => {
+    if (!valid) { integrityFailure = true; showGate(); return; }
+    return checkStoredActivation().then((state) => state === 'locked' ? showGate() : unlock(state));
+  }).catch(() => { integrityFailure = true; showGate(); }); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 }
 
-export function createBrowserLicenseRuntime({ injection, publicKeyPem }) {
+function randomizedIdentifiers(source, packageId) {
+  const names = ['integrityFailure', 'signedPayload', 'activationPayload', 'protectedIdentityValid', 'packageIdentityValid', 'checkStoredActivation', 'releasePayload', 'offlineValid'];
+  let output = source;
+  for (const [index, name] of names.entries()) {
+    const suffix = createHash('sha256').update(`${packageId}:${index}:${name}`).digest('hex').slice(0, 10);
+    output = output.replace(new RegExp(`\\b${name}\\b`, 'g'), `_p${suffix}`);
+  }
+  return output;
+}
+
+export function createBrowserLicenseRuntime({ injection, publicKeyPem, protectedIdentity = null }) {
   const runtimeConfig = {
     p: injection.product,
     v: injection.version,
@@ -229,8 +309,12 @@ export function createBrowserLicenseRuntime({ injection, publicKeyPem }) {
     k: publicKeyDer(publicKeyPem),
     s: injection.package_proof_parts.map((part) => Buffer.from(part, 'utf8').toString('base64')),
     o: injection.package_proof_order,
+    m: injection.package_manifest_token,
+    w: injection.watermark,
+    ...(protectedIdentity ? { x: protectedIdentity.ref, h: protectedIdentity.sha256 } : {}),
   };
   const encoded = Buffer.from(JSON.stringify(runtimeConfig), 'utf8').toString('base64');
   const namespace = `a${createHash('sha256').update(injection.package_id).digest('hex').slice(0, 11)}`;
-  return `;/* APPGOG ${namespace} */(${browserLicenseRuntime.toString()})(JSON.parse(atob(${JSON.stringify(encoded)})));`;
+  const runtime = randomizedIdentifiers(browserLicenseRuntime.toString(), injection.package_id);
+  return `;/* APPGOG ${namespace} */(${runtime})(JSON.parse(atob(${JSON.stringify(encoded)})));`;
 }

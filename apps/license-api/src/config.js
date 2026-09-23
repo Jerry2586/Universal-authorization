@@ -52,6 +52,7 @@ export function loadConfig(overrides = {}) {
     activationTokenTtlSeconds: integer('ACTIVATION_TOKEN_TTL_SECONDS', 604800),
     offlineGraceSeconds: integer('OFFLINE_GRACE_SECONDS', 2592000),
     buildTicketTtlSeconds: integer('BUILD_TICKET_TTL_SECONDS', 900),
+    downloadTicketTtlSeconds: integer('DOWNLOAD_TICKET_TTL_SECONDS', 300),
     webSessionTtlSeconds: integer('WEB_SESSION_TTL_SECONDS', 28800),
     maxSourceUploadBytes: integer('MAX_SOURCE_UPLOAD_BYTES', 134217728),
     embeddedWorker: (process.env.EMBEDDED_WORKER ?? (selectedRole === 'all-in-one' ? 'true' : 'false')).toLowerCase() === 'true',

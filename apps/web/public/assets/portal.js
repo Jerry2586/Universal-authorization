@@ -99,7 +99,7 @@ function badge(status) {
 }
 function roleLabel(role) { return { owner: '平台所有者', super_admin: '超级管理员', license_ops: '授权运营', license_operator: '授权运营', release_manager: '版本管理员', support: '客服管理员', auditor: '审计员' }[role] ?? role ?? '未分配'; }
 function nodeRoleLabel(role) { return { 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未知节点'; }
-function installationRoleLabel(role) { return { 'all-in-one': '完整 CMS', 'license-center': '授权中心', 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未设置'; }
+function installationRoleLabel(role) { return { 'all-in-one': '完整系统', 'license-center': '授权中心', 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未设置'; }
 function channelLabel(channel) { return { stable: '正式版', beta: '测试版', preview: '预览版' }[channel] ?? channel ?? '正式版'; }
 function releaseKindLabel(kind) { return { feature: '功能更新', security: '安全更新', hotfix: '问题修复' }[kind] ?? kind ?? '常规更新'; }
 function intentLabel(intent) { return { update: '更新包', rollback: '回滚包', reinstall: '重装包' }[intent] ?? '安装包'; }
@@ -242,11 +242,27 @@ function renderCustomer(data) {
   $('license-status').textContent = license.status === 'active' ? '正常' : license.status;
   $('license-domain').textContent = license.bound_domain ?? '未绑定';
   $('header-domain').textContent = license.bound_domain ?? '未绑定域名';
-  $('license-limit').textContent = license.max_builds_per_day == null ? '按授权策略' : `${license.max_builds_per_day} 次`;
+  $('license-limit').textContent = license.max_builds_per_day == null
+    ? '按授权策略'
+    : `${license.builds_remaining ?? license.max_builds_per_day} / ${license.max_builds_per_day} 次`;
   $('license-product').textContent = String(license.product || license.product_code || 'APPGOG').toUpperCase();
   $('license-prefix').textContent = license.key_prefix ? `${license.key_prefix}••••` : '已验证';
   $('license-domain-detail').textContent = license.bound_domain ?? '未绑定';
   $('update-until').textContent = date(license.update_until);
+  const bindPanel = $('domain-bind-panel');
+  if (bindPanel) bindPanel.hidden = Boolean(license.bound_domain);
+  const migrationPanel = $('domain-migration-panel');
+  const migration = data.domain_migration;
+  if (migrationPanel) migrationPanel.hidden = !license.bound_domain;
+  const migrationForm = $('domain-migration-form');
+  if (migrationForm) {
+    const pending = migration?.status === 'pending';
+    for (const control of migrationForm.elements) control.disabled = pending;
+    const status = $('domain-migration-status');
+    if (status) status.textContent = pending
+      ? `待审核：${migration.previous_domain} → ${migration.requested_domain}（${date(migration.requested_at)}）`
+      : '管理员批准后旧激活会在刷新时失效，新域名需重新构建和激活。';
+  }
   $('current-date').textContent = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
   const catalog = $('version-catalog');
   catalog.replaceChildren();
@@ -265,7 +281,8 @@ async function showBuild(id) {
   try {
     const job = await request(`/web/customer/builds/${encodeURIComponent(id)}`);
     if (!job.install_key) { notify(`${job.message}（${job.progress}%）`, job.status === 'failed'); return; }
-    showSecret('本次安装 Key', job.install_key, `Build ID：${job.build_id}。本 Key 只能成功激活一次，更新或重装需要重新打包。`, `/web/customer/builds/${encodeURIComponent(id)}/download`);
+    const download = await request(`/web/customer/builds/${encodeURIComponent(id)}/download-ticket`, { method: 'POST' });
+    showSecret('本次安装 Key', job.install_key, `Build ID：${job.build_id}。本 Key 只能成功激活一次；下载地址将在 5 分钟后失效。`, download.download_url);
   } catch (error) { notify(error.message, true); }
 }
 
@@ -280,6 +297,35 @@ function licenseRow(license) {
   }
   row.append(action);
   return row;
+}
+function migrationRow(requestItem) {
+  const row = element('tr');
+  row.append(td(requestItem.customer_ref), td(requestItem.previous_domain), td(requestItem.requested_domain), td(requestItem.reason), badge(requestItem.status), td(date(requestItem.requested_at)));
+  const action = element('td', null, 'actions');
+  if (requestItem.status === 'pending' && can('license.manage')) {
+    action.append(
+      button('批准', () => reviewDomainMigration(requestItem, 'approved')),
+      button('拒绝', () => reviewDomainMigration(requestItem, 'rejected')),
+    );
+  }
+  row.append(action);
+  return row;
+}
+function reviewDomainMigration(requestItem, decision) {
+  const approved = decision === 'approved';
+  dialog(approved ? '批准域名迁移' : '拒绝域名迁移', `${requestItem.customer_ref}：${requestItem.previous_domain} → ${requestItem.requested_domain}`, (card, close) => {
+    const label = element('label', null, 'field');
+    label.append(element('span', '审批备注（可选）'));
+    const input = element('textarea'); input.maxLength = 500; input.placeholder = approved ? '记录迁移窗口或注意事项' : '记录拒绝原因';
+    label.append(input); card.append(label);
+    actions(card, close, approved ? '确认批准' : '确认拒绝', async () => {
+      await request(`/web/admin/domain-migrations/${encodeURIComponent(requestItem.id)}/review`, {
+        method: 'POST', body: { decision, review_note: input.value.trim() },
+      });
+      notify(approved ? '域名迁移已批准' : '域名迁移已拒绝');
+      await refresh();
+    }, !approved);
+  });
 }
 function buildRow(job) {
   const row = element('tr');
@@ -355,6 +401,7 @@ function renderAdmin(data) {
   const versions = Array.isArray(data.versions) ? data.versions : [];
   const builds = Array.isArray(data.builds) ? data.builds : [];
   const activations = Array.isArray(data.activations) ? data.activations : [];
+  const migrations = Array.isArray(data.domain_migrations) ? data.domain_migrations : [];
   const audit = Array.isArray(data.audit) ? data.audit : [];
   const admins = Array.isArray(data.admins) ? data.admins : [];
   const cms = data.cms ?? {};
@@ -370,6 +417,8 @@ function renderAdmin(data) {
   const licenseQuery = search('license-search');
   const licenseStatus = $('license-status-filter').value;
   renderRows('license-list', licenses.filter((license) => (!licenseStatus || license.status === licenseStatus) && [license.customer_ref, license.bound_domain, license.key_prefix].some((value) => match(value, licenseQuery))), 7, licenseRow, '没有匹配的授权');
+  if ($('migration-count')) $('migration-count').textContent = `${migrations.filter((item) => item.status === 'pending').length} 个待审核`;
+  if ($('migration-list')) renderRows('migration-list', migrations, 7, migrationRow, '暂无域名迁移申请');
   const list = $('version-list');
   list.replaceChildren();
   if (!versions.length) {
@@ -518,6 +567,32 @@ $('logout').addEventListener('click', async () => {
 if (mode === 'customer') {
   $('refresh-customer').addEventListener('click', refresh);
   $('customer-build-search').addEventListener('input', () => { if (state.data) renderCustomer(state.data); });
+  $('domain-bind-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const fields = new FormData(form);
+      await request('/web/customer/domain/bind', { method: 'POST', body: { domain: String(fields.get('domain') || '').trim() } });
+      form.reset(); notify('授权域名已完成首次绑定'); await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { submit.disabled = false; }
+  });
+  $('domain-migration-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const fields = new FormData(form);
+      await request('/web/customer/domain-migrations', { method: 'POST', body: {
+        domain: String(fields.get('domain') || '').trim(), reason: String(fields.get('reason') || '').trim(),
+      } });
+      form.reset(); notify('域名迁移申请已提交'); await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { submit.disabled = false; }
+  });
   setInterval(() => {
     if (!document.hidden && !$('dashboard-view').hidden && state.data?.builds?.some((job) => ['queued', 'processing'].includes(job.status))) refresh();
   }, 5000);
@@ -538,6 +613,7 @@ if (mode === 'customer') {
         product_code: 'appgog', customer_ref: fields.get('customer_ref'), domain: fields.get('domain'),
         update_until: until ? new Date(`${until}T23:59:59Z`).toISOString() : null,
         max_builds_per_day: Number(fields.get('max_builds_per_day')),
+        max_activations: Number(fields.get('max_activations')),
       } });
       form.reset();
       showSecret('新的固定授权 Key', result.license_key, '请现在安全交给客户。完整 Key 不会保存在后台。');
@@ -609,7 +685,7 @@ if (mode === 'customer') {
         new_builds_enabled: fields.has('new_builds_enabled'),
         worker_enabled: fields.has('worker_enabled'),
       } });
-      notify('CMS 设置已保存');
+      notify('系统设置已保存');
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }

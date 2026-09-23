@@ -10,7 +10,8 @@ docker compose exec -T license-center node scripts/docker/smoke.js create
 sh scripts/docker.sh update
 docker compose exec -T license-center node scripts/docker/smoke.js verify
 sh scripts/docker.sh backup
-archive=$(find "$PWD/backups" -name '*.tar.gz' | sort | tail -n 1)
+archive=$(find "$PWD/backups" -name '*.tar.gz.enc' | sort | tail -n 1)
+[ -n "$archive" ] && [ -f "$archive" ] || { echo '未生成加密备份'; exit 1; }
 APPGOG_PROJECT=appgog-restore LICENSE_PORT=127.0.0.1:18787 BUILD_PORT=127.0.0.1:18788 sh scripts/docker.sh restore "$archive"
 APPGOG_PROJECT=appgog-restore LICENSE_PORT=127.0.0.1:18787 BUILD_PORT=127.0.0.1:18788 docker compose -p appgog-restore exec -T license-center node scripts/docker/smoke.js verify
 # Changing only the domain must reload runtime config without rotating identity.
