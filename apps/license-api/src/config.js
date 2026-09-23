@@ -27,9 +27,13 @@ function integer(name, fallback) {
 export function loadConfig(overrides = {}) {
   loadLocalEnvironment();
   const cwd = process.cwd();
+  const legacySurface = overrides.surface ?? process.env.APPGOG_SURFACE ?? null;
+  const selectedRole = overrides.role ?? process.env.APPGOG_ROLE
+    ?? (legacySurface === 'license-center' ? 'license-center' : 'all-in-one');
   const config = {
     port: integer('PORT', 8787),
-    surface: process.env.APPGOG_SURFACE ?? 'combined',
+    role: selectedRole,
+    surface: selectedRole === 'all-in-one' ? 'combined' : 'license-center',
     internalServiceToken: process.env.INTERNAL_SERVICE_TOKEN ?? '',
     databasePath: resolve(cwd, process.env.DATABASE_PATH ?? './var/data/appgog.sqlite'),
     privateKeyPath: resolve(cwd, process.env.SIGNING_PRIVATE_KEY_PATH ?? './var/keys/ed25519-private.pem'),
@@ -50,9 +54,11 @@ export function loadConfig(overrides = {}) {
     buildTicketTtlSeconds: integer('BUILD_TICKET_TTL_SECONDS', 900),
     webSessionTtlSeconds: integer('WEB_SESSION_TTL_SECONDS', 28800),
     maxSourceUploadBytes: integer('MAX_SOURCE_UPLOAD_BYTES', 134217728),
-    embeddedWorker: (process.env.EMBEDDED_WORKER ?? 'true').toLowerCase() === 'true',
+    embeddedWorker: (process.env.EMBEDDED_WORKER ?? (selectedRole === 'all-in-one' ? 'true' : 'false')).toLowerCase() === 'true',
     ...overrides,
   };
+  config.role = overrides.role ?? selectedRole;
+  config.surface = config.role === 'all-in-one' ? 'combined' : 'license-center';
   if (process.env.NODE_ENV === 'production') {
     const secrets = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY'];
     for (const name of secrets) {
@@ -70,10 +76,10 @@ export function loadConfig(overrides = {}) {
     if (new URL(config.buildCenterPublicUrl).protocol !== 'https:') {
       throw new Error('生产环境 BUILD_CENTER_PUBLIC_URL 必须使用 HTTPS');
     }
-    if (config.surface === 'license-center' && (!config.internalServiceToken || config.internalServiceToken.length < 32)) {
+    if (config.role === 'license-center' && (!config.internalServiceToken || config.internalServiceToken.length < 32)) {
       throw new Error('授权中心生产模式必须设置至少 32 字符的 INTERNAL_SERVICE_TOKEN');
     }
   }
-  if (!['combined', 'license-center'].includes(config.surface)) throw new Error('APPGOG_SURFACE 无效');
+  if (!['all-in-one', 'license-center'].includes(config.role)) throw new Error('授权服务入口只允许 all-in-one 或 license-center 角色');
   return config;
 }

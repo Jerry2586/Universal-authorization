@@ -1,6 +1,42 @@
 # APPGOG 主题授权与打包系统
 
-这是一个可以本地直接运行的 APPGOG/Xboard 主题授权、打包和激活平台。默认按三个进程运行：授权中心 CMS、客户打包中心、构建 Worker。授权中心持有 SQLite 与签名私钥，Worker 只共享成品目录；客户站只通过内部代理使用客户接口。当前为单机部署架构，跨机器扩容仍需要数据库、队列和对象存储适配。
+这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活 CMS。一套源码支持四种角色：完整 CMS、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
+
+## CMS 安装
+
+普通用户在一台服务器完整安装：
+
+```powershell
+npm run cms:install -- --role all-in-one --public-url https://auth.example.com
+npm run cms:start
+```
+
+完成后访问 `/admin`，打开“CMS 与节点”，即可管理平台域名、服务开关和独立节点。安装器会生成正式环境密钥和首个管理员密码；`.env` 已存在时默认拒绝覆盖。
+
+分离部署时，先安装唯一授权中心：
+
+```powershell
+npm run cms:install -- --role license-center --public-url https://auth.example.com
+npm run cms:start
+```
+
+然后在授权后台创建 `build-center` 和 `worker` 节点，把只显示一次的凭证带到对应服务器：
+
+```powershell
+npm run cms:install -- --role build-center --license-url https://auth.example.com --node-token BLD_xxx
+npm run cms:start
+
+npm run cms:install -- --role worker --license-url https://auth.example.com --node-token WRK_xxx
+npm run cms:start
+```
+
+生成可交付的干净 CMS 安装 ZIP（自动排除 `.env`、数据库、密钥、成品和 Git 历史）：
+
+```powershell
+npm run cms:package
+```
+
+输出目录为 `dist/`。
 
 ## 已完成的闭环
 
@@ -31,7 +67,7 @@
 - 授权中心只公开管理页面和授权 API；客户打包中心只公开客户页面并通过独立内部凭证代理客户接口。
 - 独立 Worker 只领取构建任务和上报结果，不持有 Ed25519 签名私钥或管理员凭证。
 - SQLite、本地文件存储和独立 Worker；均有可替换接口，便于以后迁移 PostgreSQL、S3 和容器 Worker。
-- 26 个自动测试覆盖完整打包激活、双 Key、离线宽限、角色和会话隔离、版本签名、跨进程构建、队列租约和失败回滚。
+- 27 个自动测试覆盖完整打包激活、双 Key、离线宽限、角色和会话隔离、CMS 节点凭证、版本签名、跨服务器构建、队列租约和失败回滚。
 
 ## 目录
 
@@ -111,7 +147,7 @@ npm test
 
 ## 准确的产品边界
 
-当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、随机包身份注入、激活保护和重新打包；尚未对全部 JS/CSS 实施源码混淆或任意目录乱序。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令。当前独立 Worker 使用共享本地成品目录，因此适合单机三进程部署；多机部署前需替换对象存储、数据库和队列。
+当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、随机包身份注入、激活保护和重新打包；尚未对全部 JS/CSS 实施源码混淆或任意目录乱序。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令。独立 Worker 已支持通过授权中心 HTTP 接口传输源码和成品，可部署在另一台服务器；授权中心仍是单机 SQLite，不提供多授权中心并行写入或自动数据库高可用。
 
 如果要直接上传 APPGOG 的原始 Vue 工程并自动编译，需要提供真实源码、依赖版本、构建命令和最终 Xboard 安装目录结构，再在现有 `BuildEngine` 接口后接入隔离容器构建适配器。网站、授权、Key、队列和激活流程无需推倒重做。
 

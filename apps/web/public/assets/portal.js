@@ -7,7 +7,7 @@ function can(permission) { return mode === 'admin' && (state.permissions.include
 function applyAdminPermissions(session) {
   if (mode !== 'admin') return;
   state.permissions = Array.isArray(session.permissions) ? session.permissions : [];
-  const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view' };
+  const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view', cms: 'system.manage' };
   for (const [view, permission] of Object.entries(sections)) {
     const item = document.querySelector(`.nav-item[data-view="${view}"]`);
     if (item) item.hidden = !can(permission);
@@ -98,6 +98,8 @@ function badge(status) {
   return cell;
 }
 function roleLabel(role) { return { owner: '平台所有者', super_admin: '超级管理员', license_ops: '授权运营', license_operator: '授权运营', release_manager: '版本管理员', support: '客服管理员', auditor: '审计员' }[role] ?? role ?? '未分配'; }
+function nodeRoleLabel(role) { return { 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未知节点'; }
+function installationRoleLabel(role) { return { 'all-in-one': '完整 CMS', 'license-center': '授权中心', 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未设置'; }
 function channelLabel(channel) { return { stable: '正式版', beta: '测试版', preview: '预览版' }[channel] ?? channel ?? '正式版'; }
 function releaseKindLabel(kind) { return { feature: '功能更新', security: '安全更新', hotfix: '问题修复' }[kind] ?? kind ?? '常规更新'; }
 function intentLabel(intent) { return { update: '更新包', rollback: '回滚包', reinstall: '重装包' }[intent] ?? '安装包'; }
@@ -315,6 +317,38 @@ function adminRow(admin) {
   row.append(action);
   return row;
 }
+function nodeRow(node) {
+  const row = element('tr');
+  const identity = element('td');
+  const name = element('div', null, 'node-identity');
+  name.append(element('strong', node.name), element('small', node.id));
+  identity.append(name);
+  row.append(identity, td(nodeRoleLabel(node.role)), td(node.public_url), td(`${node.credential_prefix}••••`, 'key-inline'), badge(node.status), td(date(node.last_seen_at)));
+  const action = element('td', null, 'actions');
+  const next = node.status === 'active' ? 'disabled' : 'active';
+  action.append(button(next === 'active' ? '启用' : '停用', async (event) => {
+    const trigger = event.currentTarget;
+    trigger.disabled = true;
+    try {
+      await request(`/web/admin/cms/nodes/${encodeURIComponent(node.id)}/status`, { method: 'POST', body: { status: next } });
+      notify(next === 'active' ? '节点已启用' : '节点已停用');
+      await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { if (trigger.isConnected) trigger.disabled = false; }
+  }));
+  action.append(button('轮换凭证', async (event) => {
+    const trigger = event.currentTarget;
+    trigger.disabled = true;
+    try {
+      const result = await request(`/web/admin/cms/nodes/${encodeURIComponent(node.id)}/rotate`, { method: 'POST', body: {} });
+      showSecret('新的节点凭证', result.node_credential, `${node.name} 的旧凭证已立即失效。请马上更新该节点环境变量并重启服务。`);
+      await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { if (trigger.isConnected) trigger.disabled = false; }
+  }));
+  row.append(action);
+  return row;
+}
 function renderAdmin(data) {
   const stats = data.stats ?? {};
   const licenses = Array.isArray(data.licenses) ? data.licenses : [];
@@ -323,6 +357,8 @@ function renderAdmin(data) {
   const activations = Array.isArray(data.activations) ? data.activations : [];
   const audit = Array.isArray(data.audit) ? data.audit : [];
   const admins = Array.isArray(data.admins) ? data.admins : [];
+  const cms = data.cms ?? {};
+  const nodes = Array.isArray(cms.nodes) ? cms.nodes : [];
   $('stat-licenses').textContent = stats.licenses ?? licenses.length;
   $('stat-active').textContent = stats.activeLicenses ?? licenses.filter((item) => item.status === 'active').length;
   $('stat-builds').textContent = stats.buildsToday ?? 0;
@@ -363,6 +399,18 @@ function renderAdmin(data) {
   renderRows('admin-list', admins, 6, adminRow, '暂无管理员数据；后端提供 admins 字段后会自动显示');
   const auditQuery = search('audit-search');
   renderRows('audit-list', audit.filter((item) => [item.action, item.actor_type, item.actor_id, item.subject_type, item.subject_id].some((value) => match(value, auditQuery))), 6, (item) => { const row = element('tr'); row.append(td(item.action), td(item.actor_type), td(item.actor_id), td(item.subject_type), td(item.subject_id), td(date(item.created_at))); return row; }, '没有匹配的审计记录');
+  const cmsForm = $('cms-settings-form');
+  if (cmsForm) {
+    for (const key of ['platform_name', 'license_public_url', 'build_public_url']) {
+      if (cmsForm.elements[key]) cmsForm.elements[key].value = cms[key] ?? '';
+    }
+    for (const key of ['license_service_enabled', 'customer_login_enabled', 'build_center_enabled', 'new_builds_enabled', 'worker_enabled']) {
+      if (cmsForm.elements[key]) cmsForm.elements[key].checked = cms[key] !== false;
+    }
+  }
+  if ($('cms-role-badge')) $('cms-role-badge').textContent = installationRoleLabel(cms.installation_role);
+  if ($('node-count')) $('node-count').textContent = `${nodes.length} 个节点`;
+  if ($('node-list')) renderRows('node-list', nodes, 7, nodeRow, '尚未创建独立节点');
 }
 
 function changeDomain(license) {
@@ -528,6 +576,46 @@ if (mode === 'customer') {
       } });
       form.reset();
       notify('管理员账号已创建');
+      await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { submit.disabled = false; }
+  });
+  $('cms-settings-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const fields = new FormData(form);
+      await request('/web/admin/cms/settings', { method: 'POST', body: {
+        platform_name: String(fields.get('platform_name') || '').trim(),
+        license_public_url: String(fields.get('license_public_url') || '').trim(),
+        build_public_url: String(fields.get('build_public_url') || '').trim(),
+        license_service_enabled: fields.has('license_service_enabled'),
+        customer_login_enabled: fields.has('customer_login_enabled'),
+        build_center_enabled: fields.has('build_center_enabled'),
+        new_builds_enabled: fields.has('new_builds_enabled'),
+        worker_enabled: fields.has('worker_enabled'),
+      } });
+      notify('CMS 设置已保存');
+      await refresh();
+    } catch (error) { notify(error.message, true); }
+    finally { submit.disabled = false; }
+  });
+  $('node-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const fields = new FormData(form);
+      const result = await request('/web/admin/cms/nodes', { method: 'POST', body: {
+        name: String(fields.get('name') || '').trim(),
+        role: String(fields.get('role') || ''),
+        public_url: String(fields.get('public_url') || '').trim() || null,
+      } });
+      form.reset();
+      showSecret('节点凭证创建成功', result.node_credential, '凭证只显示这一次。请复制到对应节点的环境变量，然后重启节点服务。');
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }

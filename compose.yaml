@@ -9,7 +9,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 8787
-      APPGOG_SURFACE: license-center
+      APPGOG_ROLE: license-center
       EMBEDDED_WORKER: "false"
       DATABASE_PATH: /app/var/data/appgog.sqlite
       SIGNING_PRIVATE_KEY_PATH: /app/var/keys/ed25519-private.pem
@@ -57,6 +57,7 @@ services:
       BUILD_CENTER_PORT: 8788
       INTERNAL_LICENSE_URL: http://license-center:8787
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?请在 .env 设置 INTERNAL_SERVICE_TOKEN}
+      BUILD_CENTER_NODE_TOKEN: ${BUILD_CENTER_NODE_TOKEN:-}
     ports:
       - "${BUILD_PORT:-8788}:8788"
     healthcheck:
@@ -77,6 +78,8 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       INTERNAL_LICENSE_URL: http://license-center:8787
       WORKER_TOKEN: ${WORKER_TOKEN:?请在 .env 设置 WORKER_TOKEN}
+      WORKER_NODE_TOKEN: ${WORKER_NODE_TOKEN:-}
+      WORKER_REMOTE_TRANSFER: ${WORKER_REMOTE_TRANSFER:-false}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:8787}
       ARTIFACT_ROOT: /app/var/artifacts
       WORKER_ID: ${WORKER_ID:-worker-compose-1}

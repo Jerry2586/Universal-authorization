@@ -43,6 +43,11 @@ export function newCsrfToken() {
   return randomBytes(24).toString('base64url');
 }
 
+export function newNodeCredential(role = 'node') {
+  const prefix = role === 'worker' ? 'WRK' : 'BLD';
+  return `${prefix}_${randomBytes(36).toString('base64url')}`;
+}
+
 export function keyPrefix(key) {
   return key.slice(0, Math.min(12, key.length));
 }

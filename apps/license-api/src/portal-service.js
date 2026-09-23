@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { canonicalizeDomain } from '../../../packages/core/src/canonicalize.js';
 import { invariant } from '../../../packages/core/src/errors.js';
-import { newId } from '../../../packages/core/src/identifiers.js';
+import { keyPrefix, newId, newNodeCredential } from '../../../packages/core/src/identifiers.js';
 import { openSecret, sealSecret } from '../../../packages/core/src/secret-box.js';
-import { secretMatches } from '../../../packages/core/src/security.js';
+import { hashSecret, secretMatches } from '../../../packages/core/src/security.js';
 import { publicBuildJob, SOURCE_KIND } from '../../../packages/contracts/src/build-job.js';
 
 export function createPortalService({ repository, queue, licenseService, artifactStore, buildEngine, config, clock = () => new Date() }) {
@@ -13,8 +13,97 @@ export function createPortalService({ repository, queue, licenseService, artifac
     return license;
   }
 
+  function boolSetting(key, fallback = true) {
+    const value = repository.setting(key);
+    return value === null ? fallback : value === 'true';
+  }
+
+  function publicNode(node) {
+    let capabilities = [];
+    try { capabilities = JSON.parse(node.capabilities_json ?? '[]'); } catch { capabilities = []; }
+    return {
+      id: node.id, name: node.name, role: node.role, public_url: node.public_url,
+      credential_prefix: node.credential_prefix, status: node.status, capabilities,
+      last_seen_at: node.last_seen_at, created_at: node.created_at, updated_at: node.updated_at,
+    };
+  }
+
+  function optionalHttpUrl(value, code = 'CMS_URL_INVALID') {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    let parsed;
+    try { parsed = new URL(text); } catch { invariant(false, code, '站点地址格式无效'); }
+    invariant(['http:', 'https:'].includes(parsed.protocol), code, '站点地址必须使用 HTTP 或 HTTPS');
+    return text.replace(/\/+$/, '');
+  }
+
   return {
     repository,
+    serviceEnabled(key, fallback = true) { return boolSetting(key, fallback); },
+    cmsSettings() {
+      const saved = repository.listSettings();
+      return {
+        platform_name: saved.platform_name ?? 'APPGOG Licensing CMS',
+        installation_role: config.role ?? (config.surface === 'combined' ? 'all-in-one' : 'license-center'),
+        license_public_url: saved.license_public_url ?? config.publicBaseUrl,
+        build_public_url: saved.build_public_url ?? config.buildCenterPublicUrl,
+        license_service_enabled: boolSetting('license_service_enabled', true),
+        customer_login_enabled: boolSetting('customer_login_enabled', true),
+        build_center_enabled: boolSetting('build_center_enabled', true),
+        new_builds_enabled: boolSetting('new_builds_enabled', true),
+        worker_enabled: boolSetting('worker_enabled', true),
+        nodes: repository.listServiceNodes().map(publicNode),
+      };
+    },
+    updateCmsSettings(input, actorId) {
+      const now = clock().toISOString();
+      const textFields = ['platform_name', 'license_public_url', 'build_public_url'];
+      const booleanFields = ['license_service_enabled', 'customer_login_enabled', 'build_center_enabled', 'new_builds_enabled', 'worker_enabled'];
+      for (const key of textFields) {
+        if (input[key] === undefined) continue;
+        const value = String(input[key]).trim();
+        invariant(value.length >= 2 && value.length <= 200, 'CMS_SETTING_INVALID', `${key} 配置无效`);
+        repository.setSetting(key, key.endsWith('_url') ? optionalHttpUrl(value) : value, now);
+      }
+      for (const key of booleanFields) {
+        if (input[key] !== undefined) repository.setSetting(key, input[key] === true ? 'true' : 'false', now);
+      }
+      repository.audit({ actorType: 'admin', actorId, action: 'cms.settings.updated', subjectType: 'system',
+        subjectId: 'cms', metadata: { keys: [...textFields, ...booleanFields].filter((key) => input[key] !== undefined) }, now });
+      return this.cmsSettings();
+    },
+    createServiceNode(input, actorId) {
+      invariant(['build-center', 'worker'].includes(input.role), 'NODE_ROLE_INVALID', '节点角色无效');
+      const name = String(input.name ?? '').trim();
+      invariant(name.length >= 2 && name.length <= 80, 'NODE_NAME_INVALID', '节点名称必须为 2–80 个字符');
+      const credential = newNodeCredential(input.role);
+      const now = clock().toISOString();
+      const capabilities = input.role === 'worker' ? ['build.lease', 'build.transfer'] : ['customer.proxy'];
+      const node = repository.createServiceNode({
+        name, role: input.role, publicUrl: optionalHttpUrl(input.public_url, 'NODE_URL_INVALID'),
+        credentialPrefix: keyPrefix(credential), credentialHash: hashSecret(credential, config.pepper), capabilities, now,
+      });
+      repository.audit({ actorType: 'admin', actorId, action: 'service_node.created', subjectType: 'service_node',
+        subjectId: node.id, metadata: { name, role: input.role }, now });
+      return { node: publicNode(node), credential };
+    },
+    changeServiceNodeStatus(id, status, actorId) {
+      invariant(['active', 'disabled'].includes(status), 'NODE_STATUS_INVALID', '节点状态无效');
+      const now = clock().toISOString();
+      const node = repository.changeServiceNodeStatus(id, status, now);
+      invariant(node, 'NODE_NOT_FOUND', '节点不存在', 404);
+      repository.audit({ actorType: 'admin', actorId, action: `service_node.${status}`, subjectType: 'service_node', subjectId: id, now });
+      return publicNode(node);
+    },
+    rotateServiceNodeCredential(id, actorId) {
+      const current = repository.serviceNodeById(id);
+      invariant(current, 'NODE_NOT_FOUND', '节点不存在', 404);
+      const credential = newNodeCredential(current.role);
+      const now = clock().toISOString();
+      const node = repository.rotateServiceNodeCredential(id, keyPrefix(credential), hashSecret(credential, config.pepper), now);
+      repository.audit({ actorType: 'admin', actorId, action: 'service_node.credential_rotated', subjectType: 'service_node', subjectId: id, now });
+      return { node: publicNode(node), credential };
+    },
     customerOverview(session) {
       const license = customerLicense(session);
       const builds = repository.listBuildJobsByLicense(license.id, 30);
@@ -219,6 +308,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
           status: admin.status, is_owner: Boolean(admin.is_owner), last_login_at: admin.last_login_at,
           last_login_ip: admin.last_login_ip, created_at: admin.created_at,
         })),
+        cms: this.cmsSettings(),
       };
     },
 
@@ -245,13 +335,31 @@ export function createPortalService({ repository, queue, licenseService, artifac
         return {
           job: publicBuildJob(job),
           source: repository.sourceVersionById(job.source_version_id),
-          build: claimedBuild,
+          build: { ...claimedBuild, licenseServer: this.cmsSettings().license_public_url },
         };
       } catch (error) {
         if (claimedBuild) repository.revokeUnactivatedBuild(claimedBuild.buildId);
         queue.fail(job.id, { workerId, code: error.code ?? 'BUILD_AUTHORIZATION_FAILED', message: error.message });
         throw error;
       }
+    },
+
+    sourceForWorker(workerId, jobId) {
+      const job = repository.buildJobById(jobId);
+      invariant(job && job.status === 'processing' && job.lease_owner === workerId, 'BUILD_LEASE_INVALID', '构建任务租约无效', 409);
+      const source = repository.sourceVersionById(job.source_version_id);
+      invariant(source?.source_ref, 'SOURCE_VERSION_NOT_READY', '构建源码不存在', 409);
+      return artifactStore.read(source.source_ref);
+    },
+
+    saveWorkerArtifact(workerId, jobId, buffer) {
+      const job = repository.buildJobById(jobId);
+      invariant(job && job.status === 'processing' && job.lease_owner === workerId, 'BUILD_LEASE_INVALID', '构建任务租约无效', 409);
+      buildEngine.validateSource(buffer);
+      const sha256 = createHash('sha256').update(buffer).digest('hex');
+      const artifactRef = `builds/${job.id}/worker-upload-${sha256.slice(0, 12)}.zip`;
+      artifactStore.put(artifactRef, buffer);
+      return { artifact_ref: artifactRef, artifact_sha256: sha256 };
     },
 
     updateBuildProgress(workerId, jobId, { progress, message }) {

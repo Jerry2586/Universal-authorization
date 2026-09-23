@@ -162,6 +162,26 @@ CREATE TABLE IF NOT EXISTS build_jobs (
   completed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS service_nodes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  public_url TEXT,
+  credential_prefix TEXT NOT NULL,
+  credential_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  capabilities_json TEXT NOT NULL DEFAULT '[]',
+  last_seen_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_licenses_product ON licenses(product_id);
 CREATE INDEX IF NOT EXISTS idx_builds_license ON builds(license_id);
 CREATE INDEX IF NOT EXISTS idx_activations_license ON activations(license_id);
@@ -170,4 +190,5 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON web_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_source_versions_product ON source_versions(product_id, status);
 CREATE INDEX IF NOT EXISTS idx_build_jobs_status ON build_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_build_jobs_license ON build_jobs(license_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_service_nodes_role ON service_nodes(role, status);
 `;

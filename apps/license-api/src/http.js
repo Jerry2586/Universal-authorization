@@ -3,6 +3,7 @@ import { extname, resolve, sep } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { DomainError, invariant } from '../../../packages/core/src/errors.js';
 import { hashPassword, verifyPassword } from '../../../packages/core/src/password.js';
+import { hashSecret } from '../../../packages/core/src/security.js';
 import { ADMIN_ROLES } from './admin-policy.js';
 
 const PUBLIC_ROOT = resolve(process.cwd(), 'apps/web/public');
@@ -177,6 +178,23 @@ function createRateLimiter() {
 
 export function createHttpHandler({ service, sessions, portal, artifactStore, config, publicKey }) {
   const rateLimit = createRateLimiter();
+  function nodeFromToken(request, role) {
+    const token = bearer(request);
+    if (!token) return null;
+    let node = null;
+    try { node = portal.repository.serviceNodeByCredentialHash(hashSecret(token, config.pepper)); } catch { return null; }
+    if (!node || node.role !== role || node.status !== 'active') return null;
+    return portal.repository.touchServiceNode(node.id, new Date().toISOString());
+  }
+
+  function workerIdentity(request, requestedId) {
+    const node = nodeFromToken(request, 'worker');
+    if (node) return node.id;
+    requireToken(request, config.workerToken, '构建 Worker');
+    invariant(requestedId?.trim(), 'WORKER_ID_REQUIRED', '必须提供 Worker ID');
+    return requestedId.trim();
+  }
+
   return async function handler(request, response) {
     const corsHeaders = publicCorsHeaders(request);
     try {
@@ -190,7 +208,9 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
         const path = url.pathname;
         const customerRoute = path.startsWith('/web/customer/');
         const internalSession = sessionRoute && sessionActor === 'customer';
-        if ((customerRoute || internalSession) && (!config.internalServiceToken || !safeEqual(request.headers['x-appgog-internal'], config.internalServiceToken))) {
+        const buildNode = nodeFromToken(request, 'build-center');
+        const legacyInternal = config.internalServiceToken && safeEqual(request.headers['x-appgog-internal'], config.internalServiceToken);
+        if ((customerRoute || internalSession) && !buildNode && !legacyInternal) {
           throw new DomainError('INTERNAL_AUTH_REQUIRED', '内部服务凭证无效', 403);
         }
         if (sessionRoute && sessionActor === 'admin' && request.headers['x-appgog-internal']) {
@@ -226,6 +246,8 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'POST' && url.pathname === '/web/customer/login') {
+        invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('customer_login_enabled'),
+          'BUILD_CENTER_MAINTENANCE', '客户打包中心正在维护', 503);
         rateLimit(`customer-login:${request.socket.remoteAddress}`, 12, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = sessions.loginCustomer(body.license_key);
@@ -266,11 +288,14 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'GET' && url.pathname === '/web/customer/overview') {
+        invariant(portal.serviceEnabled('build_center_enabled'), 'BUILD_CENTER_MAINTENANCE', '客户打包中心正在维护', 503);
         const session = requireWebSession(request, sessions, 'customer');
         return json(response, 200, portal.customerOverview(session));
       }
 
       if (method === 'POST' && url.pathname === '/web/customer/builds') {
+        invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('new_builds_enabled'),
+          'NEW_BUILDS_DISABLED', '当前暂停接收新构建', 503);
         const session = requireWebSession(request, sessions, 'customer', true);
         const body = await readJson(request);
         return json(response, 201, portal.enqueueCustomerBuild(session, body));
@@ -306,8 +331,36 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
           if (!admin.permissions.includes('activation.view')) overview.activations = [];
           if (!admin.permissions.includes('audit.view')) overview.audit = [];
           if (!admin.permissions.includes('admin.manage')) overview.admins = [];
+          if (!admin.permissions.includes('system.manage')) overview.cms = null;
         }
         return json(response, 200, overview);
+      }
+
+      if (method === 'POST' && url.pathname === '/web/admin/cms/settings') {
+        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
+        const body = await readJson(request);
+        return json(response, 200, portal.updateCmsSettings(body, session.actor_id));
+      }
+
+      if (method === 'POST' && url.pathname === '/web/admin/cms/nodes') {
+        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
+        const body = await readJson(request);
+        const result = portal.createServiceNode(body, session.actor_id);
+        return json(response, 201, { ...result.node, node_credential: result.credential });
+      }
+
+      const nodeStatusMatch = url.pathname.match(/^\/web\/admin\/cms\/nodes\/([^/]+)\/status$/);
+      if (method === 'POST' && nodeStatusMatch) {
+        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
+        const body = await readJson(request);
+        return json(response, 200, portal.changeServiceNodeStatus(nodeStatusMatch[1], body.status, session.actor_id));
+      }
+
+      const nodeRotateMatch = url.pathname.match(/^\/web\/admin\/cms\/nodes\/([^/]+)\/rotate$/);
+      if (method === 'POST' && nodeRotateMatch) {
+        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
+        const result = portal.rotateServiceNodeCredential(nodeRotateMatch[1], session.actor_id);
+        return json(response, 200, { ...result.node, node_credential: result.credential });
       }
 
       if (method === 'POST' && url.pathname === '/web/admin/admins') {
@@ -474,35 +527,52 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'POST' && url.pathname === '/api/v1/worker/jobs/lease') {
-        requireToken(request, config.workerToken, '构建 Worker');
+        invariant(portal.serviceEnabled('worker_enabled'), 'WORKER_DISABLED', '构建 Worker 服务已暂停', 503);
         const body = await readJson(request);
-        invariant(body.worker_id?.trim(), 'WORKER_ID_REQUIRED', '必须提供 Worker ID');
-        const leased = portal.leaseBuild(body.worker_id.trim());
+        const workerId = workerIdentity(request, body.worker_id);
+        const leased = portal.leaseBuild(workerId);
         return json(response, 200, { task: leased });
       }
 
       const progressMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/progress$/);
       if (method === 'POST' && progressMatch) {
-        requireToken(request, config.workerToken, '构建 Worker');
         const body = await readJson(request);
-        return json(response, 200, portal.updateBuildProgress(body.worker_id, progressMatch[1], body));
+        const workerId = workerIdentity(request, body.worker_id);
+        return json(response, 200, portal.updateBuildProgress(workerId, progressMatch[1], body));
+      }
+
+      const sourceMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/source$/);
+      if (method === 'GET' && sourceMatch) {
+        const workerId = workerIdentity(request, url.searchParams.get('worker_id'));
+        const buffer = portal.sourceForWorker(workerId, sourceMatch[1]);
+        response.writeHead(200, { ...securityHeaders('application/zip'), 'content-length': buffer.length });
+        return response.end(buffer);
+      }
+
+      const artifactMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/artifact$/);
+      if (method === 'PUT' && artifactMatch) {
+        const workerId = workerIdentity(request, url.searchParams.get('worker_id'));
+        invariant(request.headers['content-type'] === 'application/zip', 'ARTIFACT_CONTENT_TYPE_INVALID', '构建成品必须为 ZIP', 415);
+        const buffer = await readBuffer(request, config.maxSourceUploadBytes);
+        return json(response, 201, portal.saveWorkerArtifact(workerId, artifactMatch[1], buffer));
       }
 
       const completeMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/complete$/);
       if (method === 'POST' && completeMatch) {
-        requireToken(request, config.workerToken, '构建 Worker');
         const body = await readJson(request);
-        return json(response, 200, portal.completeBuild(body.worker_id, completeMatch[1], body));
+        const workerId = workerIdentity(request, body.worker_id);
+        return json(response, 200, portal.completeBuild(workerId, completeMatch[1], body));
       }
 
       const failMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/fail$/);
       if (method === 'POST' && failMatch) {
-        requireToken(request, config.workerToken, '构建 Worker');
         const body = await readJson(request);
-        return json(response, 200, portal.failBuild(body.worker_id, failMatch[1], body));
+        const workerId = workerIdentity(request, body.worker_id);
+        return json(response, 200, portal.failBuild(workerId, failMatch[1], body));
       }
 
       if (method === 'POST' && url.pathname === '/api/v1/activations') {
+        invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
         rateLimit(`activate:${request.socket.remoteAddress}`, 30, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = service.activate({
@@ -517,6 +587,7 @@ export function createHttpHandler({ service, sessions, portal, artifactStore, co
       }
 
       if (method === 'POST' && url.pathname === '/api/v1/activations/refresh') {
+        invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
         rateLimit(`refresh:${request.socket.remoteAddress}`, 120, 15 * 60 * 1000);
         const body = await readJson(request);
         const result = service.refresh({

@@ -45,6 +45,7 @@
         <button class="nav-item" type="button" data-view="activations" data-title="激活站点"><span class="nav-icon">◎</span><span>激活站点</span></button>
         <button class="nav-item" type="button" data-view="members" data-title="成员权限"><span class="nav-icon">♙</span><span>成员权限</span></button>
         <button class="nav-item" type="button" data-view="audit" data-title="审计记录"><span class="nav-icon">≡</span><span>审计记录</span></button>
+        <button class="nav-item" type="button" data-view="cms" data-title="CMS 与节点"><span class="nav-icon">⚙</span><span>CMS 与节点</span></button>
       </nav>
       <div class="sidebar-meta">
         <div class="service-state"><span class="live-dot"></span><div><strong>系统在线</strong><span>Operator console</span></div></div>
@@ -111,6 +112,36 @@
         <section class="page-view" data-page="audit">
           <div class="page-heading"><div><span class="overline">AUDIT TRAIL</span><h2>审计记录</h2><p>授权签发、构建、激活、换绑与 Key 轮换等关键操作记录。</p></div></div>
           <section class="surface table-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="audit-search" placeholder="搜索事件、操作者或对象"></label></div><div class="table-scroll"><table><thead><tr><th>事件</th><th>操作者类型</th><th>操作者</th><th>对象类型</th><th>对象 ID</th><th>发生时间</th></tr></thead><tbody id="audit-list"><tr><td colspan="6" class="empty-cell">暂无审计记录</td></tr></tbody></table></div></section>
+        </section>
+
+        <section class="page-view" data-page="cms">
+          <div class="page-heading"><div><span class="overline">CMS CONTROL PLANE</span><h2>CMS 与服务节点</h2><p>一套程序支持完整安装、授权中心、打包中心与 Worker。授权中心始终是唯一数据和信任中心。</p></div><span class="status-pill" id="cms-role-badge">读取中</span></div>
+          <div class="management-grid cms-grid">
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">SITE & SERVICES</span><h3>站点与服务</h3><p>域名变更后仍需同步修改反向代理和部署环境。</p></div><span class="surface-number">01</span></div>
+              <form id="cms-settings-form" class="form-stack form-compact">
+                <label class="field"><span>平台名称</span><input name="platform_name" required maxlength="80" placeholder="APPGOG Licensing CMS"></label>
+                <label class="field"><span>授权中心地址</span><input name="license_public_url" type="url" required placeholder="https://auth.example.com"></label>
+                <label class="field"><span>打包中心地址</span><input name="build_public_url" type="url" required placeholder="https://build.example.com/build"></label>
+                <div class="switch-list">
+                  <label class="switch-row"><span><strong>授权服务</strong><small>首次激活和凭证刷新</small></span><input name="license_service_enabled" type="checkbox"><i></i></label>
+                  <label class="switch-row"><span><strong>客户登录</strong><small>允许固定 Key 登录打包中心</small></span><input name="customer_login_enabled" type="checkbox"><i></i></label>
+                  <label class="switch-row"><span><strong>打包中心</strong><small>开放客户版本和构建页面</small></span><input name="build_center_enabled" type="checkbox"><i></i></label>
+                  <label class="switch-row"><span><strong>接收新构建</strong><small>维护时可暂停新任务</small></span><input name="new_builds_enabled" type="checkbox"><i></i></label>
+                  <label class="switch-row"><span><strong>Worker 服务</strong><small>允许 Worker 领取和提交任务</small></span><input name="worker_enabled" type="checkbox"><i></i></label>
+                </div>
+                <button class="button button-primary button-wide" type="submit"><span>保存 CMS 设置</span><span>→</span></button>
+              </form>
+            </section>
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">REGISTER NODE</span><h3>接入独立节点</h3><p>创建后凭证只显示一次。打包节点不持有授权数据库和签名私钥。</p></div><span class="surface-number">02</span></div>
+              <form id="node-form" class="form-stack form-compact">
+                <label class="field"><span>节点名称</span><input name="name" required maxlength="80" placeholder="例如 香港打包中心"></label>
+                <label class="field"><span>节点角色</span><select name="role" required><option value="build-center">打包中心</option><option value="worker">构建 Worker</option></select></label>
+                <label class="field"><span>节点公开地址（可选）</span><input name="public_url" type="url" placeholder="https://build-hk.example.com"></label>
+                <button class="button button-primary button-wide" type="submit"><span>创建节点凭证</span><span>→</span></button>
+              </form>
+            </section>
+          </div>
+          <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">SERVICE NODES</span><h3>节点列表</h3></div><span class="status-pill" id="node-count">0 个节点</span></div><div class="table-scroll"><table><thead><tr><th>节点</th><th>角色</th><th>地址</th><th>凭证前缀</th><th>状态</th><th>最后在线</th><th>操作</th></tr></thead><tbody id="node-list"><tr><td colspan="7" class="empty-cell">尚未创建独立节点</td></tr></tbody></table></div></section>
         </section>
       </div>
     </main>

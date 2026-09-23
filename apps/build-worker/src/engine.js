@@ -54,8 +54,8 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     return { files, entries };
   }
 
-  async build({ sourceRef, product, version, buildId, packageId, packageSecret, domain }) {
-    const sourceBuffer = this.artifactStore.read(sourceRef);
+  async build({ sourceRef, sourceBuffer: providedSourceBuffer, product, version, buildId, packageId, packageSecret, domain }) {
+    const sourceBuffer = providedSourceBuffer ?? this.artifactStore.read(sourceRef);
     const { files, entries } = this.validateSource(sourceBuffer);
     const injection = createBuildInjection({
       product,

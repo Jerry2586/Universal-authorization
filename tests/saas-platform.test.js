@@ -292,6 +292,82 @@ test('版本更新公告由服务端签名，打包地址与版本字段不能�
   assert.equal(payload.build_center_url, feed.data.build_center_url);
 });
 
+test('CMS 设置和节点凭证只由所有者管理，停用与轮换会立即生效', async (t) => {
+  const app = await fixture(t, '2026-09-22T08:00:00.000Z', 'license-center');
+  const owner = await app.owner();
+  const settings = await app.send('/web/admin/cms/settings', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: {
+      platform_name: 'APPGOG 正式授权中心',
+      license_public_url: 'https://auth.example.com/',
+      build_public_url: 'https://build.example.com/build/',
+      license_service_enabled: true,
+      customer_login_enabled: true,
+      build_center_enabled: true,
+      new_builds_enabled: false,
+      worker_enabled: true,
+    },
+  });
+  assert.equal(settings.status, 200);
+  assert.equal(settings.data.platform_name, 'APPGOG 正式授权中心');
+  assert.equal(settings.data.license_public_url, 'https://auth.example.com');
+  assert.equal(settings.data.new_builds_enabled, false);
+
+  const invalidUrl = await app.send('/web/admin/cms/settings', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { license_public_url: 'not-a-url' },
+  });
+  assert.equal(invalidUrl.status, 400);
+  assert.equal(invalidUrl.data.error.code, 'CMS_URL_INVALID');
+
+  const created = await app.send('/web/admin/cms/nodes', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { name: '香港打包中心', role: 'build-center', public_url: 'https://build-hk.example.com/' },
+  });
+  assert.equal(created.status, 201);
+  assert.match(created.data.node_credential, /^BLD_/);
+  assert.equal(created.data.public_url, 'https://build-hk.example.com');
+  const oldCredential = created.data.node_credential;
+  const stored = app.database.prepare('SELECT credential_hash FROM service_nodes WHERE id = ?').get(created.data.id);
+  assert.notEqual(stored.credential_hash, oldCredential);
+
+  async function probe(credential) {
+    return fetch(`${app.base}/web/customer/overview`, { headers: { authorization: `Bearer ${credential}` } });
+  }
+  assert.equal((await probe(oldCredential)).status, 401);
+  const disabled = await app.send(`/web/admin/cms/nodes/${created.data.id}/status`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { status: 'disabled' },
+  });
+  assert.equal(disabled.status, 200);
+  assert.equal((await probe(oldCredential)).status, 403);
+  await app.send(`/web/admin/cms/nodes/${created.data.id}/status`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { status: 'active' },
+  });
+  const rotated = await app.send(`/web/admin/cms/nodes/${created.data.id}/rotate`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: {},
+  });
+  assert.equal(rotated.status, 200);
+  assert.match(rotated.data.node_credential, /^BLD_/);
+  assert.notEqual(rotated.data.node_credential, oldCredential);
+  assert.equal((await probe(oldCredential)).status, 403);
+  assert.equal((await probe(rotated.data.node_credential)).status, 401);
+
+  const staffCreated = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'cms-support', display_name: 'CMS 客服', password: 'cms-support-password-2026', role: 'support' },
+  });
+  assert.equal(staffCreated.status, 201);
+  const staff = await app.send('/web/admin/login', { method: 'POST', body: { username: 'cms-support', password: 'cms-support-password-2026' } });
+  const staffOverview = await app.send('/web/admin/overview', { cookie: staff.cookie.split(';')[0] });
+  assert.equal(staffOverview.status, 200);
+  assert.equal(staffOverview.data.cms, null);
+  const forbidden = await app.send('/web/admin/cms/settings', {
+    method: 'POST', cookie: staff.cookie.split(';')[0], csrf: staff.data.csrf_token,
+    body: { platform_name: '不应被保存' },
+  });
+  assert.equal(forbidden.status, 403);
+});
+
 test('已有 SQLite 数据库自动追加新字段并保留原管理员身份', () => {
   const root = mkdtempSync(join(tmpdir(), 'appgog-migrate-test-'));
   const path = join(root, 'legacy.sqlite');

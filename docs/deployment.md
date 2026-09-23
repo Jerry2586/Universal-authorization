@@ -1,6 +1,6 @@
 # 部署说明
 
-日期：2026-09-23。
+日期：2026-09-22。
 
 需要从空服务器开始逐步操作时，请直接阅读 [宝塔、1Panel 与 Docker 完整部署教程](宝塔-1Panel-Docker部署教程.md)。
 
@@ -13,13 +13,36 @@
   ├─ admin.example.com  → license-center:8787
   └─ build.example.com  → build-center:8788
 
-build-center ── INTERNAL_SERVICE_TOKEN ──→ license-center
-build-worker ── WORKER_TOKEN ────────────→ license-center
-license-center + build-worker ── 仅共享 appgog-artifacts 成品卷
+build-center ── BUILD_CENTER_NODE_TOKEN ──→ license-center
+build-worker ── WORKER_NODE_TOKEN ────────→ license-center
+build-worker ── HTTPS 下载源码/上传成品 ──→ license-center
 数据库 appgog-db / 签名密钥 appgog-keys ── 只挂授权中心
 ```
 
 客户站不要反向代理授权中心的管理路由。授权中心和客户打包中心应使用两个独立域名；Cookie、限流和访问日志也因此自然隔离。
+
+## 一套 CMS 的四种安装角色
+
+```text
+all-in-one      完整安装：后台、授权接口、客户打包页、内置 Worker
+license-center  唯一授权中心：数据库、签名私钥、节点管理
+build-center    独立客户打包站：只保存节点凭证，不保存客户库和私钥
+worker          独立构建节点：通过 HTTPS 传输源码和成品
+```
+
+完整安装：
+
+```sh
+npm run cms:install -- --role all-in-one --public-url https://auth.example.com
+npm run cms:start
+```
+
+拆分服务器时，先安装授权中心，再在后台“CMS 与节点”创建节点。把一次性显示的节点凭证复制到目标服务器：
+
+```sh
+npm run cms:install -- --role build-center --license-url https://auth.example.com --node-token BLD_xxx
+npm run cms:install -- --role worker --license-url https://auth.example.com --node-token WRK_xxx
+```
 
 ## Linux / Docker Compose
 
@@ -62,4 +85,4 @@ docker compose down
 
 ## 当前数据层边界
 
-当前可运行数据层是 SQLite + 共享构建成品卷，适合单机或小规模部署。Docker 运行时 Worker 只挂载成品卷，不接触数据库与签名密钥卷。本机三进程开发启动器会限制传给 Worker 的环境变量，但同一系统用户仍可能直接读取本地 `.env` 和密钥文件，因此不等同于容器隔离。多机扩容前必须完成 PostgreSQL migration、对象存储和分布式队列。
+当前可运行数据层是授权中心单机 SQLite，适合单授权中心或小规模部署。使用节点凭证时，Worker 通过授权中心 HTTPS 接口下载源码并上传成品，因此跨服务器不要求共享卷，也不接触数据库和签名私钥。旧版 `WORKER_TOKEN + 共享卷` 模式仍保留兼容。若需要多个授权中心并行写入、海量任务或自动故障转移，仍需完成 PostgreSQL migration、对象存储和分布式队列。

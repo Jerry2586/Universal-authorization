@@ -221,6 +221,24 @@ export function createRepository(database) {
     updateAdminPassword: database.prepare(`UPDATE admin_users SET password_hash = ?, updated_at = ? WHERE id = ?`),
     revokeAdminSessions: database.prepare(`DELETE FROM web_sessions WHERE actor_type = 'admin' AND actor_id = ?`),
     withdrawSourceVersion: database.prepare(`UPDATE source_versions SET status = 'withdrawn', withdrawn_reason = ? WHERE id = ? AND status = 'active'`),
+    settingByKey: database.prepare(`SELECT * FROM system_settings WHERE key = ?`),
+    listSettings: database.prepare(`SELECT * FROM system_settings ORDER BY key ASC`),
+    upsertSetting: database.prepare(`
+      INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `),
+    insertServiceNode: database.prepare(`
+      INSERT INTO service_nodes (id, name, role, public_url, credential_prefix, credential_hash, status, capabilities_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+    `),
+    serviceNodeById: database.prepare(`SELECT * FROM service_nodes WHERE id = ?`),
+    serviceNodeByCredentialHash: database.prepare(`SELECT * FROM service_nodes WHERE credential_hash = ?`),
+    listServiceNodes: database.prepare(`SELECT * FROM service_nodes ORDER BY created_at DESC`),
+    updateServiceNodeSeen: database.prepare(`UPDATE service_nodes SET last_seen_at = ?, updated_at = ? WHERE id = ? AND status = 'active'`),
+    updateServiceNodeStatus: database.prepare(`UPDATE service_nodes SET status = ?, updated_at = ? WHERE id = ?`),
+    rotateServiceNodeCredential: database.prepare(`
+      UPDATE service_nodes SET credential_prefix = ?, credential_hash = ?, updated_at = ? WHERE id = ?
+    `),
     changeLicenseDomain: database.prepare(`
       UPDATE licenses SET bound_domain = ?, generation = generation + 1, updated_at = ? WHERE id = ?
     `),
@@ -407,6 +425,38 @@ export function createRepository(database) {
       return changed === 1 ? queries.adminById.get(id) : null;
     },
     revokeAdminSessions(id) { queries.revokeAdminSessions.run(id); },
+    setting(key) {
+      const record = queries.settingByKey.get(key);
+      return record ? record.value : null;
+    },
+    listSettings() {
+      return Object.fromEntries(queries.listSettings.all().map((record) => [record.key, record.value]));
+    },
+    setSetting(key, value, now) {
+      queries.upsertSetting.run(key, String(value), now);
+      return queries.settingByKey.get(key);
+    },
+    createServiceNode(values) {
+      const id = values.id ?? newId('nod');
+      queries.insertServiceNode.run(
+        id, values.name, values.role, values.publicUrl ?? null, values.credentialPrefix,
+        values.credentialHash, JSON.stringify(values.capabilities ?? []), values.now, values.now,
+      );
+      return queries.serviceNodeById.get(id);
+    },
+    serviceNodeById: (id) => queries.serviceNodeById.get(id),
+    serviceNodeByCredentialHash: (hash) => queries.serviceNodeByCredentialHash.get(hash),
+    listServiceNodes: () => queries.listServiceNodes.all(),
+    touchServiceNode(id, now) {
+      queries.updateServiceNodeSeen.run(now, now, id);
+      return queries.serviceNodeById.get(id);
+    },
+    changeServiceNodeStatus(id, status, now) {
+      return queries.updateServiceNodeStatus.run(status, now, id).changes === 1 ? queries.serviceNodeById.get(id) : null;
+    },
+    rotateServiceNodeCredential(id, prefix, hash, now) {
+      return queries.rotateServiceNodeCredential.run(prefix, hash, now, id).changes === 1 ? queries.serviceNodeById.get(id) : null;
+    },
     withdrawSourceVersion(id, reason) {
       return queries.withdrawSourceVersion.run(reason, id).changes === 1 ? queries.sourceVersionById.get(id) : null;
     },

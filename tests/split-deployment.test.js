@@ -11,6 +11,7 @@ import { openDatabase } from '../apps/license-api/src/database.js';
 import { createHttpHandler } from '../apps/license-api/src/http.js';
 import { createBuildCenterHandler } from '../apps/build-center/src/server.js';
 import { runWorkerOnce } from '../apps/build-worker/src/server.js';
+import { LocalArtifactStore } from '../packages/adapters/src/local-artifact-store.js';
 import { writeZip, readZip } from '../packages/core/src/zip.js';
 
 test('分层部署：管理、客户和独立 Worker 的真实构建链路与访问边界', async (t) => {
@@ -35,11 +36,13 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
     artifactRoot: join(tempRoot, 'artifacts'),
   };
   const app = bootstrap({ database, config, privateKey, publicKey: publicKeyPem });
+  const buildNode = app.portal.createServiceNode({ name: '独立打包中心', role: 'build-center', public_url: 'https://build.example.com' }, 'test-owner');
+  const workerNode = app.portal.createServiceNode({ name: '独立构建节点', role: 'worker' }, 'test-owner');
   const center = createServer(createHttpHandler({ ...app, config, publicKey: publicKeyPem }));
   center.listen(0, '127.0.0.1');
   await once(center, 'listening');
   const centerUrl = `http://127.0.0.1:${center.address().port}`;
-  const build = createServer(createBuildCenterHandler({ internalUrl: centerUrl, internalToken: config.internalServiceToken }));
+  const build = createServer(createBuildCenterHandler({ internalUrl: centerUrl, nodeToken: buildNode.credential }));
   build.listen(0, '127.0.0.1');
   await once(build, 'listening');
   const buildUrl = `http://127.0.0.1:${build.address().port}`;
@@ -87,8 +90,14 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   assert.equal(queued.status, 201);
   assert.equal(queued.data.status, 'queued');
 
-  const worked = await runWorkerOnce({ baseUrl: centerUrl, token: config.workerToken, workerId: 'test-independent-worker', artifactStore: app.artifactStore, publicKey: publicKeyPem, publicBaseUrl: centerUrl });
+  const remoteWorkerStore = new LocalArtifactStore(join(tempRoot, 'worker-artifacts'));
+  const worked = await runWorkerOnce({
+    baseUrl: centerUrl, token: workerNode.credential, workerId: 'ignored-request-worker-id',
+    artifactStore: remoteWorkerStore, publicKey: publicKeyPem, publicBaseUrl: centerUrl, remoteTransfer: true,
+  });
   assert.equal(worked, true);
+  const storedJob = app.repository.buildJobById(queued.data.id);
+  assert.equal(storedJob.lease_owner, workerNode.node.id);
   const detail = await send(buildUrl, `/web/customer/builds/${queued.data.id}`, { cookie: customerCookie });
   assert.equal(detail.status, 200);
   assert.equal(detail.data.status, 'succeeded');

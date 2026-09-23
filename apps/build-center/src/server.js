@@ -20,8 +20,10 @@ const security = {
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
 };
 
-export function createBuildCenterHandler({ internalUrl = 'http://127.0.0.1:8787', internalToken, publicRoot = root } = {}) {
-  if (typeof internalToken !== 'string' || internalToken.length < 32) throw new Error('必须设置至少 32 字符的 INTERNAL_SERVICE_TOKEN');
+export function createBuildCenterHandler({ internalUrl = 'http://127.0.0.1:8787', internalToken, nodeToken, publicRoot = root } = {}) {
+  if ((!nodeToken || nodeToken.length < 32) && (!internalToken || internalToken.length < 32)) {
+    throw new Error('必须设置打包中心节点凭证或至少 32 字符的 INTERNAL_SERVICE_TOKEN');
+  }
   const destinationBase = new URL(internalUrl);
   if (!['http:', 'https:'].includes(destinationBase.protocol)) throw new Error('INTERNAL_LICENSE_URL 协议无效');
   return function handler(request, response) {
@@ -55,7 +57,7 @@ export function createBuildCenterHandler({ internalUrl = 'http://127.0.0.1:8787'
     }
     const destination = new URL(url.pathname + url.search, destinationBase);
     const forward = destination.protocol === 'https:' ? httpsRequest : httpRequest;
-    const headers = { 'x-appgog-internal': internalToken };
+    const headers = nodeToken ? { authorization: `Bearer ${nodeToken}` } : { 'x-appgog-internal': internalToken };
     for (const name of ['cookie', 'content-type', 'content-length', 'x-csrf-token', 'accept']) {
       if (request.headers[name]) headers[name] = request.headers[name];
     }
@@ -77,9 +79,13 @@ export function createBuildCenterHandler({ internalUrl = 'http://127.0.0.1:8787'
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.dirname, 'server.js')) {
+  loadLocalEnvironment();
   const port = Number.parseInt(process.env.BUILD_CENTER_PORT ?? '8788', 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('BUILD_CENTER_PORT 无效');
-  loadLocalEnvironment();
-  createServer(createBuildCenterHandler({ internalUrl: process.env.INTERNAL_LICENSE_URL ?? 'http://127.0.0.1:8787', internalToken: process.env.INTERNAL_SERVICE_TOKEN }))
+  createServer(createBuildCenterHandler({
+    internalUrl: process.env.INTERNAL_LICENSE_URL ?? 'http://127.0.0.1:8787',
+    internalToken: process.env.INTERNAL_SERVICE_TOKEN,
+    nodeToken: process.env.BUILD_CENTER_NODE_TOKEN,
+  }))
     .listen(port, () => console.log(`APPGOG Build Center listening on ${port}`));
 }
