@@ -17,6 +17,22 @@
 - Docker 初始化身份保留、旧部署凭证导入、备份恢复输入防护、更新回滚路径和不删除数据卷：自动测试通过；
 - Linux 安装器的发行版/CPU 架构/磁盘/Buildx/端口检查，以及 DNS、HTTPS、TLS 到期、签名密钥权限和最近加密备份诊断：代码和自动静态测试通过。
 
+## 真实 Linux Docker 验证
+
+GitHub Actions 运行 `35867228286`（提交 `42d8049`）已成功完成：
+
+- Linux 全部 60 项自动测试通过，没有跳过；
+- 构建镜像并启动唯一常驻 `appgog` 容器，健康检查通过；
+- 首次初始化后完成后台登录、授权和 Worker 实际打包；
+- 更新后原身份与业务数据保持；
+- 加密备份恢复到另一个隔离项目后，原业务验证通过；
+- 修改授权域名后重复安装，配置重载且身份保持；
+- 自动生成并上传 `appgog-single-container-installer` 安装制品。
+
+流水线地址：https://github.com/Jerry2586/Universal-authorization/actions/runs/35867228286
+
+此结果覆盖新单容器拓扑；旧多容器迁移及失败回滚尚未完成真实环境演练。
+
 ## 发布前本机检查
 
 - 关键 JavaScript 文件执行 `node --check`；
@@ -29,11 +45,11 @@
 
 当前开发主机是 Windows，未安装 Docker。Linux Docker 运行结果以对应 GitHub Actions 为准，下列目标服务器验收不能由本机替代：
 
-- `docker compose config --quiet` 的真实 Docker CLI 解析；
+- 目标服务器已有 Docker 版本及自定义网络配置的兼容性；
 - 自解压安装文件在目标 Linux 的系统依赖补齐；
 - Debian、Ubuntu、RHEL、Rocky、Alma、Fedora 实机包管理器安装；
 - 公网 DNS A 记录、80/443 防火墙、Caddy ACME 证书签发与自动续期；
-- 全新 VPS 一行安装、更新失败自动回滚和整机备份恢复演练；
+- 全新 VPS 一行安装、更新失败自动回滚和旧多容器迁移演练（新单容器数据备份恢复已在 CI 通过）；
 - 单容器的资源限制与宿主机加固验证；默认 Worker 与其他进程共享文件系统；
 - 真实 APPGOG/Xboard 后端设置、主题启用、Xboard 连接、受保护资源与正式更新路由的逐项守卫接入。
 
