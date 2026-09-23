@@ -2,22 +2,29 @@
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-## Linux 一行安装 + 专业管理菜单
+## Linux 安装 + 专业管理菜单
 
-在全新的 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux 或 Fedora 服务器上，以 root 身份执行一行命令：
+当前仓库为私有仓库，匿名下载 raw 安装脚本会返回 404。请在本机执行 `npm run cms:package`，把 `dist` 中的发布 ZIP 和同名 `.sha256` 文件上传到服务器 `/root/`；它们不会随 Git 推送上传。
+
+先安装解压工具：Debian/Ubuntu 执行 `apt-get update && apt-get install -y unzip`；使用 DNF 的系统执行 `dnf install -y unzip`，旧版 YUM 系统执行 `yum install -y unzip`。
+
+然后以 root 身份执行以下整段命令，任何一步失败都会停止后续步骤：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/scripts/install-linux.sh | sudo sh -s -- \
-  --auth-domain sq.example.com \
-  --build-domain db.example.com
+cd /root &&
+ls -l APPGOG-Packaging-Licensing-System-1.0.0.zip APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
+sha256sum -c APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
+unzip APPGOG-Packaging-Licensing-System-1.0.0.zip &&
+cd APPGOG-Packaging-Licensing-System-1.0.0 &&
+sh scripts/install-linux.sh --source-dir "$PWD"
 ```
 
-若仓库不可公开访问，应把 `npm run cms:package` 生成的 ZIP 放到你控制的下载地址，然后额外传入 `--repository ZIP地址 --sha256 校验值`，避免在命令历史里暴露私有仓库 Token。
+按提示填写两个真实域名，并提前把 DNS A 记录指向服务器。`sq.example.com`、`db.example.com` 仅为示例。提示文件不存在时，先检查上传路径和文件名，不要继续执行后续命令。
 
-安装器会自动安装 Docker Engine 和 Compose v2、下载正式代码、生成只含两个域名的安全配置、构建并启动服务、安装全局 `appgog` 命令。交互安装也可以先下载项目，再执行：
+安装器使用本地源码，自动安装 Docker Engine 和 Compose v2、生成配置、构建并启动服务、安装全局 `appgog` 命令。若已通过认证克隆项目，在源码根目录执行：
 
 ```sh
-sudo sh scripts/install-linux.sh
+sudo sh scripts/install-linux.sh --source-dir "$PWD"
 ```
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：

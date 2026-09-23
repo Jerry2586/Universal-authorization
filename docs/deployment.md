@@ -15,23 +15,45 @@ APPGOG打包授权系统 v1.0.0 的正式生产路线只有统一 Docker Compose
 
 安装器会检查端口、公网 IPv4 与 DNS。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
 
-## 2. 一行安装
+## 2. 私有仓库安装
+
+当前仓库为私有仓库。匿名下载 raw 安装脚本会返回 404，此时安装器尚未启动。增加 `--repository` 参数也不能解决第一步下载脚本的权限问题。
+
+在开发电脑执行 `npm run cms:package`，把 `dist` 中的发布 ZIP 和同名 `.sha256` 文件一起上传到服务器 `/root/`。它们不会随 Git 推送上传。
+
+先安装解压工具，按发行版选择一条：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/scripts/install-linux.sh | sudo sh -s -- \
-  --auth-domain auth.example.com \
-  --build-domain build.example.com
+# Debian / Ubuntu
+apt-get update && apt-get install -y unzip
+# 使用 DNF 的系统
+dnf install -y unzip
+# 旧版使用 YUM 的系统
+yum install -y unzip
 ```
 
-私有仓库建议先运行 `npm run cms:package`，把生成的 `APPGOG-Packaging-Licensing-System-1.0.0.zip` 与 `.sha256` 文件放到受控下载地址，再执行：
+然后以 root 身份执行整段命令，任何一步失败都会停止后续步骤：
 
 ```sh
-sudo sh scripts/install-linux.sh \
-  --auth-domain auth.example.com \
-  --build-domain build.example.com \
-  --repository https://downloads.example.com/APPGOG-Packaging-Licensing-System-1.0.0.zip \
-  --sha256 这里填写发布文件的SHA256
+cd /root &&
+ls -l APPGOG-Packaging-Licensing-System-1.0.0.zip APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
+sha256sum -c APPGOG-Packaging-Licensing-System-1.0.0.zip.sha256 &&
+unzip APPGOG-Packaging-Licensing-System-1.0.0.zip &&
+cd APPGOG-Packaging-Licensing-System-1.0.0 &&
+sh scripts/install-linux.sh --source-dir "$PWD"
 ```
+
+按提示输入两个真实域名，本文所有 `example.com` 域名均为占位示例。安装器读取本地源码，不再匿名拉取私有仓库；安装依赖和构建镜像仍需联网。如果提示安装目录非空，不要删除旧数据，请按第 5 节更新。
+
+如果服务器已有 Git 且当前用户的 SSH 密钥已获此仓库读取权限，也可以在尚不存在 `appgog-source` 目录的位置执行：
+
+```sh
+git clone --branch main git@github.com:Jerry2586/Universal-authorization.git appgog-source &&
+cd appgog-source &&
+sudo sh scripts/install-linux.sh --source-dir "$PWD"
+```
+
+首次 SSH 连接需要核对 GitHub 主机密钥，不要关闭主机密钥校验，也不要把访问 Token 写进命令或仓库。
 
 安装目录默认为 `/opt/appgog`。安装器会验证 x86_64/amd64 或 aarch64/arm64 架构、至少 4 GiB 可用空间、Docker Engine、Buildx 与 Compose v2，写入权限为 600 的 `.env`、初始化随机密钥和首个管理员、启动四个服务，并安装全局 `appgog` 管理命令。
 
@@ -141,6 +163,9 @@ docker compose logs --tail=100 caddy license-center build-center build-worker
 ```
 
 - Caddy 证书失败：确认两个 DNS A 记录、公网 80/443、系统时间和域名拼写；
+- 下载脚本返回 404：私有仓库需要认证，改用第 2 节的 ZIP 或已认证源码安装；
+- `unzip: command not found`：先安装 `unzip` 再解压，否则后续目录和脚本都不存在；
+- ZIP 文件不存在：检查是否已上传到 `/root/`，以及文件名是否一致；Git 推送不会上传本机 `dist`；
 - 端口占用：停止原 Web 服务后重试，正式路线不与其他反向代理共享 80/443；
 - 初始化失败：检查 `.env` 是否仍是示例域名、旧密钥是否缺失；不要删除数据卷重试；
 - 任务排队：检查 Worker 日志和授权中心节点凭证；
