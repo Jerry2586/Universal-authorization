@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { initialize, secretNames } from '../scripts/docker/initialize.js';
 import { validateEntries } from '../scripts/docker/restore.js';
@@ -40,6 +41,36 @@ test('Docker imports the original legacy credentials without key rotation', t =>
   const imported = initialize({ root, env: { ...env, ...first.identity.secrets, ADMIN_USERNAME: first.identity.adminUsername, ADMIN_PASSWORD: first.identity.adminPassword } });
   assert.deepEqual(imported.identity.secrets, first.identity.secrets);
   assert.equal(imported.identity.keyFingerprint, first.identity.keyFingerprint);
+});
+test('Docker safely adds the license encryption key to identities created before v1.2.0', t => {
+  const root = fixture(t);
+  const first = initialize({ root, env });
+  const identityPath = join(root, 'runtime/license/identity.json');
+  const legacyIdentity = JSON.parse(readFileSync(identityPath, 'utf8'));
+  delete legacyIdentity.secrets.LICENSE_ENCRYPTION_KEY;
+  writeFileSync(identityPath, JSON.stringify(legacyIdentity));
+  const database = new DatabaseSync(join(root, 'var/data/appgog.sqlite'));
+  database.exec('CREATE TABLE licenses (key_encrypted TEXT)');
+  database.close();
+  const upgraded = initialize({ root, env });
+  assert.match(upgraded.identity.secrets.LICENSE_ENCRYPTION_KEY, /^[A-Za-z0-9_-]{32,}$/);
+  for (const name of secretNames.filter(name => name !== 'LICENSE_ENCRYPTION_KEY')) {
+    assert.equal(upgraded.identity.secrets[name], first.identity.secrets[name]);
+  }
+  assert.ok(upgraded.identity.migrations.licenseEncryptionKey);
+});
+test('Docker refuses to replace a missing license encryption key after encrypted keys exist', t => {
+  const root = fixture(t);
+  initialize({ root, env });
+  const identityPath = join(root, 'runtime/license/identity.json');
+  const legacyIdentity = JSON.parse(readFileSync(identityPath, 'utf8'));
+  delete legacyIdentity.secrets.LICENSE_ENCRYPTION_KEY;
+  writeFileSync(identityPath, JSON.stringify(legacyIdentity));
+  const database = new DatabaseSync(join(root, 'var/data/appgog.sqlite'));
+  database.exec("CREATE TABLE licenses (key_encrypted TEXT); INSERT INTO licenses VALUES ('encrypted-envelope')");
+  database.close();
+  assert.throws(() => initialize({ root, env }), /禁止自动换钥/);
+  assert.equal(JSON.parse(readFileSync(identityPath, 'utf8')).secrets.LICENSE_ENCRYPTION_KEY, undefined);
 });
 test('Docker refuses invalid domains and placeholder secrets', t => {
   const root = fixture(t);

@@ -1,8 +1,39 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomInt } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 
 export const secretNames = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY', 'LICENSE_ENCRYPTION_KEY', 'INTERNAL_SERVICE_TOKEN'];
+const legacySecretNames = secretNames.filter(name => name !== 'LICENSE_ENCRYPTION_KEY');
+function validSecret(value) {
+  return typeof value === 'string' && value.length >= 32 && !/^(replace-with|development-)/.test(value);
+}
+function hasEncryptedLicenseKeys(databasePath) {
+  if (!existsSync(databasePath)) return false;
+  let database;
+  try {
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'licenses'").get()) return false;
+    const columns = new Set(database.prepare('PRAGMA table_info(licenses)').all().map(column => column.name));
+    if (!columns.has('key_encrypted')) return false;
+    return Boolean(database.prepare("SELECT 1 FROM licenses WHERE key_encrypted IS NOT NULL AND trim(key_encrypted) <> '' LIMIT 1").get());
+  } catch (error) {
+    throw new Error(`无法确认历史完整 Key 的加密状态：${error.message}`);
+  } finally {
+    database?.close();
+  }
+}
+function migrateLicenseEncryptionKey(identity, databasePath) {
+  identity.secrets ??= {};
+  if (validSecret(identity.secrets.LICENSE_ENCRYPTION_KEY)) return false;
+  if (hasEncryptedLicenseKeys(databasePath)) {
+    throw new Error('检测到已经加密保存的完整 Key，但原 LICENSE_ENCRYPTION_KEY 缺失或无效；禁止自动换钥，请恢复升级前备份中的原身份配置');
+  }
+  identity.secrets.LICENSE_ENCRYPTION_KEY = randomBytes(48).toString('base64url');
+  identity.migrations ??= {};
+  identity.migrations.licenseEncryptionKey = new Date().toISOString();
+  return true;
+}
 export function origin(value, label) {
   const url = new URL(value.includes('://') ? value : `https://${value}`);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !url.hostname.includes('.') || url.hostname.endsWith('.example.com') || url.hostname === 'example.com' || url.hostname === 'your-domain.com' || url.hostname.endsWith('.your-domain.com')) {
@@ -37,19 +68,22 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   const existing = existsSync(identityPath);
   const legacy = !existing && [databasePath, privatePath, publicPath].some(existsSync);
   let identity;
+  let migratedLicenseEncryptionKey = false;
   if (existing) {
     identity = JSON.parse(readFileSync(identityPath, 'utf8'));
     if (identity.format !== 1) throw new Error('不支持的部署数据版本，禁止覆盖');
+    migratedLicenseEncryptionKey = migrateLicenseEncryptionKey(identity, databasePath);
   } else {
-    if (legacy && (!secretNames.every(name => env[name]) || !env.ADMIN_USERNAME || !env.ADMIN_PASSWORD || !existsSync(privatePath) || !existsSync(publicPath))) {
+    if (legacy && (!legacySecretNames.every(name => env[name]) || !env.ADMIN_USERNAME || !env.ADMIN_PASSWORD || !existsSync(privatePath) || !existsSync(publicPath))) {
       throw new Error('发现旧数据：必须提供原 .env 和完整签名密钥；禁止生成新凭证覆盖旧授权');
     }
     identity = { format: 1, createdAt: new Date().toISOString(), secrets: {}, adminUsername: env.ADMIN_USERNAME || 'admin', adminPassword: env.ADMIN_PASSWORD || String(randomInt(100000, 1000000)) };
     for (const name of secretNames) identity.secrets[name] = env[name] || randomBytes(48).toString('base64url');
+    if (legacy && !validSecret(identity.secrets.LICENSE_ENCRYPTION_KEY)) migratedLicenseEncryptionKey = migrateLicenseEncryptionKey(identity, databasePath);
   }
   for (const name of secretNames) {
     const value = identity.secrets?.[name];
-    if (typeof value !== 'string' || value.length < 32 || /^(replace-with|development-)/.test(value)) throw new Error(`无效的生产凭证 ${name}`);
+    if (!validSecret(value)) throw new Error(`无效的生产凭证 ${name}`);
   }
   if (!identity.adminUsername || typeof identity.adminPassword !== 'string' || identity.adminPassword.length < 6) throw new Error('管理员初始配置无效');
   identity.options ??= {};
@@ -73,6 +107,7 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   if (existing && identity.keyFingerprint !== fingerprint) throw new Error('签名密钥指纹变化，拒绝启动');
   identity.keyFingerprint = fingerprint;
   atomic(identityPath, JSON.stringify(identity, null, 2));
+  if (migratedLicenseEncryptionKey) console.log('APPGOG 已为旧部署补齐独立的 LICENSE_ENCRYPTION_KEY；原身份、签名密钥和历史数据保持不变。');
   const shared = { NODE_ENV: 'production', PUBLIC_BASE_URL: authUrl };
   atomic(join(configRoot, 'license/runtime.env'), envFile({ ...shared, ...identity.options, ...identity.secrets,
     ADMIN_USERNAME: identity.adminUsername, ADMIN_PASSWORD: identity.adminPassword,
