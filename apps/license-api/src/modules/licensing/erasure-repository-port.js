@@ -1,6 +1,7 @@
 const METHODS = Object.freeze([
-  'beginLicenseErasure', 'deleteLicenseGraph', 'erasureJobByLicense', 'finishLicenseErasure',
-  'licenseById', 'listPendingErasureJobs', 'updateErasureJob',
+  'beginLicenseErasure', 'completeCleanupTask', 'completeErasureCleanup', 'deleteLicenseGraph',
+  'erasureJobByLicense', 'failCleanupTask', 'finishLicenseErasure', 'licenseById',
+  'listPendingCleanupTasks', 'listPendingErasureJobs', 'pendingCleanupCount', 'updateErasureJob',
 ]);
 
 export function createLicenseErasureRepositoryPort(repository) {

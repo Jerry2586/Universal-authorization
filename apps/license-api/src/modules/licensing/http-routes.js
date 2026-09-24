@@ -13,6 +13,13 @@ function licenseResult(result) {
 export async function handleLicensingHttp({
   method, url, request, response, service, portal, auth, config, readJson, respondJson, rateLimit, clientAddress,
 }) {
+  const eventsMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/events$/);
+  if (method === 'GET' && eventsMatch) {
+    auth.requireSession('admin', false, 'license.view');
+    respondJson(response, 200, { events: service.listLicenseEvents(eventsMatch[1], 200) });
+    return true;
+  }
+
   if (method === 'POST' && url.pathname === '/web/admin/licenses') {
     const admin = auth.requireSession('admin', true, 'license.issue');
     const body = await readJson(request);
@@ -65,6 +72,13 @@ export async function handleLicensingHttp({
 async function handleLicensingMutations({
   method, url, request, response, service, portal, auth, config, readJson, respondJson, rateLimit, clientAddress,
 }) {
+  if (method === 'POST' && url.pathname === '/web/admin/erasure-cleanup/retry') {
+    const authResult = auth.requireAdmin(true, 'license.manage');
+    requireOwner(authResult.admin, 'LICENSE_CLEANUP_FORBIDDEN', '只有平台所有者可以重试删除补偿清理');
+    respondJson(response, 200, portal.retryPendingErasureCleanup());
+    return true;
+  }
+
   const planMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/plan$/);
   if (method === 'POST' && planMatch) {
     const admin = auth.requireSession('admin', true, 'license.manage');

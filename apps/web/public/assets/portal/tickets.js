@@ -33,10 +33,13 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
   function ticketAttachments(ticket, actor) {
     const wrap = element('div', null, 'ticket-attachments');
     for (const attachment of ticket.attachments || []) {
-      const link = element('a', `${attachment.original_name} · ${fileSize(attachment.size_bytes)}`, 'ticket-attachment');
+      const internal = actor === 'admin' && attachment.visibility === 'internal';
+      const link = element('a', `${attachment.original_name} · ${fileSize(attachment.size_bytes)}${internal ? ' · 内部附件' : ''}`,
+        `ticket-attachment${internal ? ' internal' : ''}`);
       link.href = `/web/${actor}/tickets/${encodeURIComponent(ticket.id)}/attachments/${encodeURIComponent(attachment.id)}`;
       link.target = '_blank';
       link.rel = 'noopener';
+      if (internal) link.title = '仅管理员可查看和下载';
       wrap.append(link);
     }
     return wrap;
@@ -183,7 +186,9 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
         event.preventDefault(); submit.disabled = true;
         try {
           await request(`/web/admin/tickets/${encodeURIComponent(ticket.id)}/messages`, { method: 'POST', body: { body: textarea.value, visibility: visibility.value } });
-          await uploadTicketAttachment(`/web/admin/tickets/${encodeURIComponent(ticket.id)}/attachments`, file.files?.[0]);
+          const attachmentUrl = `/web/admin/tickets/${encodeURIComponent(ticket.id)}/attachments`
+            + `?visibility=${encodeURIComponent(visibility.value)}`;
+          await uploadTicketAttachment(attachmentUrl, file.files?.[0]);
           notify(visibility.value === 'internal' ? '内部备注已保存' : '回复已发送给客户'); await refresh();
         } catch (error) { notify(error.message, true); }
         finally { submit.disabled = false; }

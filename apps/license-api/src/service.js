@@ -11,6 +11,7 @@ export function createLicenseService({
   clock = () => new Date(),
 }) {
   const audit = createAuditService({ repository: repositories.audit });
+  const { listLicenseEvents } = audit;
   const productCatalog = createProductCatalogService({
     repository: repositories.productCatalog, config, notificationPrivateKey, clock,
   });
@@ -35,5 +36,6 @@ export function createLicenseService({
     ...entitlement,
     ...buildAuthorization,
     ...activationPublic,
+    listLicenseEvents,
   });
 }

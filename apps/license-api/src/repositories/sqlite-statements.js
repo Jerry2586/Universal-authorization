@@ -473,8 +473,10 @@ export function createSqliteStatements(database) {
     updateSupportTicketPriority: database.prepare(`UPDATE support_tickets SET priority = ?, updated_at = ? WHERE id = ?`),
     assignSupportTicket: database.prepare(`UPDATE support_tickets SET assigned_admin_id = ?, status = CASE WHEN status = 'pending' THEN 'processing' ELSE status END, updated_at = ? WHERE id = ?`),
     insertSupportAttachment: database.prepare(`
-      INSERT INTO support_attachments (id, ticket_id, message_id, original_name, storage_ref, content_type, size_bytes, sha256, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO support_attachments (
+        id, ticket_id, message_id, original_name, storage_ref, content_type, size_bytes, sha256,
+        visibility, actor_type, actor_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     supportAttachmentById: database.prepare(`SELECT * FROM support_attachments WHERE id = ?`),
     listSupportAttachments: database.prepare(`SELECT * FROM support_attachments WHERE ticket_id = ? ORDER BY created_at ASC`),
@@ -507,6 +509,27 @@ export function createSqliteStatements(database) {
     insertCleanupTask: database.prepare(`
       INSERT OR IGNORE INTO file_cleanup_tasks (id, operation_id, storage_ref, status, attempts, last_error, created_at, updated_at)
       VALUES (?, ?, ?, 'pending', 1, ?, ?, ?)
+    `),
+    listPendingCleanupTasks: database.prepare(`
+      SELECT * FROM file_cleanup_tasks WHERE status = 'pending' ORDER BY updated_at ASC LIMIT ?
+    `),
+    completeCleanupTask: database.prepare(`
+      UPDATE file_cleanup_tasks SET status = 'completed', last_error = NULL, updated_at = ?, completed_at = ?
+      WHERE id = ? AND status = 'pending'
+    `),
+    failCleanupTask: database.prepare(`
+      UPDATE file_cleanup_tasks SET attempts = attempts + 1, last_error = ?, updated_at = ?
+      WHERE id = ? AND status = 'pending'
+    `),
+    countPendingCleanupTasks: database.prepare(`
+      SELECT COUNT(*) AS count FROM file_cleanup_tasks WHERE operation_id = ? AND status = 'pending'
+    `),
+    completeErasureCleanup: database.prepare(`
+      UPDATE erasure_tombstones SET result = 'completed'
+      WHERE operation_id = ? AND result = 'completed_with_cleanup_pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM file_cleanup_tasks WHERE operation_id = ? AND status = 'pending'
+        )
     `),
     deleteCustomerSessionsByLicense: database.prepare(`DELETE FROM web_sessions WHERE actor_type = 'customer' AND actor_id = ?`),
     deleteSupportAttachmentsByLicense: database.prepare(`DELETE FROM support_attachments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE license_id = ?)`),

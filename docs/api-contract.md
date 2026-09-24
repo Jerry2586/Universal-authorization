@@ -36,9 +36,11 @@
 | `POST /web/admin/versions/upload?product_code=appgog&version=1.0.0&display_name=APPGOG` | 管理员 | 请求体为 ZIP 原始字节，`Content-Type: application/zip`；检查并发布可安装主题版本 |
 | `POST /web/admin/licenses/{id}/rotate-key` | 管理员 | 轮换固定 Key，返回只显示一次的新 Key |
 | `POST /web/admin/licenses/{id}/key` | 授权管理员 + 当前密码 | 单独查看完整固定 Key，并写安全审计；列表接口仍只返回脱敏值 |
+| `GET /web/admin/licenses/{id}/events` | `license.view` | 查看该授权的统一生命周期事件，不返回完整 Key、Secret 或 Token |
 | `POST /web/admin/licenses/{id}/domain` | 管理员 | 输入 `{ "domain": "new.example.com" }` 换绑域名 |
 | `POST /web/admin/licenses/{id}/plan` | 授权管理员 | 切换免费版、付费版或历史兼容版，并增加 License generation |
 | `DELETE /web/admin/licenses/{id}` | 平台所有者 + 当前密码 + 精确确认文本 | 永久删除授权及关联业务记录/文件；失败文件进入补偿清理，不保留可识别业务数据 |
+| `POST /web/admin/erasure-cleanup/retry` | 平台所有者 | 立即重试永久删除留下的文件补偿任务；系统启动时也会自动重试 |
 | `POST /web/admin/domain-migrations/{id}/review` | 授权管理员 | 兼容处理旧版尚未结束的迁移申请；v1.1.0 客户新换绑不再等待审批 |
 | `POST /web/admin/licenses/{id}/status` | 管理员 | 输入 `{ "status": "active" }`，也支持 `suspended`、`revoked` |
 | `POST /web/admin/account/password` | 当前管理员 | 校验当前密码并把密码修改为新的六位数字，成功后撤销该账号全部会话 |

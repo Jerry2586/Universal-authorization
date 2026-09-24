@@ -63,9 +63,10 @@ export function createApiClient({ state, onSessionInvalid }) {
   async function uploadTicketAttachment(path, file) {
     if (!(file instanceof File) || !file.size) return null;
     if (file.size > 10 * 1024 * 1024) throw new Error('附件不能超过 10 MB');
+    const separator = path.includes('?') ? '&' : '?';
     let response;
     try {
-      response = await fetch(`${path}?filename=${encodeURIComponent(file.name)}`, {
+      response = await fetch(`${path}${separator}filename=${encodeURIComponent(file.name)}`, {
         method: 'POST', credentials: 'same-origin',
         headers: {
           'content-type': file.type || (file.name.toLowerCase().endsWith('.log') ? 'text/plain' : 'application/octet-stream'),

@@ -49,7 +49,8 @@ export function createSupportSqliteRepository(queries) {
       const id = values.id ?? newId('att');
       queries.insertSupportAttachment.run(
         id, values.ticketId, values.messageId ?? null, values.originalName, values.storageRef,
-        values.contentType, values.sizeBytes, values.sha256, values.now,
+        values.contentType, values.sizeBytes, values.sha256, values.visibility ?? 'public',
+        values.actorType ?? 'system', values.actorId ?? null, values.now,
       );
       queries.touchSupportTicket.run(values.now, values.ticketId);
       return queries.supportAttachmentById.get(id);

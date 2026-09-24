@@ -358,6 +358,9 @@ CREATE TABLE IF NOT EXISTS support_attachments (
   content_type TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
   sha256 TEXT NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'public',
+  actor_type TEXT NOT NULL DEFAULT 'system',
+  actor_id TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -391,6 +394,7 @@ CREATE TABLE IF NOT EXISTS file_cleanup_tasks (
   last_error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  completed_at TEXT,
   UNIQUE(operation_id, storage_ref)
 );
 

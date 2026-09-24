@@ -16,6 +16,19 @@ export function createErasureSqliteRepository(queries) {
       queries.updateErasureJob.run(status, errorMessage, completedAt, id);
       return queries.erasureJobById.get(id);
     },
+    listPendingCleanupTasks: (limit = 100) => queries.listPendingCleanupTasks.all(limit),
+    completeCleanupTask(id, now) {
+      return queries.completeCleanupTask.run(now, now, id).changes === 1;
+    },
+    failCleanupTask(id, errorMessage, now) {
+      return queries.failCleanupTask.run(errorMessage, now, id).changes === 1;
+    },
+    pendingCleanupCount(operationId) {
+      return queries.countPendingCleanupTasks.get(operationId).count;
+    },
+    completeErasureCleanup(operationId) {
+      return queries.completeErasureCleanup.run(operationId, operationId).changes === 1;
+    },
     deleteLicenseGraph(licenseId) {
       let recordsDeleted = 0;
       const deletions = [

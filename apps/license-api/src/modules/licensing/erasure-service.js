@@ -4,6 +4,28 @@ import { transaction } from '../../database.js';
 export function createLicenseErasureService({
   database, repository, artifactStore, clock = () => new Date(), packageVersion = 'development',
 }) {
+  function processCleanupTasks(limit = 100) {
+    const tasks = repository.listPendingCleanupTasks(limit);
+    const operations = new Set();
+    let completed = 0;
+    let failed = 0;
+    for (const task of tasks) {
+      operations.add(task.operation_id);
+      const now = clock().toISOString();
+      try {
+        artifactStore.remove(task.storage_ref);
+        if (repository.completeCleanupTask(task.id, now)) completed += 1;
+      } catch (error) {
+        repository.failCleanupTask(task.id, String(error?.message ?? error).slice(0, 1000), now);
+        failed += 1;
+      }
+    }
+    for (const operationId of operations) {
+      if (repository.pendingCleanupCount(operationId) === 0) repository.completeErasureCleanup(operationId);
+    }
+    return { processed: tasks.length, completed, failed, pending: Math.max(0, tasks.length - completed) };
+  }
+
   function processErasureJob(job) {
     let refs = [];
     try { refs = JSON.parse(job.file_refs_json ?? '[]'); } catch { refs = []; }
@@ -44,13 +66,17 @@ export function createLicenseErasureService({
     },
 
     resumePendingErasures() {
-      const results = [];
+      const erasures = [];
       for (const job of repository.listPendingErasureJobs()) {
-        try { results.push(processErasureJob(job)); } catch (error) {
+        try { erasures.push(processErasureJob(job)); } catch (error) {
           repository.updateErasureJob(job.id, 'files_pending', String(error?.message ?? error).slice(0, 2000));
         }
       }
-      return results;
+      return { erasures, cleanup: processCleanupTasks() };
+    },
+
+    retryPendingErasureCleanup() {
+      return processCleanupTasks();
     },
   });
 }

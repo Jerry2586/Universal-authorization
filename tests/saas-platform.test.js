@@ -59,13 +59,33 @@ async function fixture(t, initialTime = '2026-09-22T08:00:00.000Z', surface = 'c
     });
     return { status: response.status, cookie: response.headers.get('set-cookie'), data: await response.json() };
   }
+  async function sendRaw(path, {
+    method = 'POST', buffer, contentType = 'application/octet-stream', cookie, csrf,
+  } = {}) {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        ...(buffer !== undefined ? { 'content-type': contentType } : {}),
+        ...(cookie ? { cookie } : {}),
+        ...(csrf ? { 'x-csrf-token': csrf } : {}),
+      },
+      ...(buffer !== undefined ? { body: buffer } : {}),
+    });
+    const raw = Buffer.from(await response.arrayBuffer());
+    const responseType = response.headers.get('content-type') ?? '';
+    let data = raw;
+    if (responseType.includes('application/json')) {
+      try { data = JSON.parse(raw.toString('utf8')); } catch { data = {}; }
+    }
+    return { status: response.status, headers: response.headers, data, buffer: raw };
+  }
   async function login(path, body) {
     const response = await send(path, { method: 'POST', body });
     return { ...response, cookie: response.cookie?.split(';')[0], csrf: response.data?.csrf_token };
   }
   const owner = () => login('/web/admin/login', { username: config.adminUsername, password: config.adminPassword });
   const customer = (licenseKey) => login('/web/customer/login', { license_key: licenseKey });
-  return { ...app, database, publicKey, base, config, send, owner, customer, setNow(value) { now = new Date(value); } };
+  return { ...app, database, publicKey, base, config, send, sendRaw, owner, customer, setNow(value) { now = new Date(value); } };
 }
 
 test('admin and customer sessions coexist; build center cannot access admin session', async (t) => {
@@ -380,6 +400,55 @@ test('support tickets isolate customers, hide internal notes, and allow admin as
   assert.ok(audit.some((event) => event.action === 'support_ticket.updated'));
 });
 
+test('工单内部附件只对管理员可见，客户附件固定公开且关闭后禁止上传', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-TICKET-ATTACHMENT', domain: 'attachment.example.com' });
+  const customer = await app.customer(issued.license_key);
+  const created = await app.send('/web/customer/tickets', {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { category: 'install', priority: 'normal', subject: '附件权限验证', body: '请核对内部附件隔离。' },
+  });
+  assert.equal(created.status, 201);
+
+  const internalBody = Buffer.from('private-admin-log');
+  const internal = await app.sendRaw(`/web/admin/tickets/${created.data.id}/attachments?visibility=internal&filename=private.log`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, buffer: internalBody, contentType: 'text/plain',
+  });
+  assert.equal(internal.status, 201);
+
+  const adminView = await app.send(`/web/admin/tickets/${created.data.id}`, { cookie: owner.cookie });
+  const customerView = await app.send(`/web/customer/tickets/${created.data.id}`, { cookie: customer.cookie });
+  assert.equal(adminView.data.attachments.some((item) => item.id === internal.data.id && item.visibility === 'internal'), true);
+  assert.equal(customerView.data.attachments.some((item) => item.id === internal.data.id), false);
+
+  const customerDenied = await app.sendRaw(`/web/customer/tickets/${created.data.id}/attachments/${internal.data.id}`, {
+    method: 'GET', cookie: customer.cookie,
+  });
+  assert.equal(customerDenied.status, 404);
+  const adminDownload = await app.sendRaw(`/web/admin/tickets/${created.data.id}/attachments/${internal.data.id}`, {
+    method: 'GET', cookie: owner.cookie,
+  });
+  assert.equal(adminDownload.status, 200);
+  assert.deepEqual(adminDownload.buffer, internalBody);
+
+  const customerUpload = await app.sendRaw(`/web/customer/tickets/${created.data.id}/attachments?visibility=internal&filename=customer.log`, {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf, buffer: Buffer.from('customer-log'), contentType: 'text/plain',
+  });
+  assert.equal(customerUpload.status, 201);
+  const adminAfterCustomerUpload = await app.send(`/web/admin/tickets/${created.data.id}`, { cookie: owner.cookie });
+  assert.equal(adminAfterCustomerUpload.data.attachments.find((item) => item.id === customerUpload.data.id)?.visibility, 'public');
+
+  const closed = await app.send(`/web/customer/tickets/${created.data.id}/close`, {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf, body: { reason: '附件权限已验证' },
+  });
+  assert.equal(closed.status, 200);
+  const uploadAfterClose = await app.sendRaw(`/web/admin/tickets/${created.data.id}/attachments?visibility=public&filename=late.log`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, buffer: Buffer.from('late'), contentType: 'text/plain',
+  });
+  assert.equal(uploadAfterClose.status, 409);
+});
+
 test('customer and admin can close tickets, only admin can reopen, and lifecycle is audited', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
@@ -559,6 +628,60 @@ test('只有平台所有者二次验证并输入确认文本后可永久删除 K
   assert.ok(!serialized.includes('delete.example.com'));
 });
 
+test('永久删除失败文件进入补偿队列并可幂等重试完成', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-CLEANUP-RETRY', domain: 'cleanup.example.com' });
+  const now = '2026-09-22T08:00:00.000Z';
+  const uploadRef = `license-uploads/${issued.license_id}/cleanup.zip`;
+  app.artifactStore.put(uploadRef, Buffer.from('cleanup-source'));
+  app.repository.createBuildJob({
+    id: 'job_cleanup_retry', licenseId: issued.license_id, version: '1.0.0',
+    domain: 'cleanup.example.com', sourceKind: 'upload', uploadRef, now,
+  });
+
+  const originalRemove = app.artifactStore.remove.bind(app.artifactStore);
+  let failOnce = true;
+  app.artifactStore.remove = (storageRef) => {
+    if (storageRef === uploadRef && failOnce) {
+      failOnce = false;
+      throw new Error('simulated cleanup failure');
+    }
+    return originalRemove(storageRef);
+  };
+
+  const deleted = await app.send(`/web/admin/licenses/${issued.license_id}`, {
+    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+    body: { password: app.config.adminPassword, confirmation: `DELETE ${issued.license_id}` },
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.data.cleanup_pending, 1);
+  assert.equal(app.repository.licenseById(issued.license_id), undefined);
+  const pending = app.database.prepare('SELECT * FROM file_cleanup_tasks').get();
+  assert.equal(pending.status, 'pending');
+  assert.equal(pending.storage_ref, uploadRef);
+  assert.equal(app.database.prepare('SELECT result FROM erasure_tombstones').get().result, 'completed_with_cleanup_pending');
+
+  app.artifactStore.remove = originalRemove;
+  const retried = await app.send('/web/admin/erasure-cleanup/retry', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+  });
+  assert.equal(retried.status, 200);
+  assert.equal(retried.data.completed, 1);
+  assert.equal(retried.data.failed, 0);
+  assert.throws(() => app.artifactStore.read(uploadRef));
+  const completed = app.database.prepare('SELECT * FROM file_cleanup_tasks').get();
+  assert.equal(completed.status, 'completed');
+  assert.ok(completed.completed_at);
+  assert.equal(app.database.prepare('SELECT result FROM erasure_tombstones').get().result, 'completed');
+
+  const repeated = await app.send('/web/admin/erasure-cleanup/retry', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+  });
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(repeated.data, { processed: 0, completed: 0, failed: 0, pending: 0 });
+});
+
 test('只有平台所有者重新验证密码后可查看加密保存的完整 Key，审计不记录明文', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
@@ -599,6 +722,51 @@ test('只有平台所有者重新验证密码后可查看加密保存的完整 K
   });
   assert.equal(legacy.status, 409);
   assert.equal(legacy.data.error.code, 'LICENSE_KEY_LEGACY');
+});
+
+test('只读管理员可查看统一授权事件且安全字段不会泄露', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-EVENTS', domain: 'events.example.com' });
+  const now = '2026-09-22T08:00:00.000Z';
+  app.repository.recordLicenseEvent({
+    licenseId: issued.license_id, eventType: 'license.security_probe', actorType: 'system',
+    metadata: {
+      safe_field: 'visible', api_token: 'hidden-token',
+      nested: { license_key: issued.license_key, note: 'visible-note' },
+    },
+    now,
+  });
+
+  const created = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'event.auditor', display_name: '事件审计', password: '416825', role: 'auditor' },
+  });
+  assert.equal(created.status, 201);
+  const auditor = await app.send('/web/admin/login', {
+    method: 'POST', body: { username: 'event.auditor', password: '416825' },
+  });
+  assert.equal(auditor.status, 200);
+  const auditorCookie = auditor.cookie.split(';')[0];
+
+  const events = await app.send(`/web/admin/licenses/${issued.license_id}/events`, { cookie: auditorCookie });
+  assert.equal(events.status, 200);
+  assert.ok(events.data.events.some((event) => event.event_type === 'license.issued'));
+  const probe = events.data.events.find((event) => event.event_type === 'license.security_probe');
+  assert.equal(probe.metadata.safe_field, 'visible');
+  assert.equal(probe.metadata.api_token, '[REDACTED]');
+  assert.equal(probe.metadata.nested.license_key, '[REDACTED]');
+  assert.equal(probe.metadata.nested.note, 'visible-note');
+  assert.equal(Object.hasOwn(probe, 'metadata_json'), false);
+  const serialized = JSON.stringify(events.data);
+  assert.equal(serialized.includes(issued.license_key), false);
+  assert.equal(serialized.includes('hidden-token'), false);
+
+  const forbiddenWrite = await app.send(`/web/admin/licenses/${issued.license_id}/domain`, {
+    method: 'POST', cookie: auditorCookie, csrf: auditor.data.csrf_token,
+    body: { domain: 'forbidden.example.com' },
+  });
+  assert.equal(forbiddenWrite.status, 403);
 });
 
 test('客户公告通过独立接口发布并写入审计', async (t) => {
@@ -748,6 +916,58 @@ test('已有 SQLite 数据库自动追加新字段并保留原管理员身份', 
       const migration = upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-baseline'").get();
       assert.ok(migration?.applied_at);
       assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-domain-normalization'").get());
+    } finally { upgraded.close(); }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test('旧工单附件与补偿清理表会追加 Phase 4 字段并保留记录', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-v1214-migrate-test-'));
+  const path = join(root, 'legacy-phase-four.sqlite');
+  try {
+    const old = new DatabaseSync(path);
+    old.exec(`
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE support_attachments (
+        id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, message_id TEXT,
+        original_name TEXT NOT NULL, storage_ref TEXT NOT NULL UNIQUE,
+        content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO support_attachments VALUES (
+        'att_legacy', 'tkt_legacy', NULL, 'legacy.log', 'support/legacy.log',
+        'text/plain', 6, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        '2026-09-20T00:00:00.000Z'
+      );
+      CREATE TABLE file_cleanup_tasks (
+        id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, storage_ref TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(operation_id, storage_ref)
+      );
+      INSERT INTO file_cleanup_tasks VALUES (
+        'fct_legacy', 'ers_legacy', 'support/legacy.log', 'pending', 1, '旧错误',
+        '2026-09-20T00:00:00.000Z', '2026-09-20T00:00:00.000Z'
+      );
+    `);
+    old.close();
+
+    const upgraded = openDatabase(path);
+    try {
+      const attachmentColumns = new Set(upgraded.prepare('PRAGMA table_info(support_attachments)').all().map((column) => column.name));
+      assert.ok(attachmentColumns.has('visibility'));
+      assert.ok(attachmentColumns.has('actor_type'));
+      assert.ok(attachmentColumns.has('actor_id'));
+      const attachment = upgraded.prepare("SELECT * FROM support_attachments WHERE id = 'att_legacy'").get();
+      assert.equal(attachment.visibility, 'public');
+      assert.equal(attachment.actor_type, 'system');
+      assert.equal(attachment.original_name, 'legacy.log');
+
+      const cleanupColumns = new Set(upgraded.prepare('PRAGMA table_info(file_cleanup_tasks)').all().map((column) => column.name));
+      assert.ok(cleanupColumns.has('completed_at'));
+      const cleanup = upgraded.prepare("SELECT * FROM file_cleanup_tasks WHERE id = 'fct_legacy'").get();
+      assert.equal(cleanup.status, 'pending');
+      assert.equal(cleanup.completed_at, null);
+      assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.14-events-erasure-support'").get());
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });

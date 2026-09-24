@@ -1,8 +1,8 @@
-# APPGOG打包授权系统架构（v1.2.13）
+# APPGOG打包授权系统架构（v1.2.14）
 
 日期：2026-09-24
 
-v1.2.13 完成领域 Service 与 Repository Phase 3 边界。授权兼容门面只组合 Product Catalog、Licensing、Entitlement、Packaging Authorization、Activation 和 Audit 服务；Portal 兼容门面只组合 Customer Projection、Admin Projection 和 License Erasure；全库 Repository 由十个领域 SQLite Adapter 组成，主门面不再声明 SQL 或执行业务查询。每个 Service 只能接收自己的 Repository Port，跨领域撤销通过受控生命周期 Port 完成，现有 URL、字段、数据库和事务语义保持兼容。
+v1.2.14 完成授权事件、永久删除补偿清理和工单附件权限 Phase 4。授权生命周期由统一事件投影查询，敏感 Key、Secret、Token 和密码字段在服务端递归脱敏；License 永久删除失败的文件进入可重试补偿队列，启动和所有者接口均可幂等恢复；工单内部附件只对管理员可见，客户详情和下载接口同时隔离。v1.2.13 的领域 Service、Repository Port 和十个 SQLite Adapter 边界继续保持。
 
 ## 一、用户看到的流程
 

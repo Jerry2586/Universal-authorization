@@ -41,6 +41,14 @@ const MIGRATIONS = Object.freeze({
     ['reopened_at', 'TEXT'],
     ['reopened_by', 'TEXT'],
   ],
+  support_attachments: [
+    ['visibility', "TEXT NOT NULL DEFAULT 'public'"],
+    ['actor_type', "TEXT NOT NULL DEFAULT 'system'"],
+    ['actor_id', 'TEXT'],
+  ],
+  file_cleanup_tasks: [
+    ['completed_at', 'TEXT'],
+  ],
   activations: [
     ['identity_mode', "TEXT NOT NULL DEFAULT 'legacy'"],
     ['installation_public_key_fingerprint', 'TEXT'],
@@ -118,6 +126,12 @@ function migrate(database) {
       database.exec(`UPDATE ${table} SET ${column} = substr(${column}, 5) WHERE lower(${column}) LIKE 'www.%'`);
     }
   });
+
+  const phaseFourLifecycleVersion = '2026-09-25-v1.2.14-events-erasure-support';
+  runMigration(database, phaseFourLifecycleVersion, () => addMissingColumns(database, {
+    support_attachments: MIGRATIONS.support_attachments,
+    file_cleanup_tasks: MIGRATIONS.file_cleanup_tasks,
+  }));
 
   const entitlementErasureVersion = '2026-09-24-v1.2.10-entitlements-erasure';
   runMigration(database, entitlementErasureVersion, () => {

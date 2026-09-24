@@ -41,10 +41,13 @@ export function createSupportService({ database, repository, artifactStore, cloc
         actor_name: message.actor_type === 'admin' ? (message.admin_name || '客服') : '客户',
         body: message.body, visibility: message.visibility, created_at: message.created_at,
       }));
-    const attachments = repository.listSupportAttachments(ticket.id).map((attachment) => ({
-      id: attachment.id, original_name: attachment.original_name, content_type: attachment.content_type,
-      size_bytes: attachment.size_bytes, sha256: attachment.sha256, created_at: attachment.created_at,
-    }));
+    const attachments = repository.listSupportAttachments(ticket.id)
+      .filter((attachment) => includeInternal || attachment.visibility === 'public')
+      .map((attachment) => ({
+        id: attachment.id, original_name: attachment.original_name, content_type: attachment.content_type,
+        size_bytes: attachment.size_bytes, sha256: attachment.sha256,
+        visibility: attachment.visibility, actor_type: attachment.actor_type, created_at: attachment.created_at,
+      }));
     return {
       id: ticket.id, ticket_number: ticket.ticket_number,
       ...(includeInternal ? { license_id: ticket.license_id, customer_ref: ticket.customer_ref, key_prefix: ticket.key_prefix, bound_domain: ticket.bound_domain } : {}),
@@ -166,9 +169,12 @@ export function createSupportService({ database, repository, artifactStore, cloc
         subjectType: 'support_ticket', subjectId: id, metadata: { visibility }, now });
       return view(repository.supportTicketById(id), true);
     },
-    addSupportAttachment({ ticketId, filename, contentType, buffer, actorType, actorId }) {
+    addSupportAttachment({ ticketId, filename, contentType, buffer, actorType, actorId, visibility = 'public' }) {
       const ticket = repository.supportTicketById(ticketId);
       invariant(ticket, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      invariant(ticket.status !== 'closed', 'TICKET_CLOSED', '工单已关闭，无法继续上传附件', 409);
+      invariant(['public', 'internal'].includes(visibility), 'TICKET_VISIBILITY_INVALID', '附件可见范围无效');
+      invariant(actorType === 'admin' || visibility === 'public', 'TICKET_ATTACHMENT_VISIBILITY_FORBIDDEN', '客户附件只能对双方可见', 403);
       const safeName = String(filename ?? '').trim().replace(/[\\/\0]/g, '_').slice(0, 160);
       const extension = safeName.split('.').pop()?.toLowerCase();
       invariant(safeName && EXTENSIONS.has(extension) && CONTENT_TYPES.has(contentType), 'TICKET_ATTACHMENT_TYPE_INVALID', '仅支持 PNG、JPG、WebP、TXT、LOG、PDF');
@@ -179,10 +185,11 @@ export function createSupportService({ database, repository, artifactStore, cloc
       try {
         const attachment = repository.createSupportAttachment({
           id, ticketId, originalName: safeName, storageRef, contentType, sizeBytes: buffer.length,
-          sha256: createHash('sha256').update(buffer).digest('hex'), now: clock().toISOString(),
+          sha256: createHash('sha256').update(buffer).digest('hex'), visibility, actorType, actorId,
+          now: clock().toISOString(),
         });
         repository.audit({ actorType, actorId, action: 'support_ticket.attachment_added', subjectType: 'support_ticket', subjectId: ticketId,
-          metadata: { attachment_id: id, filename: safeName, size: buffer.length }, now: clock().toISOString() });
+          metadata: { attachment_id: id, filename: safeName, size: buffer.length, visibility }, now: clock().toISOString() });
         return attachment;
       } catch (error) {
         artifactStore.remove(storageRef);
@@ -193,7 +200,8 @@ export function createSupportService({ database, repository, artifactStore, cloc
       const license = customerLicense(session);
       const ticket = repository.supportTicketById(ticketId);
       const attachment = repository.supportAttachmentById(attachmentId);
-      invariant(ticket && ticket.license_id === license.id && attachment?.ticket_id === ticket.id, 'TICKET_ATTACHMENT_NOT_FOUND', '附件不存在', 404);
+      invariant(ticket && ticket.license_id === license.id && attachment?.ticket_id === ticket.id
+        && attachment.visibility === 'public', 'TICKET_ATTACHMENT_NOT_FOUND', '附件不存在', 404);
       return { ...attachment, buffer: artifactStore.read(attachment.storage_ref) };
     },
     supportAttachmentForAdmin(ticketId, attachmentId) {

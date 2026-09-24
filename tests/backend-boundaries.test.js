@@ -225,8 +225,8 @@ test('licensing, entitlement, activation, packaging, product and audit own bound
   assert.doesNotMatch(ports.activation, /createLicense|changeLicensePlan|createTicket|createSourceVersion/);
   assert.doesNotMatch(ports.packaging, /createActivation|changeLicensePlan|createSourceVersion/);
   assert.doesNotMatch(ports.product, /createLicense|createActivation|createBuild|createTicket/);
-  assert.deepEqual((ports.audit.match(/repository\./g) ?? []).length, 2,
-    'Audit Port 只能暴露安全审计和授权事件写入');
+  assert.deepEqual((ports.audit.match(/repository\./g) ?? []).length, 3,
+    'Audit Port 只能暴露安全审计、授权事件写入和授权事件只读查询');
 });
 
 test('portal facade composes customer projection, admin projection and erasure services', () => {
@@ -247,6 +247,26 @@ test('portal facade composes customer projection, admin projection and erasure s
   assert.doesNotMatch(customerPort, /listAdmins|deleteLicenseGraph|createLicense/);
   assert.doesNotMatch(adminPort, /deleteLicenseGraph|createLicense|createActivation/);
   assert.doesNotMatch(erasurePort, /listLicenses|createBuild|createActivation/);
+  for (const method of [
+    'listPendingCleanupTasks', 'completeCleanupTask', 'failCleanupTask',
+    'pendingCleanupCount', 'completeErasureCleanup',
+  ]) assert.match(erasurePort, new RegExp(method), `Erasure Port 缺少补偿清理方法 ${method}`);
+});
+
+test('support attachment visibility and license event routes stay inside their domain services', () => {
+  const supportService = read('apps/license-api/src/modules/support/service.js');
+  const supportRoutes = read('apps/license-api/src/modules/support/http-routes.js');
+  const licensingRoutes = read('apps/license-api/src/modules/licensing/http-routes.js');
+  assert.match(supportService, /attachment\.visibility === 'public'/,
+    '客户附件读取必须由 Support Service 强制过滤');
+  assert.match(supportService, /actorType === 'admin' \|\| visibility === 'public'/,
+    '客户不得创建内部附件');
+  assert.doesNotMatch(supportRoutes, /repository\.|database\./,
+    'Support HTTP 不得绕过 Service 访问 Repository 或数据库');
+  assert.match(licensingRoutes, /service\.listLicenseEvents/,
+    '授权事件查询必须经过授权 Service');
+  assert.doesNotMatch(licensingRoutes, /repository\.listLicenseEvents/,
+    '授权事件 HTTP 不得直接访问 Repository');
 });
 
 test('repository facade composes domain sqlite adapters without owning query behavior', () => {

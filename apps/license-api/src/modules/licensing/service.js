@@ -88,6 +88,10 @@ export function createLicensingService({
         invariant(!current.bound_domain, 'DOMAIN_ALREADY_BOUND', '授权域名已经绑定，换域名必须提交迁移申请', 409);
         const license = repository.bindDomain(licenseId, normalized, now);
         invariant(license.bound_domain === normalized, 'DOMAIN_BIND_RACE', '授权域名正在被另一个请求绑定', 409);
+        audit.recordLicenseEvent({
+          licenseId, eventType: 'license.domain_bound', actorType: 'customer', actorId,
+          metadata: { domain: normalized }, now,
+        });
         audit.record({
           actorType: 'customer', actorId, action: 'license.domain_bound', subjectType: 'license', subjectId: licenseId,
           metadata: { domain: normalized }, now,
@@ -110,6 +114,10 @@ export function createLicensingService({
         invariant(!repository.pendingDomainMigrationByLicense(licenseId), 'DOMAIN_MIGRATION_PENDING', '已有待审核的域名迁移申请', 409);
         const request = repository.createDomainMigration({
           licenseId, previousDomain: license.bound_domain, requestedDomain: normalized, reason: note, now,
+        });
+        audit.recordLicenseEvent({
+          licenseId, eventType: 'license.domain_migration_requested', actorType: 'customer', actorId,
+          metadata: { request_id: request.id, previous_domain: license.bound_domain, requested_domain: normalized }, now,
         });
         audit.record({
           actorType: 'customer', actorId, action: 'license.domain_migration_requested',
@@ -138,6 +146,11 @@ export function createLicensingService({
           requestId, decision, reviewerId, String(reviewNote ?? '').trim().slice(0, 500), now,
         );
         invariant(reviewed, 'DOMAIN_MIGRATION_RACE', '域名迁移申请正在被另一个管理员处理', 409);
+        audit.recordLicenseEvent({
+          licenseId: request.license_id, eventType: `license.domain_migration_${decision}`,
+          actorType: 'admin', actorId: reviewerId,
+          metadata: { request_id: requestId, previous_domain: request.previous_domain, requested_domain: request.requested_domain }, now,
+        });
         audit.record({
           actorType: 'admin', actorId: reviewerId, action: `license.domain_migration_${decision}`,
           subjectType: 'domain_migration', subjectId: requestId,
@@ -174,6 +187,10 @@ export function createLicensingService({
         activationLifecycle.revokeActivationsByLicense(licenseId, now);
         const reviewed = repository.decideDomainMigration(request.id, 'approved', null, 'customer-self-service', now);
         invariant(reviewed, 'DOMAIN_MIGRATION_RACE', '域名换绑正在被另一个请求处理', 409);
+        audit.recordLicenseEvent({
+          licenseId, eventType: 'license.domain_migration_self_service', actorType: 'customer', actorId,
+          metadata: { request_id: request.id, previous_domain: license.bound_domain, requested_domain: normalized, generation: updated.generation }, now,
+        });
         audit.record({
           actorType: 'customer', actorId, action: 'license.domain_migration_self_service',
           subjectType: 'domain_migration', subjectId: request.id,
@@ -207,6 +224,7 @@ export function createLicensingService({
       invariant(license.key_encrypted, 'LICENSE_KEY_LEGACY', '历史 Key 无法恢复，请先轮换 Key 后再查看', 409);
       const now = iso(clock);
       const licenseKey = openSecret(license.key_encrypted, licenseEncryptionKey);
+      audit.recordLicenseEvent({ licenseId, eventType: 'license.key_viewed', actorType: 'admin', actorId, now });
       audit.record({ actorType: 'admin', actorId, action: 'license.key_viewed', subjectType: 'license', subjectId: licenseId, now });
       return { license, licenseKey };
     },

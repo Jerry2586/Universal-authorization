@@ -45,6 +45,7 @@ export async function handleSupportHttp({
       ticketId: customerUploadMatch[1], filename: url.searchParams.get('filename'),
       contentType: String(request.headers['content-type'] ?? '').split(';')[0].trim(),
       buffer: await readBuffer(request, 10 * 1024 * 1024), actorType: 'customer', actorId: session.actor_id,
+      visibility: 'public',
     });
     respondJson(response, 201, { id: attachment.id, original_name: attachment.original_name, size_bytes: attachment.size_bytes });
     return true;
@@ -95,6 +96,7 @@ export async function handleSupportHttp({
       ticketId: adminUploadMatch[1], filename: url.searchParams.get('filename'),
       contentType: String(request.headers['content-type'] ?? '').split(';')[0].trim(),
       buffer: await readBuffer(request, 10 * 1024 * 1024), actorType: 'admin', actorId: admin.actor_id,
+      visibility: url.searchParams.get('visibility') ?? 'public',
     });
     respondJson(response, 201, { id: attachment.id, original_name: attachment.original_name, size_bytes: attachment.size_bytes });
     return true;

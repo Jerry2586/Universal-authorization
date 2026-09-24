@@ -1,7 +1,57 @@
-import { badge, button, element, td } from './ui.js';
+import { badge, button, date, element, td } from './ui.js';
 import { appendDialogActions, createDialog } from './dialog.js';
 
 export function createLicenseUi({ state, can, request, notify, refresh, showSecret }) {
+  const eventLabels = Object.freeze({
+    'license.issued': '签发授权',
+    'license.key_rotated': '轮换固定 Key',
+    'license.key_viewed': '查看固定 Key',
+    'license.domain_bound': '首次绑定域名',
+    'license.domain_changed': '管理员换绑域名',
+    'license.domain_migration_requested': '申请域名迁移',
+    'license.domain_migration_approved': '批准域名迁移',
+    'license.domain_migration_rejected': '拒绝域名迁移',
+    'license.domain_migration_self_service': '客户自助换绑',
+    'license.plan_changed': '切换授权套餐',
+    'license.active': '恢复授权',
+    'license.suspended': '暂停授权',
+    'license.revoked': '撤销授权',
+    'build.authorized': '授权构建',
+  });
+
+  function eventMetadata(metadata = {}) {
+    const values = Object.entries(metadata)
+      .filter(([, value]) => value !== null && value !== undefined && value !== '')
+      .slice(0, 8)
+      .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`);
+    return values.join(' · ') || '无附加信息';
+  }
+
+  async function showLicenseEvents(license) {
+    try {
+      const result = await request(`/web/admin/licenses/${encodeURIComponent(license.id)}/events`);
+      createDialog('授权事件记录', `订单 ${license.customer_ref} 的授权生命周期。安全字段已在服务端过滤。`, (card, close) => {
+        const timeline = element('div', null, 'ticket-conversation license-event-timeline');
+        for (const item of result.events || []) {
+          const event = element('article', null, 'ticket-message');
+          const head = element('div', null, 'ticket-message-head');
+          head.append(
+            element('strong', eventLabels[item.event_type] ?? item.event_type),
+            element('time', date(item.created_at)),
+          );
+          const actor = `${item.actor_type ?? 'system'}${item.actor_id ? ` · ${item.actor_id}` : ''}`;
+          const outcome = `${item.result ?? 'success'}${item.reason_code ? ` · ${item.reason_code}` : ''}`;
+          event.append(head, element('p', `${actor} · ${outcome}`), element('small', eventMetadata(item.metadata)));
+          timeline.append(event);
+        }
+        if (!timeline.childElementCount) timeline.append(element('div', '暂无授权事件', 'empty-state compact-empty'));
+        const actions = element('div', null, 'dialog-actions');
+        actions.append(button('关闭', close, 'button button-secondary'));
+        card.append(timeline, actions);
+      });
+    } catch (error) { notify(error.message, true); }
+  }
+
   function revealLicenseKey(license) {
     createDialog('查看完整固定 Key', license.key_recoverable ? '请输入当前管理员密码。完整 Key 显示后不会写入日志。' : '该历史 Key 只保存了不可逆哈希，必须先轮换 Key 才能查看。', (card, close) => {
       if (!license.key_recoverable) {
@@ -127,6 +177,7 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     keyCell.append(keyWrap);
     row.append(td(license.customer_ref), keyCell, td(license.plan_name ?? license.plan_code), td(license.bound_domain), badge(license.status), td(license.build_count), td(license.active_activation_count));
     const action = element('td', null, 'actions');
+    if (can('license.view')) action.append(button('事件记录', () => showLicenseEvents(license)));
     if (can('license.manage')) action.append(button('换域名', () => changeDomain(license)), button('切套餐', () => changePlan(license)), button('轮换 Key', () => confirmAction(license, 'rotate')));
     if (can('license.manage') && license.status !== 'revoked') {
       action.append(button(license.status === 'active' ? '暂停' : '恢复', () => confirmAction(license, license.status === 'active' ? 'suspended' : 'active')));
