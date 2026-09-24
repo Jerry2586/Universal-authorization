@@ -33,6 +33,16 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /openssl pkeyutl -verify/);
   assert.match(installer, /cloudflare_upsert_record/);
   assert.match(installer, /APPGOG_DOCKER_REGISTRY_MIRROR/);
+  assert.match(installer, /select_base_images/);
+  assert.match(installer, /m\.daocloud\.io\/docker\.io\/library\/node:24-bookworm-slim/);
+  assert.match(installer, /docker\.m\.daocloud\.io\/library\/caddy:2\.10/);
+  assert.match(installer, /手工指定的基础镜像不可用，未自动覆盖/);
+  assert.match(installer, /--node-image[\s\S]*NODE_IMAGE_EXPLICIT=true/);
+  assert.match(installer, /--caddy-image[\s\S]*CADDY_IMAGE_EXPLICIT=true/);
+  assert.match(installer, /valid_image_ref/);
+  assert.match(installer, /APPGOG_NODE_IMAGE=.*NODE_IMAGE/);
+  assert.match(installer, /APPGOG_CADDY_IMAGE=.*CADDY_IMAGE/);
+  assert.doesNotMatch(installer, /insecure-registries/);
   assert.match(installer, /sh scripts\/docker\.sh update/);
   assert.match(installer, /git clone.*\$temp_dir\/repository/);
   assert.match(installer, /copy_release_root "\$temp_dir\/repository"/);
@@ -113,6 +123,9 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /diagnostics\(\)/);
   assert.match(docker, /repair_permissions\(\)/);
   assert.match(docker, /prepare_update_control\(\)/);
+  assert.match(docker, /build_with_retry\(\)/);
+  assert.match(docker, /APPGOG_BUILD_ATTEMPTS/);
+  assert.match(docker, /基础镜像仓库、DNS 或 TLS 网络不可用/);
   assert.match(docker, /mkdir -p \/app\/var\/update-control\/requests/);
   assert.match(docker, /chown -R 1000:1000[\s\S]*\/app\/var\/update-control/);
   assert.match(docker, /chmod 770 \/app\/var\/update-control \/app\/var\/update-control\/requests/);

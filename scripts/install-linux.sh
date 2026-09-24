@@ -10,8 +10,13 @@ CHINA_RELEASE_BASE=${APPGOG_CHINA_RELEASE_BASE:-}
 GITHUB_RELEASE_BASE=${APPGOG_GITHUB_RELEASE_BASE:-}
 CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}
 DOCKER_REGISTRY_MIRROR=${APPGOG_DOCKER_REGISTRY_MIRROR:-}
+NODE_IMAGE_EXPLICIT=false
+CADDY_IMAGE_EXPLICIT=false
+[ "${APPGOG_NODE_IMAGE+x}" = x ] && NODE_IMAGE_EXPLICIT=true
+[ "${APPGOG_CADDY_IMAGE+x}" = x ] && CADDY_IMAGE_EXPLICIT=true
 NODE_IMAGE=${APPGOG_NODE_IMAGE:-node:24-bookworm-slim}
 CADDY_IMAGE=${APPGOG_CADDY_IMAGE:-caddy:2.10}
+IMAGE_PULL_TIMEOUT=${APPGOG_IMAGE_PULL_TIMEOUT:-180}
 AUTH_DOMAIN=${AUTH_DOMAIN:-}
 BUILD_DOMAIN=${BUILD_DOMAIN:-}
 SOURCE_DIR=${APPGOG_SOURCE_DIR:-}
@@ -70,8 +75,8 @@ while [ "$#" -gt 0 ]; do
     --china-base) [ "$#" -ge 2 ] || fail '--china-base 缺少值'; CHINA_RELEASE_BASE=$2; shift 2 ;;
     --cloudflare-token) [ "$#" -ge 2 ] || fail '--cloudflare-token 缺少值'; CLOUDFLARE_API_TOKEN=$2; shift 2 ;;
     --docker-registry-mirror) [ "$#" -ge 2 ] || fail '--docker-registry-mirror 缺少值'; DOCKER_REGISTRY_MIRROR=$2; shift 2 ;;
-    --node-image) [ "$#" -ge 2 ] || fail '--node-image 缺少值'; NODE_IMAGE=$2; shift 2 ;;
-    --caddy-image) [ "$#" -ge 2 ] || fail '--caddy-image 缺少值'; CADDY_IMAGE=$2; shift 2 ;;
+    --node-image) [ "$#" -ge 2 ] || fail '--node-image 缺少值'; NODE_IMAGE=$2; NODE_IMAGE_EXPLICIT=true; shift 2 ;;
+    --caddy-image) [ "$#" -ge 2 ] || fail '--caddy-image 缺少值'; CADDY_IMAGE=$2; CADDY_IMAGE_EXPLICIT=true; shift 2 ;;
     --source-dir) [ "$#" -ge 2 ] || fail '--source-dir 缺少值'; SOURCE_DIR=$2; shift 2 ;;
     --skip-docker-install) SKIP_DOCKER=true; shift ;;
     --skip-start) SKIP_START=true; shift ;;
@@ -207,6 +212,7 @@ configure_registry_mirror() {
   case "$DOCKER_REGISTRY_MIRROR" in https://*|http://*) ;; *) fail 'Docker 镜像地址必须使用 http:// 或 https://' ;; esac
   mkdir -p /etc/docker
   if [ -s /etc/docker/daemon.json ]; then
+    cp -p /etc/docker/daemon.json "/etc/docker/daemon.json.appgog.bak.$(date -u +%Y%m%dT%H%M%SZ)"
     jq --arg mirror "$DOCKER_REGISTRY_MIRROR" '. + {"registry-mirrors": ((.["registry-mirrors"] // []) + [$mirror] | unique)}' \
       /etc/docker/daemon.json > /etc/docker/daemon.json.appgog.tmp || fail '现有 Docker daemon.json 不是有效 JSON'
   else
@@ -214,8 +220,66 @@ configure_registry_mirror() {
   fi
   mv /etc/docker/daemon.json.appgog.tmp /etc/docker/daemon.json
   chmod 600 /etc/docker/daemon.json
-  command -v systemctl >/dev/null 2>&1 && systemctl restart docker
+  if command -v systemctl >/dev/null 2>&1; then systemctl restart docker
+  elif command -v service >/dev/null 2>&1; then service docker restart
+  else fail 'Docker registry mirror 已写入，但系统没有可用的 Docker 服务管理命令。'; fi
+  docker info >/dev/null 2>&1 || fail 'Docker registry mirror 配置后 Docker 服务未能恢复；原配置备份位于 /etc/docker/daemon.json.appgog.bak.*'
   log 'Docker registry mirror 已配置'
+}
+
+valid_image_ref() {
+  case "$1" in ''|*[!A-Za-z0-9._:/@+-]*) return 1 ;; *) return 0 ;; esac
+}
+
+pull_image_with_timeout() {
+  image=$1
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$IMAGE_PULL_TIMEOUT" docker pull --quiet "$image"
+  else
+    docker pull --quiet "$image"
+  fi
+}
+
+probe_image_pair() {
+  candidate_node=$1
+  candidate_caddy=$2
+  candidate_name=$3
+  printf '\n[%s] Node: %s\n[%s] Caddy: %s\n' "$candidate_name" "$candidate_node" "$candidate_name" "$candidate_caddy" >> "$IMAGE_SOURCE_LOG"
+  if pull_image_with_timeout "$candidate_node" >> "$IMAGE_SOURCE_LOG" 2>&1 \
+    && pull_image_with_timeout "$candidate_caddy" >> "$IMAGE_SOURCE_LOG" 2>&1; then
+    NODE_IMAGE=$candidate_node
+    CADDY_IMAGE=$candidate_caddy
+    log "基础镜像源可用：$candidate_name"
+    return 0
+  fi
+  printf '[%s] 不可用\n' "$candidate_name" >> "$IMAGE_SOURCE_LOG"
+  return 1
+}
+
+select_base_images() {
+  [ "$SKIP_START" = false ] || { log '按要求不启动容器，跳过基础镜像网络探测'; return 0; }
+  valid_image_ref "$NODE_IMAGE" || fail 'Node 基础镜像地址包含非法字符'
+  valid_image_ref "$CADDY_IMAGE" || fail 'Caddy 基础镜像地址包含非法字符'
+  case "$IMAGE_PULL_TIMEOUT" in ''|*[!0-9]*) fail 'APPGOG_IMAGE_PULL_TIMEOUT 必须是正整数秒数' ;; esac
+  [ "$IMAGE_PULL_TIMEOUT" -gt 0 ] || fail 'APPGOG_IMAGE_PULL_TIMEOUT 必须大于 0'
+  IMAGE_SOURCE_LOG="$SHARED_DIR/logs/image-source-$(date -u +%Y%m%dT%H%M%SZ).log"
+  : > "$IMAGE_SOURCE_LOG"
+  chmod 600 "$IMAGE_SOURCE_LOG" 2>/dev/null || true
+
+  log '检测 Docker 基础镜像网络（Node + Caddy）'
+  if probe_image_pair "$NODE_IMAGE" "$CADDY_IMAGE" '当前配置'; then return 0; fi
+  if [ "$NODE_IMAGE_EXPLICIT" = true ] || [ "$CADDY_IMAGE_EXPLICIT" = true ]; then
+    fail "手工指定的基础镜像不可用，未自动覆盖。详情：$IMAGE_SOURCE_LOG"
+  fi
+
+  if [ "$NODE_IMAGE" != 'node:24-bookworm-slim' ] || [ "$CADDY_IMAGE" != 'caddy:2.10' ]; then
+    if probe_image_pair 'node:24-bookworm-slim' 'caddy:2.10' 'Docker Hub'; then return 0; fi
+  fi
+  if probe_image_pair 'm.daocloud.io/docker.io/library/node:24-bookworm-slim' 'm.daocloud.io/docker.io/library/caddy:2.10' 'DaoCloud 国内镜像'; then return 0; fi
+  if probe_image_pair 'docker.m.daocloud.io/library/node:24-bookworm-slim' 'docker.m.daocloud.io/library/caddy:2.10' 'DaoCloud 兼容镜像'; then return 0; fi
+
+  printf '\nDocker Hub 与受控备用镜像均不可用。请检查服务器 DNS、系统时间、HTTPS 出站 443、Docker daemon 代理和防火墙。\n' >> "$IMAGE_SOURCE_LOG"
+  fail "无法读取 Node/Caddy 基础镜像；没有关闭 TLS 或启用不安全仓库。详情：$IMAGE_SOURCE_LOG"
 }
 
 valid_domain() {
@@ -495,6 +559,12 @@ write_env() {
     if grep -q '^APPGOG_IMAGE=' "$env_temp"; then
       sed "s|^APPGOG_IMAGE=.*|APPGOG_IMAGE=appgog-platform:$package_version|" "$env_temp" > "$env_temp.next" && mv "$env_temp.next" "$env_temp"
     else printf 'APPGOG_IMAGE=appgog-platform:%s\n' "$package_version" >> "$env_temp"; fi
+    if grep -q '^APPGOG_NODE_IMAGE=' "$env_temp"; then
+      sed "s|^APPGOG_NODE_IMAGE=.*|APPGOG_NODE_IMAGE=$NODE_IMAGE|" "$env_temp" > "$env_temp.next" && mv "$env_temp.next" "$env_temp"
+    else printf 'APPGOG_NODE_IMAGE=%s\n' "$NODE_IMAGE" >> "$env_temp"; fi
+    if grep -q '^APPGOG_CADDY_IMAGE=' "$env_temp"; then
+      sed "s|^APPGOG_CADDY_IMAGE=.*|APPGOG_CADDY_IMAGE=$CADDY_IMAGE|" "$env_temp" > "$env_temp.next" && mv "$env_temp.next" "$env_temp"
+    else printf 'APPGOG_CADDY_IMAGE=%s\n' "$CADDY_IMAGE" >> "$env_temp"; fi
     cat "$env_temp" > "$SHARED_DIR/.env"
     rm -f "$env_temp"
     chmod 600 "$SHARED_DIR/.env"
@@ -604,6 +674,14 @@ if [ -f "$SHARED_DIR/.env" ]; then
   UPGRADE_MODE=true
   AUTH_DOMAIN=$(sed -n 's/^AUTH_DOMAIN=//p' "$SHARED_DIR/.env" | tail -n 1)
   BUILD_DOMAIN=$(sed -n 's/^BUILD_DOMAIN=//p' "$SHARED_DIR/.env" | tail -n 1)
+  if [ "$NODE_IMAGE_EXPLICIT" = false ]; then
+    existing_node_image=$(sed -n 's/^APPGOG_NODE_IMAGE=//p' "$SHARED_DIR/.env" | tail -n 1)
+    [ -z "$existing_node_image" ] || NODE_IMAGE=$existing_node_image
+  fi
+  if [ "$CADDY_IMAGE_EXPLICIT" = false ]; then
+    existing_caddy_image=$(sed -n 's/^APPGOG_CADDY_IMAGE=//p' "$SHARED_DIR/.env" | tail -n 1)
+    [ -z "$existing_caddy_image" ] || CADDY_IMAGE=$existing_caddy_image
+  fi
 fi
 log "检测系统：${PRETTY_NAME:-$DISTRO}"
 install_packages
@@ -621,6 +699,7 @@ else
   log '下载并校验 APPGOG 正式发布包'; install_packages; download_source
 fi
 
+select_base_images
 write_env
 activate_release
 

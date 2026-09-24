@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.2.1
+# APPGOG打包授权系统 v1.2.2
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -15,6 +15,8 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 引导器识别 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora 和 Oracle Linux 以及 amd64/arm64，自动补齐 CA、OpenSSL、系统工具、Docker、Compose 和 Buildx。它获取最新正式 Release，先验证 Ed25519 清单签名，再校验 `.run` 的 SHA-256，最后下载安装包并部署。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
 
 默认使用 jsDelivr 获取固定引导器；引导器下载正式包时依次尝试配置的国内源、GitHub Release 和两个 GitHub 代理地址。无论来自哪个源，签名或哈希不匹配都会拒绝执行。自有国内对象存储可通过 `APPGOG_CHINA_RELEASE_BASE=https://你的国内地址` 配置。完全断网时仍可上传版本化 `.run` 离线安装。传入一次性 `--cloudflare-token` 后可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
+
+安装器会在构建前真实拉取 Node 与 Caddy 基础镜像做网络探测。Docker Hub、DNS 或 TLS 链路不可用时，会自动改用 DaoCloud 公开维护的 Docker Hub 镜像路径，并把成功选择同步到升级后的 `.env`；构建发生临时网络错误会自动重试 3 次。整个过程不会关闭 TLS，也不会配置 `insecure-registries`。探测和构建分别写入 `shared/logs/image-source-*.log` 与 `shared/logs/build-*.log`。
 
 重复执行同一命令时，引导器读取 `/opt/appgog/current/package.json`：版本相同且运行健康时安全退出；发现更高正式版本时下载并验签，把完整程序写入新的 `/opt/appgog/releases/<版本>`，创建备份并原子切换 `current`。`.env`、数据库、签名密钥、管理员身份、上传、构建成品和备份保留在 `/opt/appgog/shared` 与 Docker 数据卷中；升级失败会恢复旧程序链接和服务，默认拒绝自动降级。
 
@@ -117,7 +119,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.1 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.2 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'

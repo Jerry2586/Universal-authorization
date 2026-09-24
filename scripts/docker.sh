@@ -24,6 +24,37 @@ require_config() {
     exit 1
   fi
 }
+build_with_retry() {
+  mkdir -p "$ROOT_DIR/logs"
+  build_log="$ROOT_DIR/logs/build-$(date -u +%Y%m%dT%H%M%SZ).log"
+  attempt=1
+  max_attempts=${APPGOG_BUILD_ATTEMPTS:-3}
+  case "$max_attempts" in ''|*[!0-9]*) fail 'APPGOG_BUILD_ATTEMPTS 必须是正整数' ;; esac
+  [ "$max_attempts" -gt 0 ] || fail 'APPGOG_BUILD_ATTEMPTS 必须大于 0'
+  while [ "$attempt" -le "$max_attempts" ]; do
+    echo "构建镜像（第 $attempt/$max_attempts 次），日志：$build_log"
+    if [ "${APPGOG_NO_CACHE:-false}" = true ]; then
+      if compose build --no-cache > "$build_log.attempt" 2>&1; then
+        cat "$build_log.attempt" >> "$build_log"; rm -f "$build_log.attempt"; return 0
+      fi
+    else
+      if compose build > "$build_log.attempt" 2>&1; then
+        cat "$build_log.attempt" >> "$build_log"; rm -f "$build_log.attempt"; return 0
+      fi
+    fi
+    tee -a "$build_log" < "$build_log.attempt" >&2
+    rm -f "$build_log.attempt"
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      echo '构建失败，等待 5 秒后自动重试。' >&2
+      sleep 5
+    fi
+    attempt=$((attempt + 1))
+  done
+  if grep -Eiq 'load metadata for|docker\.io|registry-1\.docker\.io|auth\.docker\.io|TLS handshake timeout|x509|no such host|i/o timeout|network is unreachable|connection refused' "$build_log"; then
+    fail "基础镜像仓库、DNS 或 TLS 网络不可用。请重新执行同一条一键安装命令，让安装器重新探测镜像源。完整日志：$build_log"
+  fi
+  fail "Docker 镜像构建失败。完整日志：$build_log"
+}
 prepare_update_control() {
   compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c \
     'mkdir -p /app/var/update-control/requests && chown -R 1000:1000 /app/var/update-control && chmod 770 /app/var/update-control /app/var/update-control/requests'
@@ -86,8 +117,7 @@ deploy() (
   previous=$(compose ps -a -q appgog)
   previous_image=''
   if [ -n "$previous" ]; then previous_image=$(docker inspect --format '{{.Image}}' "$previous"); fi
-  if [ "${APPGOG_NO_CACHE:-false}" = true ]; then compose build --no-cache
-  else compose build; fi
+  build_with_retry
   image_name=$(compose config --images | head -n 1)
   [ -z "$previous_image" ] || docker tag "$previous_image" appgog-platform:rollback
   existing=$(project_containers -a)
@@ -348,7 +378,7 @@ case "${1:-help}" in
     [ -n "${2:-}" ] && [ -f "$2" ] || { echo '用法：sh scripts/docker.sh restore /绝对路径/备份.tar.gz.enc' >&2; exit 1; }
     archive=$(CDPATH= cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")
     [ -z "$(compose ps --status running -q)" ] || { echo '恢复只能在未启动服务的新部署执行；现有数据不会被覆盖。' >&2; exit 1; }
-    compose build
+    build_with_retry
     prepare_update_control
     case "$archive" in
       *.enc)
