@@ -172,7 +172,7 @@ test('online update helper writes valid readiness JSON before a latest version e
   t.after(() => rmSync(installRoot, { recursive: true, force: true }));
   mkdirSync(join(installRoot, 'current'), { recursive: true });
   mkdirSync(join(installRoot, 'current', 'scripts', 'lib'), { recursive: true });
-  writeFileSync(join(installRoot, 'current', 'package.json'), `${JSON.stringify({ version: projectVersion })}\n`);
+  writeFileSync(join(installRoot, 'current', 'package.json'), `${JSON.stringify({ version: projectVersion }, null, 2)}\n`);
   copyFileSync(scripts.releaseDownloadLibrary, join(installRoot, 'current', 'scripts', 'lib', 'release-download.sh'));
 
   const child = spawn('/bin/sh', [scripts.updateHelper, '--daemon', installRoot], { stdio: 'ignore' });
