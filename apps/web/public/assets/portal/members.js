@@ -1,7 +1,7 @@
-import { $, state } from './core.js';
+import { $ } from './core.js';
 import { badge, button, date, element, nodeRoleLabel, renderRows, roleLabel, td } from './ui.js';
 
-export function createMembersUi({ request, notify, refresh, showSecret, openDialog, appendActions }) {
+export function createMembersUi({ state, request, notify, refresh, showSecret, openDialog, appendActions }) {
   function adminRow(admin) {
     const row = element('tr');
     const member = element('td');

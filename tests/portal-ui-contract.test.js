@@ -8,7 +8,7 @@ const read = (name) => readFileSync(resolve(root, name), 'utf8');
 
 test('admin UI exposes independent announcement, protected key reveal, and signed online update controls', () => {
   const html = read('apps/web/public/admin.html');
-  const script = read('apps/web/public/assets/portal.js');
+  const script = read('apps/web/public/assets/portal/admin-page.js');
   const licenses = read('apps/web/public/assets/portal/licenses.js');
   const announcements = read('apps/web/public/assets/portal/announcements.js');
   const operations = read('apps/web/public/assets/portal/operations.js');
@@ -41,7 +41,7 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
 
 test('customer build UI keeps the version catalog in build tasks and removes migration notes', () => {
   const html = read('apps/web/public/build.html');
-  const script = read('apps/web/public/assets/portal.js');
+  const script = read('apps/web/public/assets/portal/customer-page.js');
   const buildsPage = html.indexOf('data-page="builds"');
   const catalog = html.indexOf('id="version-catalog"');
   assert.ok(buildsPage >= 0 && catalog > buildsPage);
@@ -56,7 +56,7 @@ test('customer build UI keeps the version catalog in build tasks and removes mig
   assert.match(html, /id="customer-ticket-form"/);
   assert.doesNotMatch(html, /生成回滚包|回滚构建/);
   assert.match(script, /renderCustomerTickets/);
-  assert.match(script, /renderAdminTickets/);
+  assert.doesNotMatch(script, /renderAdminTickets|\/web\/admin\//);
   const ticketModule = read('apps/web/public/assets/portal/tickets.js');
   assert.match(ticketModule, /\/web\/customer\/tickets\/\$\{encodeURIComponent\(ticket\.id\)\}\/close/);
   assert.match(ticketModule, /重新打开工单/);

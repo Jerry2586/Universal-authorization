@@ -1,4 +1,4 @@
-import { $, state } from './core.js';
+import { $ } from './core.js';
 
 const stateLabels = Object.freeze({
   waiting_pair: '等待配对', paired: '已配对', import_queued: '等待恢复', preflight: '环境预检',
@@ -10,7 +10,7 @@ const stateLabels = Object.freeze({
 function text(id, value) { const node = $(id); if (node) node.textContent = value ?? '—'; }
 function date(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'; }
 
-export function createMigrationUi({ request, notify, showSecret, selectView }) {
+export function createMigrationUi({ state, request, notify, showSecret, selectView }) {
   let timer = null;
 
   function render(data) {

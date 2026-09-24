@@ -1,8 +1,7 @@
-import { can, state } from './core.js';
 import { badge, button, element, td } from './ui.js';
 import { appendDialogActions, createDialog } from './dialog.js';
 
-export function createLicenseUi({ request, notify, refresh, showSecret }) {
+export function createLicenseUi({ state, can, request, notify, refresh, showSecret }) {
   function revealLicenseKey(license) {
     createDialog('查看完整固定 Key', license.key_recoverable ? '请输入当前管理员密码。完整 Key 显示后不会写入日志。' : '该历史 Key 只保存了不可逆哈希，必须先轮换 Key 才能查看。', (card, close) => {
       if (!license.key_recoverable) {
