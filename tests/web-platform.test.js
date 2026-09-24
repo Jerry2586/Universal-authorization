@@ -59,18 +59,30 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
     app.close();
   });
   const base = `http://127.0.0.1:${server.address().port}`;
-  const send = async (path, { method = 'GET', body, cookie, csrf } = {}) => {
+  const send = async (path, { method = 'GET', body, cookie, csrf, requestId } = {}) => {
     const response = await fetch(`${base}${path}`, {
       method,
       headers: {
         ...(body ? { 'content-type': 'application/json' } : {}),
         ...(cookie ? { cookie } : {}),
         ...(csrf ? { 'x-csrf-token': csrf } : {}),
+        ...(requestId ? { 'x-request-id': requestId } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    return { status: response.status, cookie: response.headers.get('set-cookie'), data: await response.json() };
+    return {
+      status: response.status,
+      cookie: response.headers.get('set-cookie'),
+      requestId: response.headers.get('x-request-id'),
+      data: await response.json(),
+    };
   };
+
+  const correlated = await send('/web/session?actor=invalid', { requestId: 'request-contract-0001' });
+  assert.equal(correlated.status, 400);
+  assert.equal(correlated.requestId, 'request-contract-0001');
+  assert.equal(correlated.data.error.request_id, 'request-contract-0001');
+  assert.equal(correlated.data.error.code, 'ACTOR_INVALID');
 
   const page = await fetch(`${base}/build`);
   assert.equal(page.status, 200);

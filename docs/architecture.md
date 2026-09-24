@@ -1,6 +1,8 @@
-# APPGOG打包授权系统架构（v1.2.11）
+# APPGOG打包授权系统架构（v1.2.12）
 
 日期：2026-09-25
+
+v1.2.12 完成 HTTP Phase 2 边界：`http.js` 只负责请求编排，Public、Identity、Customer、Licensing、Product、Activation、Packaging、Support、Operations 和 Migration 路由分别归属独立模块。请求关联 ID、统一错误映射、Cookie 会话、权限、CSRF、限流、CORS 和请求体大小限制由 `http/middleware/*` 统一提供；领域路由不得直接访问 Repository 或写审计。
 
 ## 一、用户看到的流程
 

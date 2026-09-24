@@ -1,7 +1,7 @@
 # APPGOG 公司级重构蓝图
 
 日期：2026-09-24  
-状态：强制执行；v1.2.11 已完成 Phase 1 前端入口、状态和页面控制器边界
+状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2 HTTP 路由与统一中间件边界
 适用范围：授权中心、客户打包中心、构建 Worker、产品 SDK、Docker 安装器、在线更新助手和服务器迁移能力。
 
 ## 1. 目标与非目标
@@ -186,6 +186,8 @@ action result reason_code duration_ms
 - 拆分管理员、客户、Worker、授权和公共路由；
 - 统一认证、授权、CSRF、请求 ID 和错误处理；
 - 路由层不再写审计或直接操作 Repository。
+
+完成状态（v1.2.12）：主 HTTP 入口只编排独立领域路由；所有 JSON 错误固定返回 `code`、`message`、`request_id`，并通过 `X-Request-Id` 回显有效调用方关联 ID 或生成安全新 ID。认证、CSRF、限流、CORS、请求体限制和错误映射均由 `http/middleware/*` 提供，边界测试禁止路由重新堆回主入口。
 
 ### Phase 3：领域 Service 与 Repository
 

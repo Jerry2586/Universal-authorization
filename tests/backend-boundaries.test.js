@@ -78,6 +78,51 @@ test('activation and packaging APIs own explicit route modules', () => {
     '领域路由不得直接访问 Repository 或写审计');
 });
 
+test('phase two HTTP boundaries own public, identity, customer, licensing and product routes', () => {
+  const http = read('apps/license-api/src/http.js');
+  const publicRoutes = read('apps/license-api/src/modules/public/http-routes.js');
+  const identityRoutes = read('apps/license-api/src/modules/identity/http-routes.js');
+  const customerRoutes = read('apps/license-api/src/modules/customer/http-routes.js');
+  const licensingRoutes = read('apps/license-api/src/modules/licensing/http-routes.js');
+  const productRoutes = read('apps/license-api/src/modules/product/http-routes.js');
+  for (const handler of [
+    'handlePublicHttp', 'handleIdentityHttp', 'handleCustomerHttp',
+    'handleLicensingHttp', 'handleProductHttp',
+  ]) assert.match(http, new RegExp(handler), `主 HTTP 入口缺少 ${handler}`);
+  for (const [source, route] of [
+    [publicRoutes, '/api/v1/public-key'],
+    [identityRoutes, '/web/admin/login'],
+    [customerRoutes, '/web/customer/overview'],
+    [licensingRoutes, '/web/admin/licenses'],
+    [productRoutes, '/web/admin/versions'],
+  ]) assert.ok(source.includes(route), `独立路由模块缺少 ${route}`);
+  for (const route of [
+    '/web/admin/login', '/web/customer/login', '/web/customer/overview',
+    '/web/admin/licenses', '/web/admin/versions', '/api/v1/public-key',
+  ]) assert.ok(!http.includes(`url.pathname === '${route}'`), `${route} 不得重新堆回主 HTTP 入口`);
+  assert.doesNotMatch(`${publicRoutes}\n${identityRoutes}\n${customerRoutes}\n${licensingRoutes}\n${productRoutes}`,
+    /portal\.repository|\.audit\s*\(/,
+    'Phase 2 路由不得直接访问 Repository 或写审计');
+});
+
+test('HTTP middleware owns request IDs, errors, authentication and rate limits', () => {
+  const http = read('apps/license-api/src/http.js');
+  const requestContext = read('apps/license-api/src/http/middleware/request-context.js');
+  const errorHandler = read('apps/license-api/src/http/middleware/error-handler.js');
+  const auth = read('apps/license-api/src/http/middleware/auth.js');
+  const rateLimit = read('apps/license-api/src/http/middleware/rate-limit.js');
+  assert.match(http, /createRequestContext/);
+  assert.match(http, /respondError/);
+  assert.match(http, /createRequestAuth/);
+  assert.match(http, /createRateLimiter/);
+  assert.match(requestContext, /x-request-id/);
+  assert.match(errorHandler, /request_id/);
+  assert.match(auth, /verifyCsrf/);
+  assert.match(rateLimit, /RATE_LIMITED/);
+  assert.doesNotMatch(http, /function requireWebSession|function createRateLimiter|instanceof DomainError/,
+    '认证、限流和错误映射不得重新内联到主 HTTP 入口');
+});
+
 test('support owns its customer and admin HTTP routes', () => {
   const http = read('apps/license-api/src/http.js');
   const supportRoutes = read('apps/license-api/src/modules/support/http-routes.js');

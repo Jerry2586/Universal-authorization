@@ -90,7 +90,7 @@ export function verifySourceContract() {
   const initializer = read('scripts/docker/initialize.js');
   requireCondition(initializer.includes('source-fenced.json'), 'Docker 初始化缺少 Fenced 防双写检查');
 
-  const publicKeyRoute = read('apps/license-api/src/http.js');
+  const publicKeyRoute = read('apps/license-api/src/modules/public/http-routes.js');
   requireCondition(publicKeyRoute.includes('public_keys: resolvedKeys'), '公钥接口没有返回三类签名公钥');
 
   const workflow = read('.github/workflows/docker.yml');

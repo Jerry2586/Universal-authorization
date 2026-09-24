@@ -3,8 +3,10 @@
 所有 JSON 错误使用统一格式：
 
 ```json
-{ "error": { "code": "DOMAIN_MISMATCH", "message": "当前域名与打包授权域名不一致" } }
+{ "error": { "code": "DOMAIN_MISMATCH", "message": "当前域名与打包授权域名不一致", "request_id": "0b71991d-4fd1-4b82-9284-b09fca8998c3" } }
 ```
+
+所有响应返回 `X-Request-Id`。调用方可发送 8–128 位的 `X-Request-Id` 作为关联 ID；不合法或缺失时服务端生成 UUID。所有写请求都可用该 ID 关联运行日志、诊断日志和安全审计。支持跨域的公共接口允许 `X-Request-Id` 与 `Idempotency-Key` 请求头；真正的幂等操作仍由各自资源身份、状态机和固定分块序号保证，不能仅把请求 ID 当作幂等键。
 
 ## 网页内部接口 `/web/*`
 
@@ -33,7 +35,7 @@
 | `POST /web/admin/versions` | 管理员 | 登记尚未发布的草稿版本 |
 | `POST /web/admin/versions/upload?product_code=appgog&version=1.0.0&display_name=APPGOG` | 管理员 | 请求体为 ZIP 原始字节，`Content-Type: application/zip`；检查并发布可安装主题版本 |
 | `POST /web/admin/licenses/{id}/rotate-key` | 管理员 | 轮换固定 Key，返回只显示一次的新 Key |
-| `POST /web/admin/licenses/{id}/reveal-key` | 授权管理员 + 当前密码 | 单独查看完整固定 Key，并写安全审计；列表接口仍只返回脱敏值 |
+| `POST /web/admin/licenses/{id}/key` | 授权管理员 + 当前密码 | 单独查看完整固定 Key，并写安全审计；列表接口仍只返回脱敏值 |
 | `POST /web/admin/licenses/{id}/domain` | 管理员 | 输入 `{ "domain": "new.example.com" }` 换绑域名 |
 | `POST /web/admin/licenses/{id}/plan` | 授权管理员 | 切换免费版、付费版或历史兼容版，并增加 License generation |
 | `DELETE /web/admin/licenses/{id}` | 平台所有者 + 当前密码 + 精确确认文本 | 永久删除授权及关联业务记录/文件；失败文件进入补偿清理，不保留可识别业务数据 |
