@@ -1,7 +1,7 @@
 # APPGOG 公司级重构蓝图
 
 日期：2026-09-24  
-状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2 HTTP 路由与统一中间件边界
+状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2，v1.2.13 已完成 Phase 3 领域 Service 与 Repository 边界
 适用范围：授权中心、客户打包中心、构建 Worker、产品 SDK、Docker 安装器、在线更新助手和服务器迁移能力。
 
 ## 1. 目标与非目标
@@ -194,6 +194,8 @@ action result reason_code duration_ms
 - 按领域拆分 Portal Service 和全库 Repository；
 - 修正 `packages → apps` 的反向依赖；
 - 固定事务边界和数据库写所有权。
+
+完成状态（v1.2.13）：`createLicenseService`、`createPortalService` 和 `createRepository` 均缩为只负责组合的兼容门面。Licensing、Entitlement、Activation、Packaging Authorization、Product Catalog、Audit、Customer Projection、Admin Projection 和 License Erasure 拥有独立 Service 与最小 Repository Port；SQLite 方法按 Product、Entitlement、Licensing、Activation、Packaging、Audit、Identity、Operations、Support 和 Erasure 领域拆分，123 个既有 Repository 方法和全部对外行为保持兼容。跨域撤销仅通过 Activation 生命周期 Port 执行，产品发布和构建队列不再依赖完整授权服务。
 
 ### Phase 4：授权事件、永久删除和工单状态机
 

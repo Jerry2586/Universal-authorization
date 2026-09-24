@@ -7,7 +7,7 @@ import { secretMatches } from '../../../../../packages/core/src/security.js';
 import { publicBuildJob, SOURCE_KIND } from '../../../../../packages/contracts/src/build-job.js';
 
 export function createPackagingService({
-  repository, queue, licenseService, operations, artifactStore, buildEngine, config, clock = () => new Date(),
+  repository, queue, buildAuthorization, operations, artifactStore, buildEngine, config, clock = () => new Date(),
 }) {
   function customerLicense(session) {
     const license = repository.licenseById(session.actor_id);
@@ -73,7 +73,7 @@ export function createPackagingService({
       if (!job) return null;
       let claimedBuild;
       try {
-        claimedBuild = licenseService.claimBuildForJob({
+        claimedBuild = buildAuthorization.claimBuildForJob({
           licenseId: job.license_id, version: job.requested_version, domain: job.requested_domain,
         });
         invariant(repository.assignBuildToJob(job.id, workerId, claimedBuild.buildId), 'BUILD_LEASE_INVALID', '构建任务租约失效', 409);

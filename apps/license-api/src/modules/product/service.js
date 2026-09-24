@@ -36,11 +36,11 @@ function sourceMetadata(files, sourceFilename) {
   return { version, displayName };
 }
 
-export function createProductService({ repository, licenseService, artifactStore, buildEngine, config, clock = () => new Date() }) {
+export function createProductService({ repository, productCatalog, artifactStore, buildEngine, config, clock = () => new Date() }) {
   return Object.freeze({
     registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind }) {
       invariant(version?.trim(), 'VERSION_REQUIRED', '必须填写版本号');
-      const product = licenseService.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
+      const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       invariant(!repository.sourceVersionByProductVersion(product.code, version.trim()), 'VERSION_EXISTS', '该版本已经存在', 409);
       return repository.createSourceVersion({
         productId: product.id,
@@ -59,7 +59,7 @@ export function createProductService({ repository, licenseService, artifactStore
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
       const validation = buildEngine.validateSource(zipBuffer);
       const detected = sourceMetadata(validation.files, sourceFilename);
-      const product = licenseService.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
+      const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       const requestedVersion = version?.trim() || null;
       invariant(!requestedVersion || !detected.version || requestedVersion === detected.version,
         'SOURCE_VERSION_CONFLICT', `填写的版本号与安装包识别结果 ${detected.version} 不一致`, 409);

@@ -199,3 +199,64 @@ test('packaging and product use cases own bounded services and repository ports'
   assert.doesNotMatch(productPort, /createAdmin|createSupportTicket|createBuildJob|setSetting|licenseById/,
     'Product Repository Port 不得暴露身份、工单、构建或授权接口');
 });
+
+test('license facade composes bounded domain services instead of owning business logic', () => {
+  const facade = read('apps/license-api/src/service.js');
+  for (const factory of [
+    'createAuditService', 'createProductCatalogService', 'createLicensingService',
+    'createEntitlementService', 'createBuildAuthorizationService', 'createActivationService',
+  ]) assert.match(facade, new RegExp(factory), `授权门面缺少 ${factory}`);
+  assert.ok(facade.split('\n').length < 100, 'createLicenseService 必须保持为小型兼容门面');
+  assert.doesNotMatch(facade, /repository\.(createActivation|createLicense|createTicket|audit)/,
+    '授权门面不得直接执行领域 Repository 操作');
+});
+
+test('licensing, entitlement, activation, packaging, product and audit own bounded ports', () => {
+  const ports = {
+    licensing: read('apps/license-api/src/modules/licensing/repository-port.js'),
+    entitlement: read('apps/license-api/src/modules/entitlement/repository-port.js'),
+    activation: read('apps/license-api/src/modules/activation/repository-port.js'),
+    packaging: read('apps/license-api/src/modules/packaging/authorization-repository-port.js'),
+    product: read('apps/license-api/src/modules/product/catalog-repository-port.js'),
+    audit: read('apps/license-api/src/modules/audit/repository-port.js'),
+  };
+  assert.doesNotMatch(ports.licensing, /createActivation|createInstallReceipt|createTicket|createBuild/);
+  assert.doesNotMatch(ports.entitlement, /createLicense|createActivation|createBuild|createSourceVersion/);
+  assert.doesNotMatch(ports.activation, /createLicense|changeLicensePlan|createTicket|createSourceVersion/);
+  assert.doesNotMatch(ports.packaging, /createActivation|changeLicensePlan|createSourceVersion/);
+  assert.doesNotMatch(ports.product, /createLicense|createActivation|createBuild|createTicket/);
+  assert.deepEqual((ports.audit.match(/repository\./g) ?? []).length, 2,
+    'Audit Port 只能暴露安全审计和授权事件写入');
+});
+
+test('portal facade composes customer projection, admin projection and erasure services', () => {
+  const portal = read('apps/license-api/src/portal-service.js');
+  const bootstrap = read('apps/license-api/src/bootstrap.js');
+  const customerPort = read('apps/license-api/src/modules/customer/repository-port.js');
+  const adminPort = read('apps/license-api/src/modules/admin/overview-repository-port.js');
+  const erasurePort = read('apps/license-api/src/modules/licensing/erasure-repository-port.js');
+  assert.match(portal, /createCustomerPortalService/);
+  assert.match(portal, /createAdminOverviewService/);
+  assert.match(portal, /createLicenseErasureService/);
+  assert.ok(portal.split('\n').length < 60, 'Portal Service 必须保持为小型兼容门面');
+  assert.doesNotMatch(portal, /repository\.(licenseById|listLicenses|deleteLicenseGraph)/,
+    'Portal 门面不得直接读取或删除业务数据');
+  assert.match(bootstrap, /createCustomerPortalRepositoryPort\(repository\)/);
+  assert.match(bootstrap, /createAdminOverviewRepositoryPort\(repository\)/);
+  assert.match(bootstrap, /createLicenseErasureRepositoryPort\(repository\)/);
+  assert.doesNotMatch(customerPort, /listAdmins|deleteLicenseGraph|createLicense/);
+  assert.doesNotMatch(adminPort, /deleteLicenseGraph|createLicense|createActivation/);
+  assert.doesNotMatch(erasurePort, /listLicenses|createBuild|createActivation/);
+});
+
+test('repository facade composes domain sqlite adapters without owning query behavior', () => {
+  const repository = read('apps/license-api/src/repository.js');
+  for (const factory of [
+    'createActivationSqliteRepository', 'createAuditSqliteRepository', 'createEntitlementSqliteRepository',
+    'createErasureSqliteRepository', 'createIdentitySqliteRepository', 'createLicensingSqliteRepository',
+    'createOperationsSqliteRepository', 'createPackagingSqliteRepository', 'createProductSqliteRepository',
+    'createSupportSqliteRepository',
+  ]) assert.match(repository, new RegExp(factory), `Repository 门面缺少 ${factory}`);
+  assert.ok(repository.split('\n').length < 50, 'Repository 兼容门面必须保持轻量');
+  assert.doesNotMatch(repository, /database\.prepare|queries\./, 'Repository 门面不得直接声明 SQL 或执行查询');
+});

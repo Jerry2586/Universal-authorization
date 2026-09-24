@@ -1,8 +1,8 @@
-# APPGOG打包授权系统架构（v1.2.12）
+# APPGOG打包授权系统架构（v1.2.13）
 
-日期：2026-09-25
+日期：2026-09-24
 
-v1.2.12 完成 HTTP Phase 2 边界：`http.js` 只负责请求编排，Public、Identity、Customer、Licensing、Product、Activation、Packaging、Support、Operations 和 Migration 路由分别归属独立模块。请求关联 ID、统一错误映射、Cookie 会话、权限、CSRF、限流、CORS 和请求体大小限制由 `http/middleware/*` 统一提供；领域路由不得直接访问 Repository 或写审计。
+v1.2.13 完成领域 Service 与 Repository Phase 3 边界。授权兼容门面只组合 Product Catalog、Licensing、Entitlement、Packaging Authorization、Activation 和 Audit 服务；Portal 兼容门面只组合 Customer Projection、Admin Projection 和 License Erasure；全库 Repository 由十个领域 SQLite Adapter 组成，主门面不再声明 SQL 或执行业务查询。每个 Service 只能接收自己的 Repository Port，跨领域撤销通过受控生命周期 Port 完成，现有 URL、字段、数据库和事务语义保持兼容。
 
 ## 一、用户看到的流程
 

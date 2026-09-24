@@ -12,14 +12,22 @@ import { createControlMigrationRepository } from './modules/migration/repository
 import { createIdentityRepositoryPort } from './modules/identity/repository-port.js';
 import { createSessionRepositoryPort } from './modules/identity/session-repository-port.js';
 import { createIdentityService } from './modules/identity/service.js';
+import { createAdminOverviewRepositoryPort } from './modules/admin/overview-repository-port.js';
+import { createActivationRepositoryPort } from './modules/activation/repository-port.js';
+import { createAuditRepositoryPort } from './modules/audit/repository-port.js';
+import { createCustomerPortalRepositoryPort } from './modules/customer/repository-port.js';
+import { createEntitlementRepositoryPort } from './modules/entitlement/repository-port.js';
+import { createLicenseErasureRepositoryPort } from './modules/licensing/erasure-repository-port.js';
 import { createLicensingRepositoryPort } from './modules/licensing/repository-port.js';
 import { createOperationsRepositoryPort } from './modules/operations/repository-port.js';
 import { createOperationsService } from './modules/operations/service.js';
 import { createSupportRepositoryPort } from './modules/support/repository-port.js';
 import { createSupportService } from './modules/support/service.js';
 import { createPackagingRepositoryPort } from './modules/packaging/repository-port.js';
+import { createBuildAuthorizationRepositoryPort } from './modules/packaging/authorization-repository-port.js';
 import { createPackagingService } from './modules/packaging/service.js';
 import { createProductRepositoryPort } from './modules/product/repository-port.js';
+import { createProductCatalogRepositoryPort } from './modules/product/catalog-repository-port.js';
 import { createProductService } from './modules/product/service.js';
 import { readFileSync } from 'node:fs';
 
@@ -34,7 +42,16 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
   const repository = createRepository(database);
   const migrationRepository = createControlMigrationRepository(database);
   const service = createLicenseService({
-    database, repository: createLicensingRepositoryPort(repository), config,
+    database,
+    repositories: Object.freeze({
+      activation: createActivationRepositoryPort(repository),
+      audit: createAuditRepositoryPort(repository),
+      buildAuthorization: createBuildAuthorizationRepositoryPort(repository),
+      entitlement: createEntitlementRepositoryPort(repository),
+      licensing: createLicensingRepositoryPort(repository),
+      productCatalog: createProductCatalogRepositoryPort(repository),
+    }),
+    config,
     activationPrivateKey: signingKeys.activation.privateKey,
     packagePrivateKey: signingKeys.package.privateKey,
     notificationPrivateKey: signingKeys.notification.privateKey,
@@ -60,11 +77,13 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
     database, repository: createSupportRepositoryPort(repository), artifactStore, clock,
   });
   const packaging = createPackagingService({
-    repository: createPackagingRepositoryPort(repository), queue, licenseService: service,
+    repository: createPackagingRepositoryPort(repository), queue,
+    buildAuthorization: Object.freeze({ claimBuildForJob: service.claimBuildForJob }),
     operations, artifactStore, buildEngine, config, clock,
   });
   const product = createProductService({
-    repository: createProductRepositoryPort(repository), licenseService: service,
+    repository: createProductRepositoryPort(repository),
+    productCatalog: Object.freeze({ ensureProduct: service.ensureProduct }),
     artifactStore, buildEngine, config, clock,
   });
   const migrations = createMigrationControl({
@@ -75,7 +94,18 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
     clock,
   });
   const portalCore = createPortalService({
-    database, repository, licenseService: service, operations, support, artifactStore, clock,
+    database,
+    repositories: Object.freeze({
+      adminOverview: createAdminOverviewRepositoryPort(repository),
+      customer: createCustomerPortalRepositoryPort(repository),
+      erasure: createLicenseErasureRepositoryPort(repository),
+    }),
+    licensing: Object.freeze({
+      bindLicenseDomain: service.bindLicenseDomain,
+      reviewDomainMigration: service.reviewDomainMigration,
+      selfServiceDomainMigration: service.selfServiceDomainMigration,
+    }),
+    operations, support, artifactStore, clock,
     packageVersion: PACKAGE_VERSION,
   });
   const portal = Object.freeze({ ...portalCore, ...identity, ...operations, ...support, ...packaging, ...product });
