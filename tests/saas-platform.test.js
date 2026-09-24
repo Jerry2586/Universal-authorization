@@ -10,6 +10,7 @@ import test from 'node:test';
 import { bootstrap } from '../apps/license-api/src/bootstrap.js';
 import { openDatabase } from '../apps/license-api/src/database.js';
 import { createHttpHandler } from '../apps/license-api/src/http.js';
+import { createRepository } from '../apps/license-api/src/repository.js';
 import { createBuildCenterHandler } from '../apps/build-center/src/server.js';
 import { writeZip } from '../packages/core/src/zip.js';
 import { verifyCompactToken } from '../packages/core/src/signing.js';
@@ -646,6 +647,53 @@ test('已经记录旧基线迁移的生产数据库仍会追加完整 Key 加密
     try {
       assert.ok(upgraded.prepare('PRAGMA table_info(licenses)').all().some((column) => column.name === 'key_encrypted'));
       assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.2.0-license-key-encryption'").get());
+    } finally { upgraded.close(); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('已经记录旧基线迁移但缺少后续列的生产数据库会安全补齐并保留管理员', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-v125-migrate-test-'));
+  const path = join(root, 'legacy-baseline.sqlite');
+  try {
+    const old = new DatabaseSync(path);
+    old.exec(`
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_migrations VALUES ('2026-09-23-v1.0.0-baseline', '2026-09-23T00:00:00.000Z');
+      CREATE TABLE admin_users (
+        id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+        status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO admin_users VALUES (
+        'adm_legacy', 'legacy-owner', 'hashed-placeholder', 'active', '2025-01-01', '2025-01-01'
+      );
+      CREATE TABLE licenses (
+        id TEXT PRIMARY KEY, product_id TEXT NOT NULL, customer_ref TEXT NOT NULL,
+        key_prefix TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL,
+        bound_domain TEXT, update_until TEXT, max_builds_per_day INTEGER NOT NULL DEFAULT 3,
+        max_activations INTEGER NOT NULL DEFAULT 1, generation INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+    `);
+    old.close();
+
+    const upgraded = openDatabase(path);
+    try {
+      const columns = new Set(upgraded.prepare('PRAGMA table_info(admin_users)').all().map((column) => column.name));
+      assert.ok(columns.has('deleted_at'));
+      assert.ok(columns.has('deleted_username'));
+
+      const owner = upgraded.prepare(`
+        SELECT username, role, is_owner, deleted_at, deleted_username
+        FROM admin_users WHERE id = 'adm_legacy'
+      `).get();
+      assert.equal(owner.username, 'legacy-owner');
+      assert.equal(owner.role, 'owner');
+      assert.equal(owner.is_owner, 1);
+      assert.equal(owner.deleted_at, null);
+      assert.equal(owner.deleted_username, null);
+      assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-baseline'").get());
+      assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-24-v1.2.5-additive-column-reconciliation'").get());
+      assert.ok(createRepository(upgraded));
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

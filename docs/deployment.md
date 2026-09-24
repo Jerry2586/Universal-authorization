@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-09-23。
+日期：2026-09-24。
 
-APPGOG打包授权系统 v1.2.4 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.5 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -35,7 +35,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.4 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.5 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -161,6 +161,7 @@ docker compose exec -T appgog node scripts/docker/health.js
 - Docker 基础镜像报 `load metadata for`：直接重跑固定安装命令；自动探测详情在 `/opt/appgog/shared/logs/image-source-*.log`，构建重试详情在 `build-*.log`；
 - 新容器显示 `unhealthy`：安装器允许生产数据库和服务最多 120 秒分别启动，并自动重试一次；仍失败会在回滚前保存 `startup-failure-*.log`，包含健康检查输出和最近 300 行容器日志；
 - `无效的生产凭证 LICENSE_ENCRYPTION_KEY`：v1.2.4 会识别 v1.2.0 以前的身份格式，在尚无加密完整 Key 时自动补齐独立密钥；已有密文时拒绝盲目换钥并要求恢复原身份配置；
+- `no such column: deleted_at`：v1.2.5 会独立核对已有生产数据库的实际表结构，只追加缺少的兼容列并保留管理员、Key、设置和全部业务数据；
 - 签名或 SHA-256 失败：停止安装并检查发布源，不得跳过验证或手动执行可疑文件；
 - 系统工具安装失败：检查发行版软件源和 DNS，修复后重跑完全相同的固定命令；
 - 端口占用：停止原 Web 服务后重试，正式路线不与其他反向代理共享 80/443；
