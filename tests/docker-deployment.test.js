@@ -66,6 +66,7 @@ test('Docker preserves custom policy settings and rejects invalid replacements',
 });
 
 test('Compose runs exactly one service with persistent HTTPS and loopback upstreams', () => {
+  const start = readFileSync(join(resolve(import.meta.dirname, '..'), 'scripts/docker/start.js'), 'utf8');
   const compose = readFileSync(join(resolve(import.meta.dirname, '..'), 'compose.yaml'), 'utf8');
   const caddy = readFileSync(join(resolve(import.meta.dirname, '..'), 'Caddyfile'), 'utf8');
   const services = compose.split('services:')[1].split('\nvolumes:')[0];
@@ -77,4 +78,6 @@ test('Compose runs exactly one service with persistent HTTPS and loopback upstre
   assert.match(compose, /cap_drop: \[ALL\]/);
   assert.match(compose, /no-new-privileges:true/);
   assert.match(compose, /scripts\/docker\/health.js/);
+  assert.match(start, /APPGOG_STARTUP_TIMEOUT_MS/);
+  assert.match(start, /启动失败/);
 });

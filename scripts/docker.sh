@@ -55,6 +55,39 @@ build_with_retry() {
   fi
   fail "Docker 镜像构建失败。完整日志：$build_log"
 }
+startup_wait_timeout() {
+  value=${APPGOG_COMPOSE_WAIT_TIMEOUT:-360}
+  case "$value" in ''|*[!0-9]*) fail 'APPGOG_COMPOSE_WAIT_TIMEOUT 必须是正整数秒数' ;; esac
+  [ "$value" -ge 60 ] || fail 'APPGOG_COMPOSE_WAIT_TIMEOUT 不能少于 60 秒'
+  printf '%s' "$value"
+}
+capture_startup_failure() {
+  attempt_label=$1
+  mkdir -p "$ROOT_DIR/logs"
+  target="$ROOT_DIR/logs/startup-failure-$(date -u +%Y%m%dT%H%M%SZ)-$attempt_label.log"
+  container=$(compose ps -a -q appgog 2>/dev/null || true)
+  {
+    echo "APPGOG 启动失败诊断（$attempt_label）"
+    echo "时间：$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo
+    compose ps -a 2>&1 || true
+    if [ -n "$container" ]; then
+      echo
+      docker inspect --format '容器状态={{.State.Status}} 退出码={{.State.ExitCode}} OOM={{.State.OOMKilled}} 错误={{.State.Error}}' "$container" 2>&1 || true
+      docker inspect --format '{{if .State.Health}}健康状态={{.State.Health.Status}}{{range .State.Health.Log}}{{printf "\n[%s] exit=%d %s" .End .ExitCode .Output}}{{end}}{{end}}' "$container" 2>&1 || true
+      echo
+      echo '最近容器日志：'
+      docker logs --timestamps --tail 300 "$container" 2>&1 || true
+    fi
+  } > "$target"
+  chmod 600 "$target" 2>/dev/null || true
+  echo "启动失败诊断已保存：$target" >&2
+  tail -n 120 "$target" >&2 || true
+}
+start_candidate() {
+  wait_timeout=$(startup_wait_timeout)
+  compose up -d --no-build --pull never --force-recreate --wait --wait-timeout "$wait_timeout" appgog
+}
 prepare_update_control() {
   compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c \
     'mkdir -p /app/var/update-control/requests && chown -R 1000:1000 /app/var/update-control && chmod 770 /app/var/update-control /app/var/update-control/requests'
@@ -153,14 +186,21 @@ deploy() (
   # Old Caddy ran as root. Only this short maintenance helper owns elevated capabilities.
   compose run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh appgog -c \
     'mkdir -p /app/var/update-control/requests && chown -R 1000:1000 /app/var/data /app/var/keys /app/var/artifacts /app/var/uploads /app/var/update-control /app/runtime/license /app/runtime/build /app/runtime/worker /app/runtime/caddy-data /app/runtime/caddy-config && chmod 770 /app/var/update-control /app/var/update-control/requests'
-  if ! compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 appgog; then
+  if ! start_candidate; then
+    capture_startup_failure first
     compose stop appgog || true
-    if [ -n "$previous_image" ]; then
-      docker tag "$previous_image" "$image_name"
-      compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 appgog || true
-      switched=true
+    echo '新版本首次启动未通过健康检查，自动重试一次。' >&2
+    if ! start_candidate; then
+      capture_startup_failure second
+      compose stop appgog || true
+      if [ -n "$previous_image" ]; then
+        docker tag "$previous_image" "$image_name"
+        if start_candidate; then switched=true
+        else echo '原版本自动恢复也未通过健康检查，请立即查看启动失败诊断和加密备份。' >&2; fi
+      fi
+      fail '安装/更新健康检查失败；已尝试恢复原服务，数据备份保留在 backups，详细原因已保存到 logs/startup-failure-*.log。'
     fi
-    fail '安装/更新健康检查失败；已尝试恢复原服务，数据备份保留在 backups，请查看 logs。'
+    echo '新版本第二次启动已恢复正常。'
   fi
   switched=true
   [ -z "$legacy" ] || docker rm $legacy >/dev/null

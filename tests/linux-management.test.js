@@ -126,6 +126,10 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /build_with_retry\(\)/);
   assert.match(docker, /APPGOG_BUILD_ATTEMPTS/);
   assert.match(docker, /基础镜像仓库、DNS 或 TLS 网络不可用/);
+  assert.match(docker, /capture_startup_failure\(\)/);
+  assert.match(docker, /startup-failure-/);
+  assert.match(docker, /新版本首次启动未通过健康检查，自动重试一次/);
+  assert.match(docker, /APPGOG_COMPOSE_WAIT_TIMEOUT/);
   assert.match(docker, /mkdir -p \/app\/var\/update-control\/requests/);
   assert.match(docker, /chown -R 1000:1000[\s\S]*\/app\/var\/update-control/);
   assert.match(docker, /chmod 770 \/app\/var\/update-control \/app\/var\/update-control\/requests/);
