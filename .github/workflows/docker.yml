@@ -15,12 +15,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Release contract source validation
+        run: node scripts/verify-release-contract.js --source
       - name: Unit and integration tests
         run: npm test
       - name: Fresh install, real build, update and complete restore
         run: sh scripts/docker/verify.sh
       - name: Package self-extracting installer
         run: npm run cms:package
+      - name: Release contract artifact validation
+        run: node scripts/verify-release-contract.js --artifacts
       - name: Resolve and validate release version
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash

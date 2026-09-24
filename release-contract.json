@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "product": "appgog",
+  "node_engine": ">=24",
+  "node_major": 24,
+  "node_image": "node:24-bookworm-slim",
+  "caddy_image": "caddy:2.10",
+  "docker_compose_min": "2.24",
+  "architectures": [
+    "amd64",
+    "arm64"
+  ]
+}

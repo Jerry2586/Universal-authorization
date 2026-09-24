@@ -1,6 +1,6 @@
 {
   "name": "appgog-packaging-licensing-system",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,6 +15,7 @@
     "cms:install": "node scripts/install-cms.js",
     "cms:start": "node scripts/start-cms.js",
     "cms:package": "node scripts/package-cms.js",
+    "release:verify": "node scripts/verify-release-contract.js --source",
     "dev": "node --watch apps/license-api/src/server.js",
     "test": "node --test",
     "keygen": "node apps/license-api/src/keygen.js",

@@ -3,15 +3,17 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync }
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { writeZip } from '../packages/core/src/zip.js';
 import { createInstaller } from './package-installer.js';
+import { verifyPackagedArtifacts, verifySourceContract } from './verify-release-contract.js';
 
 const root = resolve(process.cwd());
+const { contract: releaseContract } = verifySourceContract();
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const outputDirectory = join(root, 'dist');
 const releaseName = `APPGOG-Packaging-Licensing-System-${manifest.version}`;
 const output = join(outputDirectory, `${releaseName}.zip`);
 const checksumOutput = `${output}.sha256`;
 const files = new Map();
-const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'Caddyfile', 'compose.yaml', 'Dockerfile', 'package.json', 'README.md', 'install-docker.sh'];
+const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'AGENTS.md', 'Caddyfile', 'compose.yaml', 'Dockerfile', 'package.json', 'README.md', 'release-contract.json', 'install-docker.sh'];
 const sourceDirectories = ['apps', 'packages', 'scripts', 'docs'];
 
 function addFile(path) {
@@ -69,13 +71,14 @@ const signaturePath = manifestPath + '.sig';
 const bootstrapPath = join(outputDirectory, 'install.sh');
 rmSync(signaturePath, { force: true });
 const manifestBody = Buffer.from(JSON.stringify({
-  schema: 1,
+  schema: 2,
   product: 'appgog',
   version: manifest.version,
   zip_name: basename(output),
   zip_sha256: sha256,
   run_name: basename(installerPath),
   run_sha256: installerSha256,
+  environment: releaseContract,
 }, null, 2) + '\n');
 writeFileSync(manifestPath, manifestBody, { mode: 0o600 });
 writeFileSync(bootstrapPath, readFileSync(join(root, 'install-docker.sh'), 'utf8').replaceAll('\r\n', '\n'), { mode: 0o700 });
@@ -87,3 +90,4 @@ if (signingKeyPath) {
 } else {
   console.warn('未设置 APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH；已生成清单，但未生成数字签名。');
 }
+verifyPackagedArtifacts();
