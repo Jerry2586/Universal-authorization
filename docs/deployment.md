@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-09-24。
+日期：2026-09-25。
 
-APPGOG打包授权系统 v1.2.8 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.9 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -13,7 +13,7 @@ APPGOG打包授权系统 v1.2.8 的正式生产路线只有统一 Docker Compose
 - TCP 80、TCP 443、UDP 443 可由公网访问，且没有其他程序占用 80/443；
 - 服务器至少能访问 jsDelivr、GitHub Release、配置的国内发布源或内置备用代理之一。
 
-安装器会检查端口、公网 IPv4 与 DNS。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
+首次安装会检查端口、公网 IPv4 与 DNS。已有系统升级复用 `.env` 中的现有域名，不执行首装专用的 DNS 指向强制匹配，但仍执行容器健康检查和公网 HTTPS 检查。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
 
 ## 2. 一条命令安装与升级（唯一推荐入口）
 
@@ -35,7 +35,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.8 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.9 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。

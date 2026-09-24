@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.2.8
+# APPGOG打包授权系统 v1.2.9
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -36,7 +36,7 @@ appgog backup
 appgog doctor
 ```
 
-安装器会确认 80/443 未被其他服务占用、检查两个域名的 DNS A 记录是否指向当前服务器，并在支持的系统中开放防火墙端口。随后由 Compose 内置 Caddy 自动申请和续期 HTTPS 证书，并分别代理授权中心与打包中心。正式生产路线不再依赖服务器面板、外部 Nginx/OpenResty 或手工证书流程。
+首次安装时，安装器会确认 80/443 未被其他服务占用、检查两个域名的 DNS A 记录是否指向当前服务器，并在支持的系统中开放防火墙端口。已有系统升级会复用并保留现有域名配置，不再被首装 DNS 指向检查错误拦截；升级完成后仍执行容器与公网 HTTPS 健康检查。随后由 Compose 内置 Caddy 自动申请和续期 HTTPS 证书，并分别代理授权中心与打包中心。正式生产路线不再依赖服务器面板、外部 Nginx/OpenResty 或手工证书流程。
 
 ## 高级维护：手动 Docker 部署
 
@@ -117,7 +117,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.8 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.9 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'

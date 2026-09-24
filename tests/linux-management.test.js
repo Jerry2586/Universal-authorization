@@ -83,6 +83,18 @@ test('stable bootstrap downloads, verifies, installs, upgrades, and rejects down
   assert.match(bootstrap, /sh "\$WORK_DIR\/installer\.run" "\$@"/);
 });
 
+test('existing installations bypass the fresh-install DNS ownership gate during upgrades', () => {
+  const installer = text(scripts.installer);
+  const start = installer.indexOf('preflight_network() {');
+  const end = installer.indexOf('\n}\n\nverify_download()', start);
+  assert.ok(start >= 0 && end > start, '无法定位安装器网络预检函数');
+  const preflight = installer.slice(start, end);
+  assert.match(preflight, /if \[ "\$UPGRADE_MODE" = true \]; then/);
+  assert.match(preflight, /保留现有域名配置，跳过首装 DNS 指向强制校验/);
+  assert.match(preflight, /else[\s\S]*域名 \$domain 未指向本机公网地址 \$public_ip/);
+  assert.match(preflight, /ufw allow 80\/tcp/);
+});
+
 test('management menu exposes safe lifecycle, logs, configuration, backup, restore, and diagnostics', () => {
   const manager = text(scripts.manager);
   for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'services', 'credentials', 'update', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'repair-source', 'uninstall', 'cleanup']) {

@@ -348,14 +348,19 @@ preflight_network() {
   if [ -z "$owned$legacy" ] && command -v ss >/dev/null 2>&1; then
     ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)(80|443)$' && fail '80 或 443 端口已被占用；统一 Docker HTTPS 入口需要独占这两个端口。'
   fi
-  [ "$SKIP_DNS_CHECK" = false ] || return 0
-  public_ip=$(public_ipv4)
-  [ -n "$public_ip" ] || fail '无法检测服务器公网 IPv4；可在离线预装时显式使用 --skip-dns-check。'
-  for domain in "$AUTH_DOMAIN" "$BUILD_DOMAIN"; do
-    resolved=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)
-    [ -n "$resolved" ] || fail "域名 $domain 尚未解析。请先配置 DNS A 记录指向 $public_ip。"
-    printf '%s\n' "$resolved" | grep -Fx "$public_ip" >/dev/null || fail "域名 $domain 未指向本机公网地址 $public_ip。"
-  done
+  if [ "$SKIP_DNS_CHECK" = false ]; then
+    if [ "$UPGRADE_MODE" = true ]; then
+      log '检测到已有安装：保留现有域名配置，跳过首装 DNS 指向强制校验'
+    else
+      public_ip=$(public_ipv4)
+      [ -n "$public_ip" ] || fail '无法检测服务器公网 IPv4；可在离线预装时显式使用 --skip-dns-check。'
+      for domain in "$AUTH_DOMAIN" "$BUILD_DOMAIN"; do
+        resolved=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)
+        [ -n "$resolved" ] || fail "域名 $domain 尚未解析。请先配置 DNS A 记录指向 $public_ip。"
+        printf '%s\n' "$resolved" | grep -Fx "$public_ip" >/dev/null || fail "域名 $domain 未指向本机公网地址 $public_ip。"
+      done
+    fi
+  fi
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
     ufw allow 80/tcp >/dev/null
     ufw allow 443/tcp >/dev/null
