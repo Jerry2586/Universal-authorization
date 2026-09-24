@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.2.7
+# APPGOG打包授权系统 v1.2.8
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -29,10 +29,9 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 ```sh
 appgog status
 appgog logs build-worker
-appgog update          # 检查并安装签名 GitHub Release，保留业务数据
+appgog update          # 检查签名 Release、完整备份并安全更新最新版本
 appgog repair-source   # 重新下载当前版本并无缓存修复程序源码
 appgog uninstall       # 卸载程序，保留数据库、Key、上传、成品、配置和备份
-appgog rollback
 appgog backup
 appgog doctor
 ```
@@ -43,7 +42,7 @@ appgog doctor
 
 一个容器包含 Node.js 运行环境、SQLite 数据库、授权中心、打包中心、Worker 和 Caddy。首次生成随机管理员密码与内部密钥，后续重建容器保留原身份和业务数据。手动 Docker 安装要求 Compose v2.24+，无需另外安装 Node.js 或 MySQL。
 
-完整安装、更新、回滚、备份和恢复步骤见 [Docker/Linux 部署说明](docs/deployment.md)。
+完整安装、安全更新、备份和恢复步骤见 [Docker/Linux 部署说明](docs/deployment.md)。
 
 只有需要离线维护或二次开发时才使用本节。标准首装和跨版本升级始终使用上方固定的一行命令。手动方式先解压正式发布 ZIP 或克隆公开仓库到 `/opt/appgog`，然后执行：
 
@@ -79,9 +78,6 @@ sh scripts/docker.sh credentials
 # 构建新代码 → 完整备份 → 重建服务 → 健康检查
 sh scripts/docker.sh update
 
-# 更新后需要回到更新前镜像
-sh scripts/docker.sh rollback
-
 # 单独备份（短暂停止写入）
 sh scripts/docker.sh backup
 
@@ -91,7 +87,7 @@ sh scripts/docker.sh restore /绝对路径/备份.tar.gz
 
 备份包含数据库、签名密钥、内部凭证、上传源码和构建成品，输出为 AES-256/PBKDF2 加密文件；首次备份生成 `.backup-key`，必须与备份分开离线保存。更新不删除数据卷；不要执行 docker compose down -v。当前从源码构建镜像，尚未提供只执行 docker compose pull 的镜像发布方式。
 
-**旧部署：保留原 .env 和 Compose 项目名。** 安装器支持本仓库旧版标准命名卷迁移：备份、停止旧容器、修复卷权限、启动单容器，成功后移除旧容器而保留卷。自定义 bind mount 或改名数据卷需要按实际挂载迁移，不能当成空安装。跨多容器到单容器的历史版本回退需要对应旧源码及备份，普通 rollback 只支持单容器镜像。
+**旧部署：保留原 .env 和 Compose 项目名。** 安装器支持本仓库旧版标准命名卷迁移：备份、停止旧容器、修复卷权限、启动单容器，成功后移除旧容器而保留卷。自定义 bind mount 或改名数据卷需要按实际挂载迁移，不能当成空安装。部署失败由安装器内部自动恢复旧健康版本，不提供公开手工镜像回滚入口。
 
 ## 高级：手动安装与跨服务器分离部署
 
@@ -121,7 +117,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.7 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.8 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
@@ -151,7 +147,8 @@ npm run cms:package
 - 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；首次管理员密码和新建管理员密码均为六位数字，管理员可在用户中心自行改密；普通管理员可软删除，所有者和当前账号受保护。
 - 客户打包站只接收固定 Key，不暴露内部客户编号、订单号或授权记录 ID；授权中心可审计成员操作。
 - 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。
-- 运营公告可在后台编辑、启停并在客户打包页展示；版本公告由服务端签名，客户可在有效更新期内下载更新包或按策略重新构建历史版本回滚包。
+- 运营公告可在后台编辑、启停并在客户打包页展示；版本公告由服务端签名，客户可在有效更新期内构建最新版本或重新构建当前版本。
+- 客户打包中心与运营后台包含完整工单系统：分类、优先级、关联构建、连续对话、附件、指派、内部备注、状态流转和审计记录。
 - 管理后台支持点击或拖拽真实上传主题 ZIP，显示进度，并从 `config.json`、文件名和根目录自动识别版本号与版本名称；冲突时拒绝发布。
 - 部署域名和服务开关在网页中只读，只能通过 Linux `appgog config` 与 `appgog services` 调整。
 - 客户中心可查看授权、过去 24 小时剩余额度、创建构建、查看进度、显示 Install Key，并通过 5 分钟短期会话票据下载成品。
@@ -196,7 +193,7 @@ var/                 本地数据库、密钥、上传源包和构建成品
 
 `setup.ps1` 会生成 `.env`、随机安全凭证和管理员密码；`.env` 已被 Git 忽略。已有 `.env` 时不会覆盖。
 
-Linux、Docker Compose、自动 HTTPS、更新回滚和迁移见 `docs/deployment.md`。正式生产只支持统一 Docker/Caddy 路线。
+Linux、Docker Compose、自动 HTTPS、安全更新和迁移见 `docs/deployment.md`。正式生产只支持统一 Docker/Caddy 路线。
 
 也可以直接启动分层版本：
 
@@ -246,6 +243,6 @@ npm test
 
 如果要直接上传 APPGOG 的原始 Vue 工程并自动编译，需要提供真实源码、依赖版本、构建命令和最终 Xboard 安装目录结构，再在现有 `BuildEngine` 接口后接入隔离容器构建适配器。网站、授权、Key、队列和激活流程无需推倒重做。
 
-浏览器端保护可以增加普通复制和批量滥用的成本，但客户控制自己的服务器，不能承诺“绝对无法破解”或在同域名环境迁移时可靠识别服务器变化。高价值设置接口、主题启用按钮和服务端环境指纹仍需取得真实 APPGOG/Xboard 项目后对接服务端授权守卫。历史版本回滚包目前是重新构建旧版本，并不是自动备份/恢复 Xboard 数据。
+浏览器端保护可以增加普通复制和批量滥用的成本，但客户控制自己的服务器，不能承诺“绝对无法破解”或在同域名环境迁移时可靠识别服务器变化。高价值设置接口、主题启用按钮和服务端环境指纹仍需取得真实 APPGOG/Xboard 项目后对接服务端授权守卫。客户构建不提供历史版本降级；服务器升级失败恢复属于安装器内部的数据保护流程。
 
 详细规则见 [系统架构](docs/architecture.md)、[API 契约](docs/api-contract.md)、[拆分边界](docs/modular-boundaries.md) 和 [开发计划](docs/development-plan.md)。

@@ -222,7 +222,7 @@ test('客户中心可自助换绑域名，固定 Key 不变并遵守后台冷却
   assert.notEqual(adminChanged.status, 429);
 });
 
-test('release metadata and update window allow old published builds but reject newer releases', async (t) => {
+test('release metadata hides rollback policy, historical customer builds are blocked, and update windows reject newer releases', async (t) => {
   const app = await fixture(t, '2026-09-20T08:00:00.000Z');
   addPublishedVersion(app, {
     version: '1.5.0', publishedAt: '2026-09-20T09:00:00.000Z', releaseNotes: 'Stable update',
@@ -245,14 +245,15 @@ test('release metadata and update window allow old published builds but reject n
   assert.equal(version.release_kind, 'feature');
   assert.equal(version.min_xboard_version, '1.9.0');
   assert.equal(version.min_upgrade_version, '1.4.0');
-  assert.equal(version.rollback_allowed, true);
-  assert.equal(version.rollback_to, '1.4.2');
+  assert.equal('rollback_allowed' in version, false);
+  assert.equal('rollback_to' in version, false);
   assert.equal(version.published_at, '2026-09-20T09:00:00.000Z');
   const oldBuild = await app.send('/web/customer/builds', {
     method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
     body: { version: '1.5.0', domain: 'updates.example.com' },
   });
-  assert.equal(oldBuild.status, 201);
+  assert.equal(oldBuild.status, 409);
+  assert.equal(oldBuild.data.error.code, 'HISTORICAL_BUILD_DISABLED');
   const newBuild = await app.send('/web/customer/builds', {
     method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
     body: { version: '1.6.0', domain: 'updates.example.com' },
@@ -321,7 +322,7 @@ test('安装解锁与正式激活必须分两次提交，禁止双 Key 一步激
   assert.match(correct.data.activation_token, /^[^.]+\.[^.]+\.[^.]+$/);
 });
 
-test('rollback intent and base_version persist in job and customer build list', async (t) => {
+test('customer build API rejects rollback intent and does not enqueue a job', async (t) => {
   const app = await fixture(t);
   addPublishedVersion(app, { version: '1.5.0', publishedAt: '2026-09-22T08:00:00.000Z' });
   const issued = await issue(app, await app.owner(), { domain: 'rollback.example.com' });
@@ -330,17 +331,53 @@ test('rollback intent and base_version persist in job and customer build list', 
     method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
     body: { version: '1.5.0', domain: 'rollback.example.com', intent: 'rollback', base_version: '1.6.0' },
   });
-  assert.equal(queued.status, 201);
-  assert.equal(queued.data.intent, 'rollback');
-  assert.equal(queued.data.base_version, '1.6.0');
-  const row = app.database.prepare('SELECT intent, base_version FROM build_jobs WHERE id = ?').get(queued.data.id);
-  assert.equal(row.intent, 'rollback');
-  assert.equal(row.base_version, '1.6.0');
-  const overview = await app.send('/web/customer/overview', { cookie: customer.cookie });
-  assert.equal(overview.status, 200);
-  const listed = overview.data.builds.find((item) => item.id === queued.data.id);
-  assert.equal(listed.intent, 'rollback');
-  assert.equal(listed.base_version, '1.6.0');
+  assert.equal(queued.status, 400);
+  assert.equal(queued.data.error.code, 'BUILD_INTENT_INVALID');
+  assert.equal(app.database.prepare('SELECT COUNT(*) AS count FROM build_jobs').get().count, 0);
+});
+
+test('support tickets isolate customers, hide internal notes, and allow admin assignment and replies', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-TICKET-A', domain: 'ticket-a.example.com' });
+  const otherIssued = await issue(app, owner, { customerRef: 'ORDER-TICKET-B', domain: 'ticket-b.example.com' });
+  const customer = await app.customer(issued.license_key);
+  const other = await app.customer(otherIssued.license_key);
+  const created = await app.send('/web/customer/tickets', {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { category: 'build', priority: 'high', subject: '构建一直失败', body: '构建到一半后显示失败，请协助检查。' },
+  });
+  assert.equal(created.status, 201);
+  assert.match(created.data.ticket_number, /^TK-\d{8}-[0-9A-F]{6}$/);
+  assert.equal(created.data.key_prefix, undefined);
+  assert.equal(created.data.license_id, undefined);
+  assert.equal(JSON.stringify(created.data).includes(issued.license_key), false);
+  assert.equal((await app.send(`/web/customer/tickets/${created.data.id}`, { cookie: other.cookie })).status, 404);
+
+  const internal = await app.send(`/web/admin/tickets/${created.data.id}/messages`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { body: '内部确认 Worker 日志。', visibility: 'internal' },
+  });
+  assert.equal(internal.status, 201);
+  const publicReply = await app.send(`/web/admin/tickets/${created.data.id}/messages`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { body: '已收到，正在检查构建节点。', visibility: 'public' },
+  });
+  assert.equal(publicReply.status, 201);
+  const updated = await app.send(`/web/admin/tickets/${created.data.id}/update`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { status: 'processing', priority: 'urgent', assigned_admin_id: owner.data.id },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.assigned_admin_id, owner.data.id);
+  const customerView = await app.send(`/web/customer/tickets/${created.data.id}`, { cookie: customer.cookie });
+  assert.equal(customerView.status, 200);
+  assert.equal(customerView.data.messages.some((message) => message.visibility === 'internal'), false);
+  assert.equal(customerView.data.messages.some((message) => message.body.includes('正在检查')), true);
+  const audit = app.repository.listAudit(20).filter((event) => event.subject_id === created.data.id);
+  assert.ok(audit.some((event) => event.action === 'support_ticket.created'));
+  assert.ok(audit.some((event) => event.action === 'support_ticket.noted'));
+  assert.ok(audit.some((event) => event.action === 'support_ticket.updated'));
 });
 
 test('管理员停用后旧会话立即失效，所有者账号受保护', async (t) => {

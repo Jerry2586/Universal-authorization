@@ -368,13 +368,12 @@ main_menu() {
       '  6. 修改并保存域名配置' \
       '  7. 配置业务服务开关' \
       '  8. 查看初始管理员凭证' \
-      '  9. 安全更新当前版本' \
+      '  9. 安全更新最新版本' \
       ' 10. 创建完整备份' \
       ' 11. 从完整备份恢复' \
-      ' 12. 回滚最近一次更新' \
-      ' 13. 系统诊断与高级工具' \
-      ' 14. 修复系统源码' \
-      ' 15. 卸载系统（保留数据）' \
+      ' 12. 系统诊断与高级工具' \
+      ' 13. 修复系统源码' \
+      ' 14. 卸载系统（保留数据）' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -390,10 +389,9 @@ main_menu() {
       9) confirm '确认检查签名 Release、完整备份并更新到最新版本？' && online_update; pause_menu ;;
       10) run_docker backup; pause_menu ;;
       11) restore_menu; pause_menu ;;
-      12) confirm '确认先备份当前状态，再回滚到最近一次更新前镜像？' && run_docker rollback; pause_menu ;;
-      13) advanced_menu ;;
-      14) confirm '确认重新下载当前签名版本、备份并深度重建源码？' && repair_source; pause_menu ;;
-      15) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
+      12) advanced_menu ;;
+      13) confirm '确认重新下载当前签名版本、备份并深度重建源码？' && repair_source; pause_menu ;;
+      14) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -414,10 +412,9 @@ APPGOG 管理命令
   appgog config          修改并保存两个域名
   appgog services        配置授权、登录、打包、构建和 Worker 开关
   appgog credentials     查看初始管理员凭证
-  appgog update          下载签名 Release、完整备份并更新
+  appgog update          下载签名 Release、完整备份并安全更新最新版本
   appgog repair-source   重新下载当前版本并深度修复源码
   appgog uninstall       卸载程序并保留业务数据与备份
-  appgog rollback        回滚到最近一次更新前镜像
   appgog backup          创建 AES-256 加密完整备份
   appgog restore <文件>  从备份恢复到空部署
   appgog doctor          系统诊断
@@ -430,7 +427,7 @@ EOF
 
 case "${1:-menu}" in
   menu) main_menu ;;
-  install|status|start|stop|restart|rollback|backup|credentials|doctor|diagnostics) run_docker "$1" ;;
+  install|status|start|stop|restart|backup|credentials|doctor|diagnostics) run_docker "$1" ;;
   update) online_update ;;
   repair-source) repair_source ;;
   uninstall) confirm '确认卸载程序但保留全部业务数据？' && uninstall_keep_data ;;

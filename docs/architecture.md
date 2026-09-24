@@ -1,4 +1,4 @@
-# APPGOG打包授权系统架构（v1.2.7）
+# APPGOG打包授权系统架构（v1.2.8）
 
 日期：2026-09-24
 
@@ -18,7 +18,7 @@
   → 开放 APPGOG 后台
 ```
 
-更新或重装时重复“固定 Key 打包 → 新 ZIP → 新安装 Key → 激活”。
+更新或重装时重复“固定 Key 打包 → 新 ZIP → 新安装 Key → 激活”。客户仅能构建最新已发布版本或重新构建当前已激活版本，不提供业务层面的历史版本回滚包。部署升级失败时仍由安装器内部恢复旧程序链接与旧健康镜像，这是系统保护机制，不是客户可操作的版本功能。
 
 ## 二、五种身份，不得混用
 
@@ -41,6 +41,9 @@ erDiagram
   LICENSE ||--o{ BUILD_TICKET : authorizes
   LICENSE ||--o{ BUILD : owns
   LICENSE ||--o{ DOMAIN_MIGRATION_REQUEST : requests
+  LICENSE ||--o{ SUPPORT_TICKET : opens
+  SUPPORT_TICKET ||--o{ SUPPORT_MESSAGE : contains
+  SUPPORT_TICKET ||--o{ SUPPORT_ATTACHMENT : owns
   BUILD_TICKET ||--|| BUILD : produces
   BUILD ||--|| INSTALL_KEY : unlocks
   BUILD ||--|| INSTALL_RECEIPT : records

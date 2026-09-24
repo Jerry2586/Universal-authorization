@@ -85,7 +85,7 @@ test('stable bootstrap downloads, verifies, installs, upgrades, and rejects down
 
 test('management menu exposes safe lifecycle, logs, configuration, backup, restore, and diagnostics', () => {
   const manager = text(scripts.manager);
-  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'services', 'credentials', 'update', 'rollback', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'repair-source', 'uninstall', 'cleanup']) {
+  for (const command of ['install', 'status', 'start', 'stop', 'restart', 'logs', 'config', 'services', 'credentials', 'update', 'backup', 'restore', 'doctor', 'diagnostics', 'repair', 'repair-source', 'uninstall', 'cleanup']) {
     assert.ok(manager.includes(command), `管理脚本缺少 ${command}`);
   }
   assert.match(manager, /确认保存配置/);
@@ -100,6 +100,8 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
   assert.match(manager, /卸载系统（保留数据）/);
   assert.match(manager, /run_signed_installer/);
   assert.match(manager, /rm -rf "\$INSTALL_ROOT\/releases"/);
+  assert.match(manager, /安全更新最新版本/);
+  assert.doesNotMatch(manager, /appgog rollback|回滚最近一次更新/);
 });
 
 test('online update helper only accepts signed check, install, and repair actions', () => {
@@ -120,6 +122,7 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /doctor\(\)/);
   assert.match(docker, /logs\(\)/);
   assert.match(docker, /appgog-platform:rollback/);
+  assert.doesNotMatch(docker, /^\s*rollback\)/m);
   assert.match(docker, /diagnostics\(\)/);
   assert.match(docker, /repair_permissions\(\)/);
   assert.match(docker, /prepare_update_control\(\)/);

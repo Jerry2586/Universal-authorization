@@ -219,6 +219,44 @@ CREATE TABLE IF NOT EXISTS service_nodes (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id TEXT PRIMARY KEY,
+  ticket_number TEXT NOT NULL UNIQUE,
+  license_id TEXT NOT NULL REFERENCES licenses(id),
+  build_job_id TEXT REFERENCES build_jobs(id),
+  category TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  status TEXT NOT NULL DEFAULT 'pending',
+  assigned_admin_id TEXT REFERENCES admin_users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  resolved_at TEXT,
+  closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS support_messages (
+  id TEXT PRIMARY KEY,
+  ticket_id TEXT NOT NULL REFERENCES support_tickets(id),
+  actor_type TEXT NOT NULL,
+  actor_id TEXT,
+  body TEXT NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'public',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_attachments (
+  id TEXT PRIMARY KEY,
+  ticket_id TEXT NOT NULL REFERENCES support_tickets(id),
+  message_id TEXT REFERENCES support_messages(id),
+  original_name TEXT NOT NULL,
+  storage_ref TEXT NOT NULL UNIQUE,
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_licenses_product ON licenses(product_id);
 CREATE INDEX IF NOT EXISTS idx_builds_license ON builds(license_id);
 CREATE INDEX IF NOT EXISTS idx_install_receipts_license ON install_receipts(license_id);
@@ -231,4 +269,8 @@ CREATE INDEX IF NOT EXISTS idx_source_versions_product ON source_versions(produc
 CREATE INDEX IF NOT EXISTS idx_build_jobs_status ON build_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_build_jobs_license ON build_jobs(license_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_service_nodes_role ON service_nodes(role, status);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_license ON support_tickets(license_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_queue ON support_tickets(status, priority, updated_at);
+CREATE INDEX IF NOT EXISTS idx_support_messages_ticket ON support_messages(ticket_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_support_attachments_ticket ON support_attachments(ticket_id, created_at);
 `;

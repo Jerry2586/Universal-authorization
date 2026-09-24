@@ -325,6 +325,68 @@ export function createRepository(database) {
     rotateServiceNodeCredential: database.prepare(`
       UPDATE service_nodes SET credential_prefix = ?, credential_hash = ?, updated_at = ? WHERE id = ?
     `),
+    insertSupportTicket: database.prepare(`
+      INSERT INTO support_tickets (
+        id, ticket_number, license_id, build_job_id, category, subject, priority, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `),
+    supportTicketById: database.prepare(`
+      SELECT support_tickets.*, licenses.customer_ref, licenses.key_prefix, licenses.bound_domain,
+        build_jobs.requested_version AS build_version, build_jobs.status AS build_status,
+        admin_users.display_name AS assigned_admin_name
+      FROM support_tickets
+      JOIN licenses ON licenses.id = support_tickets.license_id
+      LEFT JOIN build_jobs ON build_jobs.id = support_tickets.build_job_id
+      LEFT JOIN admin_users ON admin_users.id = support_tickets.assigned_admin_id
+      WHERE support_tickets.id = ?
+    `),
+    listSupportTicketsByLicense: database.prepare(`
+      SELECT support_tickets.*, build_jobs.requested_version AS build_version, build_jobs.status AS build_status,
+        admin_users.display_name AS assigned_admin_name
+      FROM support_tickets
+      LEFT JOIN build_jobs ON build_jobs.id = support_tickets.build_job_id
+      LEFT JOIN admin_users ON admin_users.id = support_tickets.assigned_admin_id
+      WHERE support_tickets.license_id = ?
+      ORDER BY support_tickets.updated_at DESC LIMIT ?
+    `),
+    listSupportTickets: database.prepare(`
+      SELECT support_tickets.*, licenses.customer_ref, licenses.key_prefix, licenses.bound_domain,
+        build_jobs.requested_version AS build_version, build_jobs.status AS build_status,
+        admin_users.display_name AS assigned_admin_name
+      FROM support_tickets
+      JOIN licenses ON licenses.id = support_tickets.license_id
+      LEFT JOIN build_jobs ON build_jobs.id = support_tickets.build_job_id
+      LEFT JOIN admin_users ON admin_users.id = support_tickets.assigned_admin_id
+      ORDER BY CASE support_tickets.status WHEN 'pending' THEN 0 WHEN 'processing' THEN 1 WHEN 'waiting_customer' THEN 2 ELSE 3 END,
+        CASE support_tickets.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+        support_tickets.updated_at DESC LIMIT ?
+    `),
+    insertSupportMessage: database.prepare(`
+      INSERT INTO support_messages (id, ticket_id, actor_type, actor_id, body, visibility, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `),
+    listSupportMessages: database.prepare(`
+      SELECT support_messages.*, admin_users.display_name AS admin_name
+      FROM support_messages
+      LEFT JOIN admin_users ON support_messages.actor_type = 'admin' AND admin_users.id = support_messages.actor_id
+      WHERE support_messages.ticket_id = ?
+      ORDER BY support_messages.created_at ASC
+    `),
+    touchSupportTicket: database.prepare(`UPDATE support_tickets SET updated_at = ? WHERE id = ?`),
+    updateSupportTicketStatus: database.prepare(`
+      UPDATE support_tickets SET status = ?, updated_at = ?,
+        resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END,
+        closed_at = CASE WHEN ? = 'closed' THEN ? ELSE closed_at END
+      WHERE id = ?
+    `),
+    updateSupportTicketPriority: database.prepare(`UPDATE support_tickets SET priority = ?, updated_at = ? WHERE id = ?`),
+    assignSupportTicket: database.prepare(`UPDATE support_tickets SET assigned_admin_id = ?, status = CASE WHEN status = 'pending' THEN 'processing' ELSE status END, updated_at = ? WHERE id = ?`),
+    insertSupportAttachment: database.prepare(`
+      INSERT INTO support_attachments (id, ticket_id, message_id, original_name, storage_ref, content_type, size_bytes, sha256, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    supportAttachmentById: database.prepare(`SELECT * FROM support_attachments WHERE id = ?`),
+    listSupportAttachments: database.prepare(`SELECT * FROM support_attachments WHERE ticket_id = ? ORDER BY created_at ASC`),
     changeLicenseDomain: database.prepare(`
       UPDATE licenses SET bound_domain = ?, generation = generation + 1, updated_at = ? WHERE id = ?
     `),
@@ -578,6 +640,47 @@ export function createRepository(database) {
     rotateServiceNodeCredential(id, prefix, hash, now) {
       return queries.rotateServiceNodeCredential.run(prefix, hash, now, id).changes === 1 ? queries.serviceNodeById.get(id) : null;
     },
+    createSupportTicket(values) {
+      const id = values.id ?? newId('tkt');
+      queries.insertSupportTicket.run(
+        id, values.ticketNumber, values.licenseId, values.buildJobId ?? null, values.category,
+        values.subject, values.priority ?? 'normal', values.now, values.now,
+      );
+      return queries.supportTicketById.get(id);
+    },
+    supportTicketById: (id) => queries.supportTicketById.get(id),
+    listSupportTicketsByLicense: (licenseId, limit = 100) => queries.listSupportTicketsByLicense.all(licenseId, limit),
+    listSupportTickets: (limit = 200) => queries.listSupportTickets.all(limit),
+    addSupportMessage(values) {
+      const id = values.id ?? newId('msg');
+      queries.insertSupportMessage.run(id, values.ticketId, values.actorType, values.actorId ?? null, values.body, values.visibility ?? 'public', values.now);
+      queries.touchSupportTicket.run(values.now, values.ticketId);
+      return queries.listSupportMessages.all(values.ticketId).find((message) => message.id === id);
+    },
+    listSupportMessages: (ticketId) => queries.listSupportMessages.all(ticketId),
+    updateSupportTicketStatus(id, status, now) {
+      queries.updateSupportTicketStatus.run(status, now, status, now, status, now, id);
+      return queries.supportTicketById.get(id);
+    },
+    updateSupportTicketPriority(id, priority, now) {
+      queries.updateSupportTicketPriority.run(priority, now, id);
+      return queries.supportTicketById.get(id);
+    },
+    assignSupportTicket(id, adminId, now) {
+      queries.assignSupportTicket.run(adminId, now, id);
+      return queries.supportTicketById.get(id);
+    },
+    createSupportAttachment(values) {
+      const id = values.id ?? newId('att');
+      queries.insertSupportAttachment.run(
+        id, values.ticketId, values.messageId ?? null, values.originalName, values.storageRef,
+        values.contentType, values.sizeBytes, values.sha256, values.now,
+      );
+      queries.touchSupportTicket.run(values.now, values.ticketId);
+      return queries.supportAttachmentById.get(id);
+    },
+    supportAttachmentById: (id) => queries.supportAttachmentById.get(id),
+    listSupportAttachments: (ticketId) => queries.listSupportAttachments.all(ticketId),
     withdrawSourceVersion(id, reason) {
       return queries.withdrawSourceVersion.run(reason, id).changes === 1 ? queries.sourceVersionById.get(id) : null;
     },

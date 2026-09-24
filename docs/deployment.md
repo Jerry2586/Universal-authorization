@@ -2,7 +2,7 @@
 
 日期：2026-09-24。
 
-APPGOG打包授权系统 v1.2.7 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.8 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -35,7 +35,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.7 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.8 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -87,13 +87,12 @@ appgog services
 appgog update
 appgog repair-source
 appgog uninstall
-appgog rollback
 appgog doctor
 ```
 
 不带参数执行 `appgog` 可打开交互式管理菜单。`appgog update` 与后台“在线更新”都会检查并安装经过 Ed25519 签名的 GitHub Release；首次安装和跨版本升级仍可直接重跑第 2 节的固定一行命令。`appgog repair-source` 重新下载当前版本并执行无缓存深度重建；`appgog uninstall` 会先备份，再移除程序、容器和镜像，但保留数据库卷、Key、上传、构建成品、`shared` 配置和备份。更新、修复和卸载分别写入独立日志。
 
-## 5. 更新与回滚
+## 5. 安全更新与自动恢复
 
 正式跨版本更新直接重跑与首次安装完全相同的命令：
 
@@ -101,15 +100,9 @@ appgog doctor
 sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
 ```
 
-引导器只接受签名有效且版本更高的正式包。每次更新把完整程序部署到全新版本目录，用户、Key、公告、运营设置、上传、成品和数据库保持不变，其他程序文件由发布包完整覆盖。更新流程会先创建备份、构建版本化镜像、原子切换程序并执行健康检查；失败时恢复旧程序链接并尝试恢复上一镜像。需要手工回滚时执行：
+引导器只接受签名有效且版本更高的正式包。每次更新把完整程序部署到全新版本目录，用户、Key、公告、运营设置、上传、成品和数据库保持不变，其他程序文件由发布包完整覆盖。更新流程会先创建备份、构建版本化镜像、原子切换程序并执行健康检查；失败时自动恢复旧程序链接并尝试恢复上一健康镜像。公开管理菜单不提供手工镜像回滚，避免代码与数据库版本被错误组合。若需要灾难恢复，应在空部署中使用完整加密备份和对应签名版本验证后再切换 DNS。禁止执行 `docker compose down -v`。
 
-```sh
-sh scripts/docker.sh rollback
-```
-
-镜像回滚不等于数据库降级。若新版本执行了不兼容的数据迁移，应在空项目中恢复升级前备份和对应代码版本，验证后再切换 DNS。禁止执行 `docker compose down -v`。
-
-旧版标准 Compose 部署可通过重跑安装器迁移：沿用相同项目名与九个命名卷，备份后停止旧容器，修复卷权限，新容器健康后移除旧容器。自定义挂载路径需人工映射。跨旧多容器版本的回退须使用对应旧源码与完整备份，不能使用单容器镜像 rollback。
+旧版标准 Compose 部署可通过重跑安装器迁移：沿用相同项目名与九个命名卷，备份后停止旧容器，修复卷权限，新容器健康后移除旧容器。自定义挂载路径需人工映射。跨旧多容器版本的灾难恢复须使用对应签名源码与完整备份。
 
 ## 6. 备份与恢复
 

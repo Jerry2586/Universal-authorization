@@ -7,6 +7,11 @@ import { hashSecret, secretMatches } from '../../../packages/core/src/security.j
 import { publicBuildJob, SOURCE_KIND } from '../../../packages/contracts/src/build-job.js';
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const TICKET_CATEGORIES = new Set(['packaging', 'build', 'install', 'license', 'consulting']);
+const TICKET_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const TICKET_STATUSES = new Set(['pending', 'processing', 'waiting_customer', 'resolved', 'closed']);
+const SUPPORT_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'text/plain', 'application/pdf']);
+const SUPPORT_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'txt', 'log', 'pdf']);
 
 function versionFromName(value) {
   const text = String(value ?? '').replace(/\.zip$/i, '');
@@ -76,6 +81,40 @@ export function createPortalService({ repository, queue, licenseService, artifac
     try { parsed = new URL(text); } catch { invariant(false, code, '站点地址格式无效'); }
     invariant(['http:', 'https:'].includes(parsed.protocol), code, '站点地址必须使用 HTTP 或 HTTPS');
     return text.replace(/\/+$/, '');
+  }
+
+  function ticketNumber(id, now) {
+    return `TK-${now.slice(0, 10).replaceAll('-', '')}-${id.slice(-6).toUpperCase()}`;
+  }
+
+  function ticketView(ticket, includeInternal = false) {
+    if (!ticket) return null;
+    const messages = repository.listSupportMessages(ticket.id)
+      .filter((message) => includeInternal || message.visibility === 'public')
+      .map((message) => ({
+        id: message.id, actor_type: message.actor_type,
+        actor_name: message.actor_type === 'admin' ? (message.admin_name || '客服') : '客户',
+        body: message.body, visibility: message.visibility, created_at: message.created_at,
+      }));
+    const attachments = repository.listSupportAttachments(ticket.id).map((attachment) => ({
+      id: attachment.id, original_name: attachment.original_name, content_type: attachment.content_type,
+      size_bytes: attachment.size_bytes, sha256: attachment.sha256, created_at: attachment.created_at,
+    }));
+    return {
+      id: ticket.id, ticket_number: ticket.ticket_number,
+      ...(includeInternal ? { license_id: ticket.license_id, customer_ref: ticket.customer_ref, key_prefix: ticket.key_prefix, bound_domain: ticket.bound_domain } : {}),
+      build_job_id: ticket.build_job_id, build_version: ticket.build_version, build_status: ticket.build_status,
+      category: ticket.category, subject: ticket.subject, priority: ticket.priority, status: ticket.status,
+      assigned_admin_id: ticket.assigned_admin_id, assigned_admin_name: ticket.assigned_admin_name,
+      created_at: ticket.created_at, updated_at: ticket.updated_at,
+      resolved_at: ticket.resolved_at, closed_at: ticket.closed_at, messages, attachments,
+    };
+  }
+
+  function supportBody(value) {
+    const body = String(value ?? '').trim();
+    invariant(body.length >= 2 && body.length <= 5000, 'TICKET_BODY_INVALID', '工单内容需为 2 到 5000 个字符');
+    return body;
   }
 
   return {
@@ -241,8 +280,6 @@ export function createPortalService({ repository, queue, licenseService, artifac
           release_kind: version.release_kind,
           min_xboard_version: version.min_xboard_version,
           min_upgrade_version: version.min_upgrade_version,
-          rollback_allowed: Boolean(version.rollback_allowed),
-          rollback_to: version.rollback_to,
           published_at: version.published_at ?? version.created_at,
           is_latest: version.version === latestVersion,
           is_current: version.version === currentVersion,
@@ -251,7 +288,132 @@ export function createPortalService({ repository, queue, licenseService, artifac
         current_version: currentVersion,
         latest_version: latestVersion,
         builds: builds.map(publicBuildJob),
+        tickets: repository.listSupportTicketsByLicense(license.id, 100).map((ticket) => ticketView(ticket)),
       };
+    },
+
+    createCustomerTicket(session, input) {
+      const license = customerLicense(session);
+      const category = String(input.category ?? '').trim();
+      const priority = String(input.priority ?? 'normal').trim();
+      const subject = String(input.subject ?? '').trim();
+      invariant(TICKET_CATEGORIES.has(category), 'TICKET_CATEGORY_INVALID', '请选择有效的工单类型');
+      invariant(TICKET_PRIORITIES.has(priority), 'TICKET_PRIORITY_INVALID', '请选择有效的紧急程度');
+      invariant(subject.length >= 2 && subject.length <= 120, 'TICKET_SUBJECT_INVALID', '工单标题需为 2 到 120 个字符');
+      const buildJobId = String(input.build_job_id ?? '').trim() || null;
+      if (buildJobId) {
+        const build = repository.buildJobById(buildJobId);
+        invariant(build && build.license_id === license.id, 'TICKET_BUILD_INVALID', '关联的构建任务不属于当前授权', 403);
+      }
+      const now = clock().toISOString();
+      const id = newId('tkt');
+      const ticket = repository.createSupportTicket({
+        id, ticketNumber: ticketNumber(id, now), licenseId: license.id, buildJobId,
+        category, subject, priority, now,
+      });
+      repository.addSupportMessage({ ticketId: ticket.id, actorType: 'customer', actorId: license.id, body: supportBody(input.body), now });
+      repository.audit({ actorType: 'customer', actorId: license.id, action: 'support_ticket.created', subjectType: 'support_ticket', subjectId: ticket.id,
+        metadata: { ticket_number: ticket.ticket_number, category, priority }, now });
+      return ticketView(repository.supportTicketById(ticket.id));
+    },
+
+    customerTicket(session, id) {
+      const license = customerLicense(session);
+      const ticket = repository.supportTicketById(id);
+      invariant(ticket && ticket.license_id === license.id, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      return ticketView(ticket);
+    },
+
+    addCustomerTicketMessage(session, id, input) {
+      const license = customerLicense(session);
+      const ticket = repository.supportTicketById(id);
+      invariant(ticket && ticket.license_id === license.id, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      invariant(ticket.status !== 'closed', 'TICKET_CLOSED', '工单已关闭，无法继续回复', 409);
+      const now = clock().toISOString();
+      repository.addSupportMessage({ ticketId: id, actorType: 'customer', actorId: license.id, body: supportBody(input.body), visibility: 'public', now });
+      if (ticket.status === 'waiting_customer' || ticket.status === 'resolved') repository.updateSupportTicketStatus(id, 'pending', now);
+      repository.audit({ actorType: 'customer', actorId: license.id, action: 'support_ticket.replied', subjectType: 'support_ticket', subjectId: id, now });
+      return ticketView(repository.supportTicketById(id));
+    },
+
+    adminTicket(id) {
+      const ticket = repository.supportTicketById(id);
+      invariant(ticket, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      return ticketView(ticket, true);
+    },
+
+    updateAdminTicket({ id, status, priority, assignedAdminId, actorId }) {
+      let ticket = repository.supportTicketById(id);
+      invariant(ticket, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      const now = clock().toISOString();
+      if (status !== undefined) {
+        invariant(TICKET_STATUSES.has(status), 'TICKET_STATUS_INVALID', '工单状态无效');
+        ticket = repository.updateSupportTicketStatus(id, status, now);
+      }
+      if (priority !== undefined) {
+        invariant(TICKET_PRIORITIES.has(priority), 'TICKET_PRIORITY_INVALID', '工单优先级无效');
+        ticket = repository.updateSupportTicketPriority(id, priority, now);
+      }
+      if (assignedAdminId !== undefined) {
+        const adminId = assignedAdminId || null;
+        if (adminId) invariant(repository.adminById(adminId)?.status === 'active', 'TICKET_ASSIGNEE_INVALID', '指派管理员不存在或不可用');
+        ticket = repository.assignSupportTicket(id, adminId, now);
+      }
+      repository.audit({ actorType: 'admin', actorId, action: 'support_ticket.updated', subjectType: 'support_ticket', subjectId: id,
+        metadata: { status: status ?? null, priority: priority ?? null, assigned_admin_id: assignedAdminId ?? null }, now });
+      return ticketView(ticket, true);
+    },
+
+    addAdminTicketMessage({ id, body, visibility = 'public', actorId }) {
+      const ticket = repository.supportTicketById(id);
+      invariant(ticket, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      invariant(ticket.status !== 'closed', 'TICKET_CLOSED', '工单已关闭，无法继续回复', 409);
+      invariant(['public', 'internal'].includes(visibility), 'TICKET_VISIBILITY_INVALID', '消息可见范围无效');
+      const now = clock().toISOString();
+      repository.addSupportMessage({ ticketId: id, actorType: 'admin', actorId, body: supportBody(body), visibility, now });
+      if (visibility === 'public' && ticket.status === 'pending') repository.updateSupportTicketStatus(id, 'waiting_customer', now);
+      repository.audit({ actorType: 'admin', actorId, action: visibility === 'internal' ? 'support_ticket.noted' : 'support_ticket.replied',
+        subjectType: 'support_ticket', subjectId: id, metadata: { visibility }, now });
+      return ticketView(repository.supportTicketById(id), true);
+    },
+
+    addSupportAttachment({ ticketId, filename, contentType, buffer, actorType, actorId }) {
+      const ticket = repository.supportTicketById(ticketId);
+      invariant(ticket, 'TICKET_NOT_FOUND', '工单不存在', 404);
+      const safeName = String(filename ?? '').trim().replace(/[\\/\0]/g, '_').slice(0, 160);
+      const extension = safeName.split('.').pop()?.toLowerCase();
+      invariant(safeName && SUPPORT_EXTENSIONS.has(extension) && SUPPORT_CONTENT_TYPES.has(contentType), 'TICKET_ATTACHMENT_TYPE_INVALID', '仅支持 PNG、JPG、WebP、TXT、LOG、PDF');
+      invariant(Buffer.isBuffer(buffer) && buffer.length > 0 && buffer.length <= 10 * 1024 * 1024, 'TICKET_ATTACHMENT_SIZE_INVALID', '附件必须小于 10 MB');
+      const id = newId('att');
+      const storageRef = `support/${ticketId}/${id}`;
+      artifactStore.put(storageRef, buffer);
+      try {
+        const attachment = repository.createSupportAttachment({
+          id, ticketId, originalName: safeName, storageRef, contentType, sizeBytes: buffer.length,
+          sha256: createHash('sha256').update(buffer).digest('hex'), now: clock().toISOString(),
+        });
+        repository.audit({ actorType, actorId, action: 'support_ticket.attachment_added', subjectType: 'support_ticket', subjectId: ticketId,
+          metadata: { attachment_id: id, filename: safeName, size: buffer.length }, now: clock().toISOString() });
+        return attachment;
+      } catch (error) {
+        artifactStore.remove(storageRef);
+        throw error;
+      }
+    },
+
+    supportAttachmentForCustomer(session, ticketId, attachmentId) {
+      const license = customerLicense(session);
+      const ticket = repository.supportTicketById(ticketId);
+      const attachment = repository.supportAttachmentById(attachmentId);
+      invariant(ticket && ticket.license_id === license.id && attachment?.ticket_id === ticket.id, 'TICKET_ATTACHMENT_NOT_FOUND', '附件不存在', 404);
+      return { ...attachment, buffer: artifactStore.read(attachment.storage_ref) };
+    },
+
+    supportAttachmentForAdmin(ticketId, attachmentId) {
+      const ticket = repository.supportTicketById(ticketId);
+      const attachment = repository.supportAttachmentById(attachmentId);
+      invariant(ticket && attachment?.ticket_id === ticket.id, 'TICKET_ATTACHMENT_NOT_FOUND', '附件不存在', 404);
+      return { ...attachment, buffer: artifactStore.read(attachment.storage_ref) };
     },
 
     bindCustomerDomain(session, { domain }) {
@@ -295,9 +457,12 @@ export function createPortalService({ repository, queue, licenseService, artifac
       invariant(license.bound_domain === normalizedDomain, 'LICENSE_DOMAIN_MISMATCH', '只能为固定 Key 当前绑定域名打包', 403);
       const sourceVersion = repository.sourceVersionByProductVersion(license.product_code, version);
       invariant(sourceVersion && sourceVersion.status === 'active', 'SOURCE_VERSION_NOT_READY', '该 APPGOG 版本尚未接入安全构建 Worker', 409);
-      invariant(['install', 'update', 'rollback', 'reinstall'].includes(intent), 'BUILD_INTENT_INVALID', '构建类型无效');
+      invariant(['install', 'update', 'reinstall'].includes(intent), 'BUILD_INTENT_INVALID', '构建类型无效');
+      const versions = repository.listActiveSourceVersions(license.product_code);
+      const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
+      invariant(sourceVersion.version === versions[0]?.version || sourceVersion.version === currentVersion,
+        'HISTORICAL_BUILD_DISABLED', '历史版本不再提供客户构建；请选择最新版本或重新构建当前版本', 409);
       if (license.update_until) invariant(new Date(sourceVersion.published_at ?? sourceVersion.created_at) <= new Date(license.update_until), 'UPDATE_WINDOW_EXPIRED', '该版本发布时间已超出更新服务期限', 403);
-      if (intent === 'rollback') invariant(Boolean(sourceVersion.rollback_allowed), 'ROLLBACK_NOT_ALLOWED', '该版本不允许生成回滚包', 409);
       const now = clock().toISOString();
       const job = queue.enqueue({
         id: newId('job'),
@@ -342,7 +507,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
       };
     },
 
-    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo }) {
+    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind }) {
       invariant(version?.trim(), 'VERSION_REQUIRED', '必须填写版本号');
       const product = licenseService.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       invariant(!repository.sourceVersionByProductVersion(product.code, version.trim()), 'VERSION_EXISTS', '该版本已经存在', 409);
@@ -353,12 +518,12 @@ export function createPortalService({ repository, queue, licenseService, artifac
         sourceKind: SOURCE_KIND.OFFICIAL,
         sourceRef: null,
         status: 'draft',
-        releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo,
+        releaseNotes, channel, releaseKind, rollbackAllowed: false, rollbackTo: null,
         now: clock().toISOString(),
       });
     },
 
-    publishSourceVersion({ productCode = 'appgog', version, displayName, sourceFilename, zipBuffer, releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo, actorId = null }) {
+    publishSourceVersion({ productCode = 'appgog', version, displayName, sourceFilename, zipBuffer, releaseNotes, channel, releaseKind, actorId = null }) {
       invariant(Buffer.isBuffer(zipBuffer) && zipBuffer.length > 0, 'SOURCE_REQUIRED', '必须上传主题 ZIP');
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
       const validation = buildEngine.validateSource(zipBuffer);
@@ -386,7 +551,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
           sourceKind: SOURCE_KIND.OFFICIAL,
           sourceRef,
           status: 'active',
-          releaseNotes, channel, releaseKind, rollbackAllowed, rollbackTo,
+          releaseNotes, channel, releaseKind, rollbackAllowed: false, rollbackTo: null,
           now: clock().toISOString(),
         };
         const source = existing
@@ -463,8 +628,6 @@ export function createPortalService({ repository, queue, licenseService, artifac
           release_kind: version.release_kind,
           min_xboard_version: version.min_xboard_version,
           min_upgrade_version: version.min_upgrade_version,
-          rollback_allowed: Boolean(version.rollback_allowed),
-          rollback_to: version.rollback_to,
           withdrawn_reason: version.withdrawn_reason,
           published_at: version.published_at,
           created_at: version.created_at,
@@ -474,6 +637,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
           status: admin.status, is_owner: Boolean(admin.is_owner), last_login_at: admin.last_login_at,
           last_login_ip: admin.last_login_ip, created_at: admin.created_at,
         })),
+        tickets: repository.listSupportTickets(200).map((ticket) => ticketView(ticket, true)),
         cms: this.cmsSettings(),
       };
     },

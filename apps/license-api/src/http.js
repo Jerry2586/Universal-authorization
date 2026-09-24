@@ -348,6 +348,47 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         return json(response, 200, portal.customerOverview(session));
       }
 
+      if (method === 'POST' && url.pathname === '/web/customer/tickets') {
+        const session = requireWebSession(request, sessions, 'customer', true);
+        const body = await readJson(request);
+        return json(response, 201, portal.createCustomerTicket(session, body));
+      }
+
+      const customerTicketMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)$/);
+      if (method === 'GET' && customerTicketMatch) {
+        const session = requireWebSession(request, sessions, 'customer');
+        return json(response, 200, portal.customerTicket(session, customerTicketMatch[1]));
+      }
+
+      const customerTicketMessageMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)\/messages$/);
+      if (method === 'POST' && customerTicketMessageMatch) {
+        const session = requireWebSession(request, sessions, 'customer', true);
+        const body = await readJson(request);
+        return json(response, 201, portal.addCustomerTicketMessage(session, customerTicketMessageMatch[1], body));
+      }
+
+      const customerTicketAttachmentMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)\/attachments$/);
+      if (method === 'POST' && customerTicketAttachmentMatch) {
+        const session = requireWebSession(request, sessions, 'customer', true);
+        portal.customerTicket(session, customerTicketAttachmentMatch[1]);
+        const buffer = await readBuffer(request, 10 * 1024 * 1024);
+        const attachment = portal.addSupportAttachment({
+          ticketId: customerTicketAttachmentMatch[1], filename: url.searchParams.get('filename'),
+          contentType: String(request.headers['content-type'] ?? '').split(';')[0].trim(), buffer,
+          actorType: 'customer', actorId: session.actor_id,
+        });
+        return json(response, 201, { id: attachment.id, original_name: attachment.original_name, size_bytes: attachment.size_bytes });
+      }
+
+      const customerTicketAttachmentDownloadMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)\/attachments\/([^/]+)$/);
+      if (method === 'GET' && customerTicketAttachmentDownloadMatch) {
+        const session = requireWebSession(request, sessions, 'customer');
+        const attachment = portal.supportAttachmentForCustomer(session, customerTicketAttachmentDownloadMatch[1], customerTicketAttachmentDownloadMatch[2]);
+        response.writeHead(200, { ...securityHeaders(attachment.content_type), 'content-length': attachment.buffer.length,
+          'content-disposition': `attachment; filename="${attachment.original_name.replace(/[^a-zA-Z0-9._-]/g, '_')}"` });
+        return response.end(attachment.buffer);
+      }
+
       if (method === 'POST' && url.pathname === '/web/customer/builds') {
         invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('new_builds_enabled'),
           'NEW_BUILDS_DISABLED', '当前暂停接收新构建', 503);
@@ -413,10 +454,56 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
           if (!admin.permissions.includes('build.view')) overview.builds = [];
           if (!admin.permissions.includes('activation.view')) overview.activations = [];
           if (!admin.permissions.includes('audit.view')) overview.audit = [];
+          if (!admin.permissions.includes('ticket.view')) overview.tickets = [];
           if (!admin.permissions.includes('admin.manage')) overview.admins = [];
           if (!admin.permissions.includes('system.manage')) overview.cms = null;
         }
         return json(response, 200, overview);
+      }
+
+      const adminTicketMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)$/);
+      if (method === 'GET' && adminTicketMatch) {
+        requireWebSession(request, sessions, 'admin', false, 'ticket.view');
+        return json(response, 200, portal.adminTicket(adminTicketMatch[1]));
+      }
+
+      const adminTicketMessageMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/messages$/);
+      if (method === 'POST' && adminTicketMessageMatch) {
+        const admin = requireWebSession(request, sessions, 'admin', true, 'ticket.manage');
+        const body = await readJson(request);
+        return json(response, 201, portal.addAdminTicketMessage({ id: adminTicketMessageMatch[1], body: body.body, visibility: body.visibility, actorId: admin.actor_id }));
+      }
+
+      const adminTicketUpdateMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/update$/);
+      if (method === 'POST' && adminTicketUpdateMatch) {
+        const admin = requireWebSession(request, sessions, 'admin', true, 'ticket.manage');
+        const body = await readJson(request);
+        return json(response, 200, portal.updateAdminTicket({
+          id: adminTicketUpdateMatch[1], status: body.status, priority: body.priority,
+          assignedAdminId: body.assigned_admin_id, actorId: admin.actor_id,
+        }));
+      }
+
+      const adminTicketAttachmentMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/attachments$/);
+      if (method === 'POST' && adminTicketAttachmentMatch) {
+        const admin = requireWebSession(request, sessions, 'admin', true, 'ticket.manage');
+        portal.adminTicket(adminTicketAttachmentMatch[1]);
+        const buffer = await readBuffer(request, 10 * 1024 * 1024);
+        const attachment = portal.addSupportAttachment({
+          ticketId: adminTicketAttachmentMatch[1], filename: url.searchParams.get('filename'),
+          contentType: String(request.headers['content-type'] ?? '').split(';')[0].trim(), buffer,
+          actorType: 'admin', actorId: admin.actor_id,
+        });
+        return json(response, 201, { id: attachment.id, original_name: attachment.original_name, size_bytes: attachment.size_bytes });
+      }
+
+      const adminTicketAttachmentDownloadMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/attachments\/([^/]+)$/);
+      if (method === 'GET' && adminTicketAttachmentDownloadMatch) {
+        requireWebSession(request, sessions, 'admin', false, 'ticket.view');
+        const attachment = portal.supportAttachmentForAdmin(adminTicketAttachmentDownloadMatch[1], adminTicketAttachmentDownloadMatch[2]);
+        response.writeHead(200, { ...securityHeaders(attachment.content_type), 'content-length': attachment.buffer.length,
+          'content-disposition': `attachment; filename="${attachment.original_name.replace(/[^a-zA-Z0-9._-]/g, '_')}"` });
+        return response.end(attachment.buffer);
       }
 
       if (method === 'POST' && url.pathname === '/web/admin/cms/settings') {
@@ -549,8 +636,7 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         const version = portal.registerSourceVersion({
           productCode: body.product_code, version: body.version,
           displayName: body.display_name, releaseNotes: body.release_notes, channel: body.channel,
-          releaseKind: body.release_kind, rollbackAllowed: body.rollback_allowed,
-          rollbackTo: body.rollback_to,
+          releaseKind: body.release_kind,
         });
         return json(response, 201, {
           id: version.id, version: version.version, display_name: version.display_name,
@@ -568,8 +654,7 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
           displayName: url.searchParams.get('display_name'),
           sourceFilename: url.searchParams.get('source_filename'),
           releaseNotes: url.searchParams.get('release_notes'), channel: url.searchParams.get('channel'),
-          releaseKind: url.searchParams.get('release_kind'), rollbackAllowed: url.searchParams.get('rollback_allowed') !== 'false',
-          rollbackTo: url.searchParams.get('rollback_to'),
+          releaseKind: url.searchParams.get('release_kind'),
           actorId: admin.actor_id,
           zipBuffer,
         });

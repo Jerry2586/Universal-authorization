@@ -619,6 +619,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory=$CURRENT_LINK
 ExecStart=$CURRENT_LINK/scripts/update-helper.sh --daemon $INSTALL_ROOT
 Restart=always
 RestartSec=3
@@ -633,7 +634,20 @@ EOF
   mv "$unit_temp" "$unit"
   systemctl daemon-reload
   systemctl enable appgog-update-helper.service >/dev/null
-  if [ "${APPGOG_HELPER_ACTIVE:-false}" != true ]; then systemctl restart appgog-update-helper.service; fi
+  if [ "${APPGOG_HELPER_ACTIVE:-false}" != true ]; then
+    systemctl restart appgog-update-helper.service
+    helper_ready=false
+    helper_attempt=0
+    while [ "$helper_attempt" -lt 20 ]; do
+      helper_attempt=$((helper_attempt + 1))
+      if systemctl is-active --quiet appgog-update-helper.service && [ -s "$SHARED_DIR/update-control/status.json" ]; then helper_ready=true; break; fi
+      sleep 1
+    done
+    if [ "$helper_ready" != true ]; then
+      systemctl status appgog-update-helper.service --no-pager -l >&2 || true
+      fail '在线更新助手启动失败；业务服务未受影响，请查看上方 systemd 诊断。'
+    fi
+  fi
 }
 
 print_result() {

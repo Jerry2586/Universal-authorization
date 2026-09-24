@@ -51,6 +51,7 @@
       <nav class="app-nav" aria-label="客户中心导航">
         <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon">⌂</span><span>工作台</span></button>
         <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon">▤</span><span>构建任务</span></button>
+        <button class="nav-item" type="button" data-view="tickets" data-title="工单反馈"><span class="nav-icon">✦</span><span>工单反馈</span></button>
         <button class="nav-item" type="button" data-view="license" data-title="授权信息"><span class="nav-icon">◇</span><span>我的授权</span></button>
       </nav>
       <div class="sidebar-meta">
@@ -102,12 +103,17 @@
         </section>
 
         <section class="page-view" data-page="builds">
-          <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>构建与下载</h2><p>选择版本创建更新或回滚构建，并在同一页面领取交付。</p></div></div>
-          <section class="surface version-catalog-panel build-version-catalog"><div class="surface-head"><div><span class="overline">VERSION DELIVERY</span><h3>可用版本</h3><p>最新版用于升级，历史版本按发布策略生成回滚包。</p></div><span class="surface-number">01</span></div><div id="version-catalog" class="customer-version-list"><div class="empty-state"><span>▦</span><strong>暂无可用版本</strong><p>授权管理员发布版本后会显示在这里。</p></div></div></section>
+          <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>构建与下载</h2><p>构建最新版本，或重新构建当前已激活版本，并在同一页面领取交付。</p></div></div>
+          <section class="surface version-catalog-panel build-version-catalog"><div class="surface-head"><div><span class="overline">VERSION DELIVERY</span><h3>可用版本</h3><p>客户构建仅开放最新版本和当前版本，避免错误降级。</p></div><span class="surface-number">01</span></div><div id="version-catalog" class="customer-version-list"><div class="empty-state"><span>▦</span><strong>暂无可用版本</strong><p>授权管理员发布版本后会显示在这里。</p></div></div></section>
           <section class="surface table-surface">
             <div class="toolbar"><label class="search-box"><span>⌕</span><input id="customer-build-search" placeholder="搜索版本或域名"></label><span class="toolbar-note">自动每 5 秒刷新进行中的任务</span></div>
             <div class="table-scroll"><table><thead><tr><th>版本</th><th>授权域名</th><th>状态</th><th>构建进度</th><th>创建时间</th><th>交付</th></tr></thead><tbody id="build-list"><tr><td colspan="6" class="empty-cell">暂无构建记录</td></tr></tbody></table></div>
           </section>
+        </section>
+
+        <section class="page-view" data-page="tickets">
+          <div class="page-heading"><div><span class="overline">SUPPORT REQUESTS</span><h2>工单反馈</h2><p>提交打包、构建、安装或授权问题，并与客服持续沟通。</p></div><span class="status-pill" id="customer-ticket-count">0 张工单</span></div>
+          <div class="ticket-workspace customer-ticket-workspace"><section class="surface form-surface ticket-create"><div class="surface-head"><div><span class="overline">NEW TICKET</span><h3>提交新工单</h3><p>请描述现象、操作步骤和期望结果。</p></div><span class="surface-number">01</span></div><form id="customer-ticket-form" class="form-stack form-compact"><div class="form-columns"><label class="field"><span>工单类型</span><select name="category"><option value="packaging">打包问题</option><option value="build">构建问题</option><option value="install">安装问题</option><option value="license">授权问题</option><option value="consulting">使用咨询</option></select></label><label class="field"><span>紧急程度</span><select name="priority"><option value="normal">普通</option><option value="high">较急</option><option value="urgent">紧急</option><option value="low">低</option></select></label></div><label class="field"><span>关联构建（可选）</span><select id="ticket-build-select" name="build_job_id"><option value="">不关联构建</option></select></label><label class="field"><span>问题标题</span><input name="subject" maxlength="120" required placeholder="简要说明问题"></label><label class="field"><span>问题描述</span><textarea name="body" rows="6" maxlength="5000" required placeholder="发生了什么？如何复现？"></textarea></label><label class="field ticket-file-field"><span>截图或日志（可选）</span><input id="customer-ticket-file" type="file" accept=".png,.jpg,.jpeg,.webp,.txt,.log,.pdf"><small>PNG / JPG / WebP / TXT / LOG / PDF，最大 10 MB</small></label><button class="button button-primary button-wide" type="submit">提交工单</button></form></section><section class="surface ticket-queue"><div class="surface-head"><div><span class="overline">MY TICKETS</span><h3>我的工单</h3><p>选择工单查看处理进度和回复。</p></div></div><div id="customer-ticket-list" class="ticket-list"><div class="empty-state compact-empty"><span>✦</span><strong>暂无工单</strong><p>遇到问题时从左侧提交。</p></div></div></section><section id="customer-ticket-detail" class="surface ticket-detail"><div class="empty-state"><span>↗</span><strong>选择一张工单</strong><p>查看客服回复并继续补充信息。</p></div></section></div>
         </section>
 
         <section class="page-view" data-page="license">

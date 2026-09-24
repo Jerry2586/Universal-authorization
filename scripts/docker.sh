@@ -364,7 +364,6 @@ usage() {
   stop                    停止业务服务
   restart                 重建并重启已有服务
   update                  构建、完整备份并更新
-  rollback                回滚到最近一次更新前镜像
   backup                  创建完整备份
   restore <备份路径>      向空部署恢复备份（.enc 需要独立恢复密钥）
   credentials             查看初始管理员凭证
@@ -401,16 +400,6 @@ case "${1:-help}" in
     compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
     ;;
 
-  rollback)
-    require_docker
-    require_config
-    docker image inspect appgog-platform:rollback >/dev/null 2>&1 || fail '没有可用的更新前回滚镜像。'
-    image_name=$(compose config --images | head -n 1)
-    backup
-    docker tag appgog-platform:rollback "$image_name"
-    prepare_update_control
-    compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
-    ;;
   backup) require_docker; require_config; backup ;;
   restore)
     require_docker
