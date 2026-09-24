@@ -115,6 +115,23 @@ function date(value) {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString('zh-CN');
 }
 
+function renderAnnouncementPreview(publishedAt = null) {
+  const form = $('announcement-form');
+  if (!form) return;
+  const title = String(form.elements.title?.value ?? '').trim();
+  const body = String(form.elements.body?.value ?? '').trim();
+  const enabled = form.elements.enabled?.checked === true && Boolean(title || body);
+  if ($('announcement-title-count')) $('announcement-title-count').textContent = `${form.elements.title?.value.length ?? 0} / 200`;
+  if ($('announcement-body-count')) $('announcement-body-count').textContent = `${form.elements.body?.value.length ?? 0} / 4000`;
+  if ($('announcement-preview-title')) $('announcement-preview-title').textContent = title || '公告标题';
+  if ($('announcement-preview-body')) $('announcement-preview-body').textContent = body || '公告内容会显示在这里。';
+  if ($('announcement-preview-time')) $('announcement-preview-time').textContent = publishedAt ? `发布于 ${date(publishedAt)}` : '尚未发布';
+  if ($('announcement-preview-state')) $('announcement-preview-state').textContent = enabled ? '客户可见' : '当前未启用';
+  if ($('announcement-published-time')) $('announcement-published-time').textContent = publishedAt ? `最近发布：${date(publishedAt)}` : '尚未发布';
+  $('announcement-preview-card')?.classList.toggle('is-disabled', !enabled);
+  $('announcement-preview-dot')?.classList.toggle('is-live', enabled);
+}
+
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined && text !== null) node.textContent = String(text);
@@ -332,14 +349,22 @@ function renderCustomer(data) {
   $('license-prefix').textContent = license.key_prefix ? `${license.key_prefix}••••` : '已验证';
   $('license-domain-detail').textContent = license.bound_domain ?? '未绑定';
   $('update-until').textContent = date(license.update_until);
+  if ($('customer-system-version')) $('customer-system-version').textContent = data.system_version ? `v${data.system_version}` : 'v—';
   const announcement = data.announcement;
   const announcementBanner = $('announcement-banner');
   if (announcementBanner) {
     announcementBanner.hidden = !announcement;
     if (announcement) {
+      announcementBanner.classList.remove('is-expanded');
       $('announcement-title').textContent = announcement.title || '平台公告';
       $('announcement-body').textContent = announcement.body || '';
       $('announcement-time').textContent = announcement.published_at ? `发布于 ${date(announcement.published_at)}` : '';
+      const toggle = $('announcement-toggle');
+      if (toggle) {
+        toggle.hidden = !announcement.body || announcement.body.length <= 72;
+        toggle.textContent = '查看详情';
+        toggle.setAttribute('aria-expanded', 'false');
+      }
     }
   }
   const bindPanel = $('domain-bind-panel');
@@ -549,6 +574,7 @@ function renderAdmin(data) {
   const admins = Array.isArray(data.admins) ? data.admins : [];
   const cms = data.cms ?? {};
   const nodes = Array.isArray(cms.nodes) ? cms.nodes : [];
+  if ($('admin-system-version')) $('admin-system-version').textContent = cms.system_version ? `v${cms.system_version}` : 'v—';
   $('stat-licenses').textContent = stats.licenses ?? licenses.length;
   $('stat-active').textContent = stats.activeLicenses ?? licenses.filter((item) => item.status === 'active').length;
   $('stat-builds').textContent = stats.buildsToday ?? 0;
@@ -607,6 +633,7 @@ function renderAdmin(data) {
     announcementForm.elements.title.value = cms.announcement_title ?? '';
     announcementForm.elements.body.value = cms.announcement_body ?? '';
     announcementForm.elements.enabled.checked = cms.announcement_enabled === true;
+    renderAnnouncementPreview(cms.announcement_published_at);
   }
   if ($('announcement-state')) {
     $('announcement-state').textContent = cms.announcement_enabled ? '已启用' : '未启用';
@@ -713,6 +740,14 @@ async function refresh() {
 document.querySelectorAll('[data-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.view)));
 document.querySelectorAll('[data-go-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.goView)));
 document.querySelector('.mobile-menu')?.addEventListener('click', () => $('dashboard-view').classList.toggle('nav-open'));
+$('announcement-toggle')?.addEventListener('click', () => {
+  const banner = $('announcement-banner');
+  const toggle = $('announcement-toggle');
+  const expanded = !banner.classList.contains('is-expanded');
+  banner.classList.toggle('is-expanded', expanded);
+  toggle.textContent = expanded ? '收起内容' : '查看详情';
+  toggle.setAttribute('aria-expanded', String(expanded));
+});
 document.addEventListener('click', (event) => {
   if (event.target === $('dashboard-view') && $('dashboard-view').classList.contains('nav-open')) $('dashboard-view').classList.remove('nav-open');
   const accountMenu = $('account-menu');
@@ -983,6 +1018,8 @@ if (mode === 'customer') {
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
   });
+  $('announcement-form')?.addEventListener('input', () => renderAnnouncementPreview(state.data?.cms?.announcement_published_at));
+  $('announcement-form')?.addEventListener('change', () => renderAnnouncementPreview(state.data?.cms?.announcement_published_at));
   async function triggerUpdate(action) {
     const labels = { 'check-update': '检查更新', 'install-version': '立即更新', 'repair-current': '修复当前版本' };
     try {

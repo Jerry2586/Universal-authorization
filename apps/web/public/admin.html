@@ -55,11 +55,12 @@
         <button class="nav-item" type="button" data-view="activations" data-title="激活站点"><span class="nav-icon">◎</span><span>激活站点</span></button>
         <button class="nav-item" type="button" data-view="members" data-title="成员权限"><span class="nav-icon">♙</span><span>成员权限</span></button>
         <button class="nav-item" type="button" data-view="audit" data-title="审计记录"><span class="nav-icon">≡</span><span>审计记录</span></button>
-        <button class="nav-item" type="button" data-view="announcements" data-title="公告中心"><span class="nav-icon">◈</span><span>公告中心</span></button>
+        <button class="nav-item" type="button" data-view="announcements" data-title="公告运营"><span class="nav-icon">◈</span><span>公告运营</span></button>
         <button class="nav-item" type="button" data-view="cms" data-title="系统与节点"><span class="nav-icon">⚙</span><span>系统与节点</span></button>
       </nav>
       <div class="sidebar-meta">
         <div class="service-state"><span class="live-dot"></span><div><strong>系统在线</strong><span>Operator console</span></div></div>
+        <div class="sidebar-version"><span>系统版本</span><strong id="admin-system-version">v—</strong></div>
       </div>
     </aside>
 
@@ -126,8 +127,31 @@
         </section>
 
         <section class="page-view" data-page="announcements">
-          <div class="page-heading"><div><span class="overline">CUSTOMER ANNOUNCEMENT</span><h2>公告中心</h2><p>独立维护客户打包中心顶部公告，不影响其他运营设置。</p></div><span class="status-pill" id="announcement-state">未启用</span></div>
-          <section class="surface form-surface announcement-editor"><form id="announcement-form" class="form-stack form-compact"><label class="field"><span>公告标题</span><input name="title" maxlength="200" placeholder="例如 系统维护通知"></label><label class="field"><span>公告正文</span><textarea name="body" rows="8" maxlength="4000" placeholder="公告会显示在客户打包前端顶部"></textarea></label><label class="switch-row"><span><strong>启用客户公告</strong><small>内容为空时自动保持停用</small></span><input name="enabled" type="checkbox"><i></i></label><button class="button button-primary" type="submit">保存并发布公告</button></form></section>
+          <div class="page-heading"><div><span class="overline">ANNOUNCEMENT OPERATIONS</span><h2>公告运营</h2><p>编辑客户工作台公告，并在发布前查看真实展示效果。</p></div><span class="status-pill" id="announcement-state">未启用</span></div>
+          <div class="announcement-operations-grid">
+            <section class="surface form-surface announcement-editor">
+              <div class="surface-head"><div><span class="overline">CONTENT EDITOR</span><h3>编辑公告</h3><p>公告启用后仅显示在客户工作台，不影响其他系统设置。</p></div><span class="surface-number">01</span></div>
+              <form id="announcement-form" class="form-stack form-compact">
+                <label class="field"><span class="field-heading"><b>公告标题</b><small id="announcement-title-count">0 / 200</small></span><input name="title" maxlength="200" placeholder="例如 系统维护通知"></label>
+                <label class="field"><span class="field-heading"><b>公告正文</b><small id="announcement-body-count">0 / 4000</small></span><textarea name="body" rows="9" maxlength="4000" placeholder="输入客户需要了解的更新、维护或交付说明"></textarea></label>
+                <label class="switch-row announcement-switch"><span><strong>在客户工作台显示</strong><small>关闭后保留内容，但客户将看不到公告</small></span><input name="enabled" type="checkbox"><i></i></label>
+                <div class="announcement-form-actions"><button class="button button-primary" type="submit">保存公告</button><span>保存后立即同步到客户工作台</span></div>
+              </form>
+            </section>
+            <section class="surface announcement-preview-panel">
+              <div class="surface-head"><div><span class="overline">LIVE PREVIEW</span><h3>客户工作台预览</h3><p>预览会随输入实时变化，实际显示宽度会根据设备自动适配。</p></div><span class="surface-number">02</span></div>
+              <div class="announcement-preview-browser">
+                <div class="announcement-preview-toolbar"><i></i><i></i><i></i><span>客户工作台</span></div>
+                <div class="announcement-preview-canvas">
+                  <div id="announcement-preview-card" class="announcement-preview-card">
+                    <span class="announcement-icon" aria-hidden="true">i</span>
+                    <div><div class="announcement-meta"><span class="announcement-label">平台公告</span><small id="announcement-preview-time">尚未发布</small></div><strong id="announcement-preview-title">公告标题</strong><p id="announcement-preview-body">公告内容会显示在这里。</p></div>
+                  </div>
+                </div>
+              </div>
+              <div class="announcement-preview-status"><span><i id="announcement-preview-dot"></i><b id="announcement-preview-state">当前未启用</b></span><small id="announcement-published-time">尚未发布</small></div>
+            </section>
+          </div>
         </section>
 
         <section class="page-view" data-page="cms">

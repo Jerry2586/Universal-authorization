@@ -55,6 +55,7 @@
       </nav>
       <div class="sidebar-meta">
         <div class="service-state"><span class="live-dot"></span><div><strong>专属交付空间</strong><span>使用固定 Key 识别授权</span></div></div>
+        <div class="sidebar-version"><span>系统版本</span><strong id="customer-system-version">v—</strong></div>
       </div>
     </aside>
 
@@ -65,15 +66,34 @@
       </header>
 
       <div class="workspace-content">
-        <section id="announcement-banner" class="announcement-banner" hidden><span aria-hidden="true">i</span><div><strong id="announcement-title"></strong><p id="announcement-body"></p><small id="announcement-time"></small></div></section>
         <section class="page-view active" data-page="overview">
           <div class="welcome-row"><div><span class="overline">DELIVERY OVERVIEW</span><h2>选择版本，生成安装包</h2><p>选择可用版本打包，完成后下载 ZIP 和一次性安装 Key。</p></div><span class="date-chip" id="current-date">—</span></div>
+
+          <section id="announcement-banner" class="announcement-banner announcement-compact" hidden>
+            <span class="announcement-icon" aria-hidden="true">i</span>
+            <div class="announcement-content">
+              <div class="announcement-meta"><span class="announcement-label">平台公告</span><small id="announcement-time"></small></div>
+              <strong id="announcement-title"></strong>
+              <p id="announcement-body"></p>
+            </div>
+            <button id="announcement-toggle" class="announcement-toggle" type="button" aria-expanded="false">查看详情</button>
+          </section>
 
           <div class="stats-grid stats-grid-three">
             <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>授权状态</span><strong id="license-status">—</strong><small>实时验证</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-blue">⌁</div><div><span>绑定域名</span><strong id="license-domain">—</strong><small>唯一激活域名</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>过去 24 小时构建额度</span><strong id="license-limit">—</strong><small>剩余 / 总额度</small></div></article>
           </div>
+
+          <section class="surface delivery-flow-card" aria-labelledby="delivery-flow-title">
+            <div class="surface-head delivery-flow-head"><div><span class="overline">DELIVERY FLOW</span><h3 id="delivery-flow-title">交付步骤</h3><p>从授权验证到安装激活，按以下顺序完成交付。</p></div><span class="delivery-flow-count">4 个步骤</span></div>
+            <ol class="delivery-step-list">
+              <li class="done"><span class="delivery-step-number">1</span><div><strong>验证授权身份</strong><small>确认固定 Key、绑定域名与更新权限</small></div></li>
+              <li><span class="delivery-step-number">2</span><div><strong>选择版本并构建</strong><small>在构建任务中生成客户专属安装包</small></div></li>
+              <li><span class="delivery-step-number">3</span><div><strong>下载交付文件</strong><small>领取主题 ZIP 与本次一次性安装 Key</small></div></li>
+              <li><span class="delivery-step-number">4</span><div><strong>安装并正式激活</strong><small>先用安装 Key 解锁，再用固定 Key 激活</small></div></li>
+            </ol>
+          </section>
 
           <section class="surface table-surface">
             <div class="surface-head table-title"><div><span class="overline">RECENT BUILDS</span><h3>最近构建</h3></div><button class="text-action" type="button" data-go-view="builds">查看全部 →</button></div>

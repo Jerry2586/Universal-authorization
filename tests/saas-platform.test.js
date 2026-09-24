@@ -164,6 +164,7 @@ test('customer overview exposes key prefix and domain, not customer reference or
   assert.equal(overview.status, 200);
   assert.equal(overview.data.license.key_prefix, issued.license_key.slice(0, 12));
   assert.equal(overview.data.license.bound_domain, 'privacy.example.com');
+  assert.match(overview.data.system_version, /^\d+\.\d+\.\d+$/);
   assert.equal(Object.hasOwn(overview.data.license, 'id'), false);
   assert.equal(Object.hasOwn(overview.data.license, 'customer_ref'), false);
   assert.doesNotMatch(JSON.stringify(overview.data), /PRIVATE-CUSTOMER-REFERENCE/);
@@ -487,6 +488,7 @@ test('客户公告通过独立接口发布并写入审计', async (t) => {
   assert.equal(updated.data.announcement_title, '系统维护通知');
   assert.equal(updated.data.announcement_body, '今晚进行例行维护。');
   assert.equal(updated.data.announcement_enabled, true);
+  assert.match(updated.data.system_version, /^\d+\.\d+\.\d+$/);
   assert.ok(app.repository.listAudit(20).some((event) => event.action === 'announcement.updated'));
 });
 

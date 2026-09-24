@@ -24,7 +24,7 @@ export function bootstrap({ database, config, privateKey, publicKey = '', clock 
   const sessions = createSessionService({ repository, config, clock });
   const updates = createUpdateControl({ root: config.updateControlPath, currentVersion: PACKAGE_VERSION, clock });
   const portal = createPortalService({
-    repository, queue, licenseService: service, artifactStore, buildEngine, config, clock,
+    repository, queue, licenseService: service, artifactStore, buildEngine, config, clock, packageVersion: PACKAGE_VERSION,
   });
   service.ensureProduct({ code: 'appgog', name: 'APPGOG' });
   const adminUsername = config.adminUsername ?? 'admin';

@@ -40,7 +40,7 @@ function sourceMetadata(files, sourceFilename) {
   return { version, displayName };
 }
 
-export function createPortalService({ repository, queue, licenseService, artifactStore, buildEngine, config, clock = () => new Date() }) {
+export function createPortalService({ repository, queue, licenseService, artifactStore, buildEngine, config, clock = () => new Date(), packageVersion = 'development' }) {
   const serviceConfig = Object.freeze({
     license_service_enabled: 'licenseServiceEnabled',
     customer_login_enabled: 'customerLoginEnabled',
@@ -88,6 +88,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
       const saved = repository.listSettings();
       const announcementEnabled = saved.announcement_enabled === 'true' && Boolean(saved.announcement_title?.trim() || saved.announcement_body?.trim());
       return {
+        system_version: packageVersion,
         platform_name: saved.platform_name ?? 'APPGOG打包授权系统',
         installation_role: config.role ?? (config.surface === 'combined' ? 'all-in-one' : 'license-center'),
         license_public_url: config.publicBaseUrl,
@@ -197,6 +198,7 @@ export function createPortalService({ repository, queue, licenseService, artifac
       const announcementEnabled = repository.setting('announcement_enabled') === 'true' && Boolean(announcementTitle.trim() || announcementBody.trim());
       const buildsUsed = repository.recentBuildCount(license.id, new Date(clock().getTime() - 24 * 60 * 60 * 1000).toISOString());
       return {
+        system_version: packageVersion,
         license: {
           product: license.product_code,
           key_prefix: license.key_prefix,
