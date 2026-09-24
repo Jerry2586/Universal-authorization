@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { loadConfig, loadLocalEnvironment } from '../apps/license-api/src/config.js';
+import { loadConfig } from '../apps/license-api/src/config.js';
+import { loadLocalEnvironment } from '../packages/core/src/environment.js';
 
 // 本机开发用进程管理器；生产环境分别部署三个服务并使用各自的环境文件。
 loadLocalEnvironment();

@@ -1,6 +1,17 @@
 import { BUILD_JOB_STATUS } from '../../contracts/src/build-job.js';
 import { BuildQueue } from '../../ports/src/build-queue.js';
-import { transaction } from '../../../apps/license-api/src/database.js';
+
+function transaction(database, operation) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    database.exec('COMMIT');
+    return result;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 export class SqliteBuildQueue extends BuildQueue {
   constructor({ database, repository, clock = () => new Date() }) {

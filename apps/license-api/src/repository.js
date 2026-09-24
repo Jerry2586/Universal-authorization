@@ -4,17 +4,29 @@ export function createRepository(database) {
   const queries = {
     insertProduct: database.prepare(`INSERT INTO products (id, code, name, created_at) VALUES (?, ?, ?, ?)`),
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
+    planByCode: database.prepare(`SELECT * FROM license_plans WHERE code = ?`),
+    listPlans: database.prepare(`SELECT * FROM license_plans WHERE status = 'active' ORDER BY code ASC`),
     insertLicense: database.prepare(`
-      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, key_encrypted, status, bound_domain, update_until, max_builds_per_day, max_activations, generation, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, key_encrypted, status, bound_domain, update_until, max_builds_per_day, max_activations, plan_id, generation, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `),
     licenseByHash: database.prepare(`
-      SELECT licenses.*, products.code AS product_code, products.name AS product_name
-      FROM licenses JOIN products ON products.id = licenses.product_id WHERE licenses.key_hash = ?
+      SELECT licenses.*, products.code AS product_code, products.name AS product_name,
+        license_plans.code AS plan_code, license_plans.name AS plan_name,
+        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json
+      FROM licenses
+      JOIN products ON products.id = licenses.product_id
+      LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
+      WHERE licenses.key_hash = ?
     `),
     licenseById: database.prepare(`
-      SELECT licenses.*, products.code AS product_code, products.name AS product_name
-      FROM licenses JOIN products ON products.id = licenses.product_id WHERE licenses.id = ?
+      SELECT licenses.*, products.code AS product_code, products.name AS product_name,
+        license_plans.code AS plan_code, license_plans.name AS plan_name,
+        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json
+      FROM licenses
+      JOIN products ON products.id = licenses.product_id
+      LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
+      WHERE licenses.id = ?
     `),
     bindDomain: database.prepare(`UPDATE licenses SET bound_domain = ?, updated_at = ? WHERE id = ? AND bound_domain IS NULL`),
     rotateLicense: database.prepare(`UPDATE licenses SET key_prefix = ?, key_hash = ?, key_encrypted = ?, generation = generation + 1, updated_at = ? WHERE id = ?`),
@@ -86,20 +98,29 @@ export function createRepository(database) {
       UPDATE builds SET status = 'package_unlocked' WHERE id = ? AND status = 'ready'
     `),
     insertActivation: database.prepare(`
-      INSERT INTO activations (id, license_id, build_id, domain, backend_origin, installation_id, status, generation, refresh_secret_hash, last_seen_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+      INSERT INTO activations (
+        id, license_id, build_id, domain, backend_origin, installation_id, status, generation,
+        refresh_secret_hash, last_seen_at, created_at, identity_mode, installation_public_key_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
     `),
     supersedeActivations: database.prepare(`
       UPDATE activations SET status = 'superseded', revoked_at = ?
       WHERE license_id = ? AND domain = ? AND backend_origin = ? AND installation_id = ? AND status = 'active'
     `),
+    fenceActivationsByInstallation: database.prepare(`
+      UPDATE activations SET status = 'fenced', revoked_at = ?
+      WHERE license_id = ? AND installation_id = ? AND status = 'active'
+    `),
     activationById: database.prepare(`
       SELECT activations.*, licenses.status AS license_status, licenses.generation AS license_generation,
-        licenses.bound_domain, builds.package_id, builds.version, builds.status AS build_status, products.code AS product_code
+        licenses.bound_domain, licenses.plan_id, builds.package_id, builds.version, builds.status AS build_status,
+        products.code AS product_code, license_plans.code AS plan_code,
+        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json
       FROM activations
       JOIN licenses ON licenses.id = activations.license_id
       JOIN builds ON builds.id = activations.build_id
       JOIN products ON products.id = licenses.product_id
+      LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
       WHERE activations.id = ?
     `),
     updateActivationSeen: database.prepare(`UPDATE activations SET last_seen_at = ? WHERE id = ?`),
@@ -116,6 +137,52 @@ export function createRepository(database) {
       JOIN licenses ON licenses.id = activations.license_id
       WHERE activations.license_id = ? AND activations.status = 'active'
         AND activations.generation = licenses.generation
+    `),
+    insertInstallationChallenge: database.prepare(`
+      INSERT INTO installation_challenges (
+        id, purpose, installation_id, public_key_fingerprint, context_hash, nonce, status, expires_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?)
+    `),
+    installationChallengeById: database.prepare(`SELECT * FROM installation_challenges WHERE id = ?`),
+    consumeInstallationChallenge: database.prepare(`
+      UPDATE installation_challenges SET status = 'consumed', consumed_at = ?
+      WHERE id = ? AND status = 'created' AND expires_at >= ?
+    `),
+    upsertInstallationIdentity: database.prepare(`
+      INSERT INTO installation_identities (
+        installation_id, license_id, public_key_pem, public_key_fingerprint, status,
+        ownership_generation, created_at, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT(installation_id) DO UPDATE SET
+        license_id = excluded.license_id,
+        public_key_pem = excluded.public_key_pem,
+        public_key_fingerprint = excluded.public_key_fingerprint,
+        status = excluded.status,
+        last_seen_at = excluded.last_seen_at,
+        fenced_at = CASE WHEN excluded.status = 'active' THEN NULL ELSE installation_identities.fenced_at END,
+        revoked_at = CASE WHEN excluded.status = 'active' THEN NULL ELSE installation_identities.revoked_at END
+    `),
+    installationIdentityById: database.prepare(`SELECT * FROM installation_identities WHERE installation_id = ?`),
+    touchInstallationIdentity: database.prepare(`UPDATE installation_identities SET last_seen_at = ? WHERE installation_id = ? AND status = 'active'`),
+    fenceInstallationIdentity: database.prepare(`
+      UPDATE installation_identities SET status = 'fenced', fenced_at = ?, ownership_generation = ownership_generation + 1
+      WHERE installation_id = ? AND status = 'active'
+    `),
+    activateInstallationIdentity: database.prepare(`
+      UPDATE installation_identities SET status = 'active', fenced_at = NULL, revoked_at = NULL,
+        ownership_generation = ownership_generation + 1, last_seen_at = ?
+      WHERE installation_id = ?
+    `),
+    insertProductMigrationGrant: database.prepare(`
+      INSERT INTO product_migration_grants (
+        id, license_id, source_installation_id, target_public_key_fingerprint, token_hash,
+        status, expires_at, rollback_until, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?)
+    `),
+    productMigrationGrantByHash: database.prepare(`SELECT * FROM product_migration_grants WHERE token_hash = ?`),
+    consumeProductMigrationGrant: database.prepare(`
+      UPDATE product_migration_grants SET status = 'consumed', consumed_at = ?
+      WHERE id = ? AND status = 'issued' AND expires_at >= ?
     `),
     revokeInstallReceiptsByLicense: database.prepare(`
       UPDATE install_receipts SET status = 'revoked', revoked_at = ? WHERE license_id = ? AND status = 'unlocked'
@@ -160,6 +227,13 @@ export function createRepository(database) {
       INSERT INTO audit_events (id, actor_type, actor_id, action, subject_type, subject_id, metadata_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `),
+    insertLicenseEvent: database.prepare(`
+      INSERT INTO license_events (
+        id, license_id, event_type, build_id, activation_id, installation_id, result, reason_code,
+        actor_type, actor_id, request_ip, user_agent, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    listLicenseEvents: database.prepare(`SELECT * FROM license_events WHERE license_id = ? ORDER BY created_at DESC LIMIT ?`),
     countRecentBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND created_at >= ? AND status != 'revoked'`),
     insertSession: database.prepare(`
       INSERT INTO web_sessions (id, token_hash, csrf_token, actor_type, actor_id, expires_at, last_seen_at, created_at)
@@ -260,9 +334,13 @@ export function createRepository(database) {
     revokeInstallKeyByBuild: database.prepare(`UPDATE install_keys SET status = 'revoked' WHERE build_id = ? AND status = 'available'`),
     listLicenses: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
+        license_plans.code AS plan_code, license_plans.name AS plan_name,
+        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json,
         (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id) AS build_count,
         (SELECT COUNT(*) FROM activations WHERE activations.license_id = licenses.id AND activations.status = 'active') AS active_activation_count
-      FROM licenses JOIN products ON products.id = licenses.product_id
+      FROM licenses
+      JOIN products ON products.id = licenses.product_id
+      LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
       ORDER BY licenses.created_at DESC LIMIT ?
     `),
     listActivations: database.prepare(`
@@ -277,6 +355,12 @@ export function createRepository(database) {
       SELECT activations.*, builds.version FROM activations
       JOIN builds ON builds.id = activations.build_id
       WHERE activations.license_id = ? AND activations.status = 'active'
+      ORDER BY activations.created_at DESC LIMIT 1
+    `),
+    activeActivationByInstallation: database.prepare(`
+      SELECT activations.*, builds.version FROM activations
+      JOIN builds ON builds.id = activations.build_id
+      WHERE activations.license_id = ? AND activations.installation_id = ? AND activations.status = 'active'
       ORDER BY activations.created_at DESC LIMIT 1
     `),
     listAudit: database.prepare(`SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?`),
@@ -375,8 +459,17 @@ export function createRepository(database) {
     touchSupportTicket: database.prepare(`UPDATE support_tickets SET updated_at = ? WHERE id = ?`),
     updateSupportTicketStatus: database.prepare(`
       UPDATE support_tickets SET status = ?, updated_at = ?,
-        resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END,
-        closed_at = CASE WHEN ? = 'closed' THEN ? ELSE closed_at END
+        resolved_at = CASE
+          WHEN ? = 'resolved' THEN COALESCE(resolved_at, ?)
+          WHEN ? IN ('pending', 'processing', 'waiting_customer') THEN NULL
+          ELSE resolved_at
+        END,
+        closed_at = CASE WHEN ? = 'closed' THEN COALESCE(closed_at, ?) ELSE NULL END,
+        closed_by_type = CASE WHEN ? = 'closed' THEN COALESCE(closed_by_type, ?) ELSE NULL END,
+        closed_by_id = CASE WHEN ? = 'closed' THEN COALESCE(closed_by_id, ?) ELSE NULL END,
+        close_reason = CASE WHEN ? = 'closed' THEN COALESCE(close_reason, ?) ELSE NULL END,
+        reopened_at = CASE WHEN status = 'closed' AND ? <> 'closed' THEN ? ELSE reopened_at END,
+        reopened_by = CASE WHEN status = 'closed' AND ? <> 'closed' THEN ? ELSE reopened_by END
       WHERE id = ?
     `),
     updateSupportTicketPriority: database.prepare(`UPDATE support_tickets SET priority = ?, updated_at = ? WHERE id = ?`),
@@ -391,6 +484,52 @@ export function createRepository(database) {
       UPDATE licenses SET bound_domain = ?, generation = generation + 1, updated_at = ? WHERE id = ?
     `),
     changeLicenseStatus: database.prepare(`UPDATE licenses SET status = ?, updated_at = ? WHERE id = ?`),
+    changeLicensePlan: database.prepare(`UPDATE licenses SET plan_id = ?, generation = generation + 1, updated_at = ? WHERE id = ?`),
+    markLicenseDeleting: database.prepare(`UPDATE licenses SET status = 'deleting', generation = generation + 1, updated_at = ? WHERE id = ? AND status <> 'deleting'`),
+    licenseFileRefs: database.prepare(`
+      SELECT artifact_ref AS storage_ref FROM build_jobs WHERE license_id = ? AND artifact_ref IS NOT NULL
+      UNION SELECT upload_ref AS storage_ref FROM build_jobs WHERE license_id = ? AND upload_ref IS NOT NULL
+      UNION SELECT support_attachments.storage_ref AS storage_ref
+        FROM support_attachments JOIN support_tickets ON support_tickets.id = support_attachments.ticket_id
+        WHERE support_tickets.license_id = ?
+    `),
+    insertErasureJob: database.prepare(`
+      INSERT INTO erasure_jobs (id, license_id, status, requested_by, file_refs_json, created_at)
+      VALUES (?, ?, 'pending', ?, ?, ?)
+    `),
+    erasureJobById: database.prepare(`SELECT * FROM erasure_jobs WHERE id = ?`),
+    erasureJobByLicense: database.prepare(`SELECT * FROM erasure_jobs WHERE license_id = ? ORDER BY created_at DESC LIMIT 1`),
+    listPendingErasureJobs: database.prepare(`SELECT * FROM erasure_jobs WHERE status IN ('pending', 'files_pending') ORDER BY created_at ASC`),
+    updateErasureJob: database.prepare(`UPDATE erasure_jobs SET status = ?, error_message = ?, completed_at = ? WHERE id = ?`),
+    deleteErasureJob: database.prepare(`DELETE FROM erasure_jobs WHERE id = ?`),
+    insertErasureTombstone: database.prepare(`
+      INSERT INTO erasure_tombstones (id, operation_id, deleted_at, execution_version, records_deleted, files_deleted, result)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `),
+    insertCleanupTask: database.prepare(`
+      INSERT OR IGNORE INTO file_cleanup_tasks (id, operation_id, storage_ref, status, attempts, last_error, created_at, updated_at)
+      VALUES (?, ?, ?, 'pending', 1, ?, ?, ?)
+    `),
+    deleteCustomerSessionsByLicense: database.prepare(`DELETE FROM web_sessions WHERE actor_type = 'customer' AND actor_id = ?`),
+    deleteSupportAttachmentsByLicense: database.prepare(`DELETE FROM support_attachments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE license_id = ?)`),
+    deleteSupportMessagesByLicense: database.prepare(`DELETE FROM support_messages WHERE ticket_id IN (SELECT id FROM support_tickets WHERE license_id = ?)`),
+    deleteSupportTicketsByLicense: database.prepare(`DELETE FROM support_tickets WHERE license_id = ?`),
+    deleteActivationsByLicense: database.prepare(`DELETE FROM activations WHERE license_id = ?`),
+    deleteInstallationChallengesByLicense: database.prepare(`
+      DELETE FROM installation_challenges
+      WHERE installation_id IN (SELECT installation_id FROM installation_identities WHERE license_id = ?)
+    `),
+    deleteProductMigrationGrantsByLicense: database.prepare(`DELETE FROM product_migration_grants WHERE license_id = ?`),
+    deleteInstallationIdentitiesByLicense: database.prepare(`DELETE FROM installation_identities WHERE license_id = ?`),
+    deleteInstallReceiptsByLicense: database.prepare(`DELETE FROM install_receipts WHERE license_id = ?`),
+    deleteInstallKeysByLicense: database.prepare(`DELETE FROM install_keys WHERE build_id IN (SELECT id FROM builds WHERE license_id = ?)`),
+    deleteBuildJobsByLicense: database.prepare(`DELETE FROM build_jobs WHERE license_id = ?`),
+    deleteBuildsByLicense: database.prepare(`DELETE FROM builds WHERE license_id = ?`),
+    deleteBuildTicketsByLicense: database.prepare(`DELETE FROM build_tickets WHERE license_id = ?`),
+    deleteDomainMigrationsByLicense: database.prepare(`DELETE FROM domain_migration_requests WHERE license_id = ?`),
+    deleteLicenseEventsByLicense: database.prepare(`DELETE FROM license_events WHERE license_id = ?`),
+    deleteAuditByLicense: database.prepare(`DELETE FROM audit_events WHERE (subject_type = 'license' AND subject_id = ?) OR (actor_type = 'customer' AND actor_id = ?)`),
+    deleteLicense: database.prepare(`DELETE FROM licenses WHERE id = ?`),
   };
 
   return {
@@ -400,11 +539,13 @@ export function createRepository(database) {
       return queries.productByCode.get(code);
     },
     productByCode: (code) => queries.productByCode.get(code),
+    planByCode: (code) => queries.planByCode.get(code),
+    listPlans: () => queries.listPlans.all(),
     createLicense(values) {
       queries.insertLicense.run(
         values.id, values.productId, values.customerRef, values.keyPrefix, values.keyHash, values.keyEncrypted ?? null,
         values.status, values.boundDomain ?? null, values.updateUntil ?? null,
-        values.maxBuildsPerDay, values.maxActivations, values.now, values.now,
+        values.maxBuildsPerDay, values.maxActivations, values.planId ?? null, values.now, values.now,
       );
       return queries.licenseById.get(values.id);
     },
@@ -453,10 +594,14 @@ export function createRepository(database) {
     supersedeActivations: (licenseId, domain, backendOrigin, installationId, now) => (
       queries.supersedeActivations.run(now, licenseId, domain, backendOrigin, installationId)
     ),
+    fenceActivationsByInstallation: (licenseId, installationId, now) => (
+      queries.fenceActivationsByInstallation.run(now, licenseId, installationId).changes
+    ),
     createActivation(values) {
       queries.insertActivation.run(
         values.id, values.licenseId, values.buildId, values.domain, values.backendOrigin,
         values.installationId, values.generation, values.refreshSecretHash, values.now, values.now,
+        values.identityMode ?? 'legacy', values.installationPublicKeyFingerprint ?? null,
       );
       return queries.activationById.get(values.id);
     },
@@ -464,6 +609,39 @@ export function createRepository(database) {
     updateActivationSeen: (id, now) => queries.updateActivationSeen.run(now, id),
     activeActivationForEnvironment: (licenseId, domain, backendOrigin, installationId) => queries.activeActivationForEnvironment.get(licenseId, domain, backendOrigin, installationId),
     countActiveActivationsForLicense: (licenseId) => queries.countActiveActivationsForLicense.get(licenseId).count,
+    createInstallationChallenge(values) {
+      queries.insertInstallationChallenge.run(
+        values.id, values.purpose, values.installationId, values.publicKeyFingerprint,
+        values.contextHash, values.nonce, values.expiresAt, values.now,
+      );
+      return queries.installationChallengeById.get(values.id);
+    },
+    installationChallengeById: (id) => queries.installationChallengeById.get(id),
+    consumeInstallationChallenge(id, now) {
+      return queries.consumeInstallationChallenge.run(now, id, now).changes === 1;
+    },
+    registerInstallationIdentity(values) {
+      queries.upsertInstallationIdentity.run(
+        values.installationId, values.licenseId, values.publicKeyPem, values.publicKeyFingerprint,
+        values.status ?? 'active', values.now, values.now,
+      );
+      return queries.installationIdentityById.get(values.installationId);
+    },
+    installationIdentityById: (id) => queries.installationIdentityById.get(id),
+    touchInstallationIdentity: (id, now) => queries.touchInstallationIdentity.run(now, id).changes === 1,
+    fenceInstallationIdentity: (id, now) => queries.fenceInstallationIdentity.run(now, id).changes === 1,
+    activateInstallationIdentity: (id, now) => queries.activateInstallationIdentity.run(now, id).changes === 1,
+    createProductMigrationGrant(values) {
+      queries.insertProductMigrationGrant.run(
+        values.id, values.licenseId, values.sourceInstallationId, values.targetPublicKeyFingerprint,
+        values.tokenHash, values.expiresAt, values.rollbackUntil, values.now,
+      );
+      return values.id;
+    },
+    productMigrationGrantByHash: (hash) => queries.productMigrationGrantByHash.get(hash),
+    consumeProductMigrationGrant(id, now) {
+      return queries.consumeProductMigrationGrant.run(now, id, now).changes === 1;
+    },
     createDomainMigration(values) {
       const id = values.id ?? newId('dmr');
       queries.insertDomainMigration.run(
@@ -484,6 +662,17 @@ export function createRepository(database) {
     audit({ actorType, actorId = null, action, subjectType, subjectId = null, metadata = {}, now }) {
       queries.insertAudit.run(newId('evt'), actorType, actorId, action, subjectType, subjectId, JSON.stringify(metadata), now);
     },
+    recordLicenseEvent(values) {
+      const id = values.id ?? newId('lev');
+      queries.insertLicenseEvent.run(
+        id, values.licenseId, values.eventType, values.buildId ?? null, values.activationId ?? null,
+        values.installationId ?? null, values.result ?? 'success', values.reasonCode ?? null,
+        values.actorType ?? 'system', values.actorId ?? null, values.requestIp ?? null,
+        values.userAgent ?? null, JSON.stringify(values.metadata ?? {}), values.now,
+      );
+      return id;
+    },
+    listLicenseEvents: (licenseId, limit = 200) => queries.listLicenseEvents.all(licenseId, limit),
     recentBuildCount(licenseId, since) {
       return queries.countRecentBuilds.get(licenseId, since).count;
     },
@@ -566,6 +755,7 @@ export function createRepository(database) {
     listLicenses: (limit = 100) => queries.listLicenses.all(limit),
     listActivations: (limit = 100) => queries.listActivations.all(limit),
     activeActivationByLicense: (licenseId) => queries.activeActivationByLicense.get(licenseId),
+    activeActivationByInstallation: (licenseId, installationId) => queries.activeActivationByInstallation.get(licenseId, installationId),
     listAudit(limit = 100) {
       return queries.listAudit.all(limit).map((event) => ({ ...event, metadata: JSON.parse(event.metadata_json) }));
     },
@@ -658,8 +848,18 @@ export function createRepository(database) {
       return queries.listSupportMessages.all(values.ticketId).find((message) => message.id === id);
     },
     listSupportMessages: (ticketId) => queries.listSupportMessages.all(ticketId),
-    updateSupportTicketStatus(id, status, now) {
-      queries.updateSupportTicketStatus.run(status, now, status, now, status, now, id);
+    updateSupportTicketStatus(id, status, now, { actorType = null, actorId = null, reason = null } = {}) {
+      queries.updateSupportTicketStatus.run(
+        status, now,
+        status, now, status,
+        status, now,
+        status, actorType,
+        status, actorId,
+        status, reason,
+        status, now,
+        status, actorId,
+        id,
+      );
       return queries.supportTicketById.get(id);
     },
     updateSupportTicketPriority(id, priority, now) {
@@ -691,6 +891,58 @@ export function createRepository(database) {
     changeLicenseStatus(id, status, now) {
       queries.changeLicenseStatus.run(status, now, id);
       return queries.licenseById.get(id);
+    },
+    changeLicensePlan(id, planId, now) {
+      queries.changeLicensePlan.run(planId, now, id);
+      return queries.licenseById.get(id);
+    },
+    beginLicenseErasure({ id = newId('ers'), licenseId, requestedBy, now }) {
+      const fileRefs = queries.licenseFileRefs.all(licenseId, licenseId, licenseId)
+        .map((row) => row.storage_ref)
+        .filter(Boolean);
+      queries.markLicenseDeleting.run(now, licenseId);
+      queries.insertErasureJob.run(id, licenseId, requestedBy, JSON.stringify([...new Set(fileRefs)]), now);
+      return queries.erasureJobById.get(id);
+    },
+    erasureJobByLicense: (licenseId) => queries.erasureJobByLicense.get(licenseId),
+    listPendingErasureJobs: () => queries.listPendingErasureJobs.all(),
+    updateErasureJob(id, status, errorMessage = null, completedAt = null) {
+      queries.updateErasureJob.run(status, errorMessage, completedAt, id);
+      return queries.erasureJobById.get(id);
+    },
+    deleteLicenseGraph(licenseId) {
+      let recordsDeleted = 0;
+      const deletions = [
+        queries.deleteCustomerSessionsByLicense,
+        queries.deleteSupportAttachmentsByLicense,
+        queries.deleteSupportMessagesByLicense,
+        queries.deleteSupportTicketsByLicense,
+        queries.deleteActivationsByLicense,
+        queries.deleteProductMigrationGrantsByLicense,
+        queries.deleteInstallationChallengesByLicense,
+        queries.deleteInstallationIdentitiesByLicense,
+        queries.deleteInstallReceiptsByLicense,
+        queries.deleteInstallKeysByLicense,
+        queries.deleteBuildJobsByLicense,
+        queries.deleteBuildsByLicense,
+        queries.deleteBuildTicketsByLicense,
+        queries.deleteDomainMigrationsByLicense,
+        queries.deleteLicenseEventsByLicense,
+      ];
+      for (const statement of deletions) recordsDeleted += statement.run(licenseId).changes;
+      recordsDeleted += queries.deleteAuditByLicense.run(licenseId, licenseId).changes;
+      recordsDeleted += queries.deleteLicense.run(licenseId).changes;
+      return recordsDeleted;
+    },
+    finishLicenseErasure({ operationId, executionVersion, recordsDeleted, filesDeleted, failedFiles = [], now }) {
+      for (const failure of failedFiles) {
+        queries.insertCleanupTask.run(newId('fct'), operationId, failure.storageRef, failure.error, now, now);
+      }
+      queries.insertErasureTombstone.run(
+        newId('tmb'), operationId, now, executionVersion, recordsDeleted, filesDeleted,
+        failedFiles.length > 0 ? 'completed_with_cleanup_pending' : 'completed',
+      );
+      queries.deleteErasureJob.run(operationId);
     },
   };
 }

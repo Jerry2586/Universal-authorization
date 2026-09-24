@@ -7,25 +7,78 @@ import { LocalArtifactStore } from '../../../packages/adapters/src/local-artifac
 import { HardenedThemeBuildEngine } from '../../build-worker/src/engine.js';
 import { hashPassword } from '../../../packages/core/src/password.js';
 import { createUpdateControl } from './update-control.js';
+import { createMigrationControl } from './modules/migration/control.js';
+import { createControlMigrationRepository } from './modules/migration/repository.js';
+import { createIdentityRepositoryPort } from './modules/identity/repository-port.js';
+import { createSessionRepositoryPort } from './modules/identity/session-repository-port.js';
+import { createIdentityService } from './modules/identity/service.js';
+import { createLicensingRepositoryPort } from './modules/licensing/repository-port.js';
+import { createOperationsRepositoryPort } from './modules/operations/repository-port.js';
+import { createOperationsService } from './modules/operations/service.js';
+import { createSupportRepositoryPort } from './modules/support/repository-port.js';
+import { createSupportService } from './modules/support/service.js';
+import { createPackagingRepositoryPort } from './modules/packaging/repository-port.js';
+import { createPackagingService } from './modules/packaging/service.js';
+import { createProductRepositoryPort } from './modules/product/repository-port.js';
+import { createProductService } from './modules/product/service.js';
 import { readFileSync } from 'node:fs';
 
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
 
-export function bootstrap({ database, config, privateKey, publicKey = '', clock }) {
+export function bootstrap({ database, config, privateKey, publicKey = '', keyring = null, clock }) {
+  const signingKeys = keyring ?? {
+    activation: { privateKey, publicKey },
+    package: { privateKey, publicKey },
+    notification: { privateKey, publicKey },
+  };
   const repository = createRepository(database);
-  const service = createLicenseService({ database, repository, config, privateKey, clock });
+  const migrationRepository = createControlMigrationRepository(database);
+  const service = createLicenseService({
+    database, repository: createLicensingRepositoryPort(repository), config,
+    activationPrivateKey: signingKeys.activation.privateKey,
+    packagePrivateKey: signingKeys.package.privateKey,
+    notificationPrivateKey: signingKeys.notification.privateKey,
+    clock,
+  });
   const queue = new SqliteBuildQueue({ database, repository, clock });
   const artifactStore = new LocalArtifactStore(config.artifactRoot ?? './var/artifacts');
   const buildEngine = new HardenedThemeBuildEngine({
     artifactStore,
-    publicKey,
+    publicKey: signingKeys.package.publicKey,
+    activationPublicKey: signingKeys.activation.publicKey,
+    packagePublicKey: signingKeys.package.publicKey,
+    notificationPublicKey: signingKeys.notification.publicKey,
     publicBaseUrl: config.publicBaseUrl,
   });
-  const sessions = createSessionService({ repository, config, clock });
+  const sessions = createSessionService({ repository: createSessionRepositoryPort(repository), config, clock });
   const updates = createUpdateControl({ root: config.updateControlPath, currentVersion: PACKAGE_VERSION, clock });
-  const portal = createPortalService({
-    repository, queue, licenseService: service, artifactStore, buildEngine, config, clock, packageVersion: PACKAGE_VERSION,
+  const identity = createIdentityService({ repository: createIdentityRepositoryPort(repository), clock });
+  const operations = createOperationsService({
+    repository: createOperationsRepositoryPort(repository), config, packageVersion: PACKAGE_VERSION, clock,
   });
+  const support = createSupportService({
+    database, repository: createSupportRepositoryPort(repository), artifactStore, clock,
+  });
+  const packaging = createPackagingService({
+    repository: createPackagingRepositoryPort(repository), queue, licenseService: service,
+    operations, artifactStore, buildEngine, config, clock,
+  });
+  const product = createProductService({
+    repository: createProductRepositoryPort(repository), licenseService: service,
+    artifactStore, buildEngine, config, clock,
+  });
+  const migrations = createMigrationControl({
+    repository: migrationRepository,
+    audit: (event) => repository.audit(event),
+    config: { ...config, packageVersion: PACKAGE_VERSION },
+    root: config.updateControlPath,
+    clock,
+  });
+  const portalCore = createPortalService({
+    database, repository, licenseService: service, operations, support, artifactStore, clock,
+    packageVersion: PACKAGE_VERSION,
+  });
+  const portal = Object.freeze({ ...portalCore, ...identity, ...operations, ...support, ...packaging, ...product });
   service.ensureProduct({ code: 'appgog', name: 'APPGOG' });
   const adminUsername = config.adminUsername ?? 'admin';
   const adminPassword = config.adminPassword ?? 'appgog-development-admin';
@@ -39,5 +92,6 @@ export function bootstrap({ database, config, privateKey, publicKey = '', clock 
       now: (clock ? clock() : new Date()).toISOString(),
     });
   }
-  return { repository, service, sessions, portal, updates, queue, artifactStore, buildEngine };
+  portal.resumePendingErasures();
+  return { repository, service, sessions, portal, updates, migrations, queue, artifactStore, buildEngine };
 }

@@ -29,6 +29,11 @@ UPGRADE_MODE=false
 REPAIR_SOURCE=${APPGOG_REPAIR_SOURCE:-false}
 STAGED_RELEASE=''
 PREVIOUS_RELEASE=''
+SCRIPT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)
+. "$SCRIPT_ROOT/scripts/lib/platform.sh"
+. "$SCRIPT_ROOT/scripts/lib/docker-install.sh"
+. "$SCRIPT_ROOT/scripts/lib/release-download.sh"
+. "$SCRIPT_ROOT/scripts/lib/dns.sh"
 
 usage() {
   cat <<'EOF'
@@ -98,22 +103,14 @@ CURRENT_LINK=$INSTALL_ROOT/current
 [ "$(id -u)" -eq 0 ] || fail '请使用 root 或 sudo 运行。'
 [ "$(uname -s 2>/dev/null || true)" = Linux ] || fail '仅支持 Linux。'
 ARCH=$(uname -m 2>/dev/null || true)
-case "$ARCH" in
-  x86_64|amd64|aarch64|arm64) ;;
-  *) fail "不支持的 CPU 架构：${ARCH:-unknown}；仅支持 x86_64/amd64 和 aarch64/arm64。" ;;
-esac
+appgog_supported_arch "$ARCH" || fail "不支持的 CPU 架构：${ARCH:-unknown}；仅支持 x86_64/amd64 和 aarch64/arm64。"
 case "$INSTALL_DIR" in /|''|/opt|/usr|/var|/home) fail '安装目录过于宽泛。' ;; /*) ;; *) fail '安装目录必须是绝对路径。' ;; esac
 [ -r /etc/os-release ] || fail '无法识别 Linux 发行版。'
 . /etc/os-release
 DISTRO=${ID:-unknown}
 
 compose_supported() {
-  command -v docker >/dev/null 2>&1 || return 1
-  version=$(docker compose version --short 2>/dev/null | sed 's/^v//; s/[^0-9.].*$//')
-  old_ifs=$IFS; IFS=.; set -- $version; IFS=$old_ifs
-  major=${1:-0}; minor=${2:-0}
-  case "$major:$minor" in *[!0-9:]*|:) return 1 ;; esac
-  [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 24 ]; }
+  appgog_compose_version_supported 24
 }
 install_packages() {
   missing=false
@@ -283,7 +280,7 @@ select_base_images() {
 }
 
 valid_domain() {
-  case "$1" in example.com|*.example.com|your-domain.com|*.your-domain.com|''|*://*|*/*|*:*|*[!A-Za-z0-9.-]*|.*|*.) return 1 ;; *.*) return 0 ;; *) return 1 ;; esac
+  appgog_valid_domain "$1"
 }
 
 public_ipv4() {
@@ -384,14 +381,7 @@ verify_download() {
 }
 
 release_base() {
-  source_name=$1
-  case "$source_name" in
-    china) [ -n "$CHINA_RELEASE_BASE" ] || return 1; printf '%s' "${CHINA_RELEASE_BASE%/}" ;;
-    github)
-      if [ -n "$GITHUB_RELEASE_BASE" ]; then printf '%s' "${GITHUB_RELEASE_BASE%/}"
-      elif [ -n "$VERSION" ]; then printf 'https://github.com/Jerry2586/Universal-authorization/releases/download/v%s' "${VERSION#v}"
-      else printf 'https://github.com/Jerry2586/Universal-authorization/releases/latest/download'; fi ;;
-  esac
+  appgog_release_base "$1" "$CHINA_RELEASE_BASE" "$GITHUB_RELEASE_BASE" "$VERSION"
 }
 
 download_file() {
@@ -628,6 +618,7 @@ WorkingDirectory=$CURRENT_LINK
 ExecStart=$CURRENT_LINK/scripts/update-helper.sh --daemon $INSTALL_ROOT
 Restart=always
 RestartSec=3
+TimeoutStopSec=30
 User=root
 NoNewPrivileges=true
 PrivateTmp=true
@@ -640,18 +631,40 @@ EOF
   systemctl daemon-reload
   systemctl enable appgog-update-helper.service >/dev/null
   if [ "${APPGOG_HELPER_ACTIVE:-false}" != true ]; then
-    systemctl restart appgog-update-helper.service
     helper_ready=false
-    helper_attempt=0
-    while [ "$helper_attempt" -lt 20 ]; do
-      helper_attempt=$((helper_attempt + 1))
-      if systemctl is-active --quiet appgog-update-helper.service && [ -s "$SHARED_DIR/update-control/status.json" ]; then helper_ready=true; break; fi
-      sleep 1
+    helper_round=0
+    while [ "$helper_round" -lt 2 ] && [ "$helper_ready" != true ]; do
+      helper_round=$((helper_round + 1))
+      if ! systemctl restart appgog-update-helper.service; then break; fi
+      helper_attempt=0
+      while [ "$helper_attempt" -lt 30 ]; do
+        helper_attempt=$((helper_attempt + 1))
+        if systemctl is-active --quiet appgog-update-helper.service \
+          && "$CURRENT_LINK/scripts/update-helper.sh" --healthcheck "$INSTALL_ROOT" >/dev/null 2>&1; then
+          helper_ready=true
+          break
+        fi
+        sleep 1
+      done
     done
     if [ "$helper_ready" != true ]; then
-      systemctl status appgog-update-helper.service --no-pager -l >&2 || true
-      fail '在线更新助手启动失败；业务服务未受影响，请查看上方 systemd 诊断。'
+      helper_diagnostic="$SHARED_DIR/logs/update-helper-startup-$(date -u +%Y%m%dT%H%M%SZ).log"
+      {
+        printf 'APPGOG 在线更新助手启动诊断\n时间：%s\n安装目录：%s\n状态文件：%s\n' \
+          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$INSTALL_ROOT" "$SHARED_DIR/update-control/status.json"
+        systemctl status appgog-update-helper.service --no-pager -l || true
+        journalctl -u appgog-update-helper.service -n 100 --no-pager || true
+        ls -la "$SHARED_DIR/update-control" || true
+        if [ -e "$SHARED_DIR/update-control/status.json" ]; then
+          printf '\n状态文件内容：\n'
+          sed -n '1,120p' "$SHARED_DIR/update-control/status.json" || true
+        fi
+      } > "$helper_diagnostic" 2>&1
+      printf '警告：业务系统已经健康运行，但在线更新助手尚未就绪。诊断已保存：%s\n' "$helper_diagnostic" >&2
+      printf '可继续使用 appgog update；修复助手可执行：systemctl restart appgog-update-helper.service\n' >&2
+      return 0
     fi
+    log '在线更新助手已通过状态文件、版本和安装目录健康检查'
   fi
 }
 

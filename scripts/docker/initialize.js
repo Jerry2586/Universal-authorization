@@ -23,6 +23,23 @@ function hasEncryptedLicenseKeys(databasePath) {
     database?.close();
   }
 }
+function controlPlaneStatus(databasePath) {
+  if (!existsSync(databasePath)) return null;
+  let database;
+  try {
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'control_plane_identity'").get()) return null;
+    return database.prepare("SELECT status FROM control_plane_identity WHERE id = 'primary'").get()?.status ?? null;
+  } catch (error) {
+    // The application database bootstrap remains responsible for reporting a
+    // malformed/legacy file. This guard only adds a fail-closed check when a
+    // readable control-plane identity exists; it must not change legacy init.
+    if (error?.code === 'ERR_SQLITE_ERROR' && error?.errcode === 26) return null;
+    throw error;
+  } finally {
+    database?.close();
+  }
+}
 function migrateLicenseEncryptionKey(identity, databasePath) {
   identity.secrets ??= {};
   if (validSecret(identity.secrets.LICENSE_ENCRYPTION_KEY)) return false;
@@ -62,6 +79,13 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   const privatePath = join(root, 'var/keys/ed25519-private.pem');
   const publicPath = join(root, 'var/keys/ed25519-public.pem');
   const databasePath = join(root, 'var/data/appgog.sqlite');
+  const sourceFencePath = join(root, 'var/update-control/source-fenced.json');
+  if (existsSync(sourceFencePath)) {
+    throw new Error('此服务器已完成控制中心迁移并被 Fenced；禁止直接重启形成双写。请在新服务器运行，或通过受控回滚流程解除。');
+  }
+  if (controlPlaneStatus(databasePath) === 'fenced') {
+    throw new Error('数据库控制中心身份已被 Fenced；禁止直接重启形成双写。请确认目标服务器状态后执行受控回滚。');
+  }
   const authUrl = origin(env.AUTH_DOMAIN || env.PUBLIC_BASE_URL || '', '授权中心');
   const buildUrl = origin(env.BUILD_DOMAIN || env.BUILD_CENTER_PUBLIC_URL || '', '打包中心');
   if (authUrl === buildUrl) throw new Error('授权中心与打包中心需要两个不同域名');
@@ -113,7 +137,12 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     ADMIN_USERNAME: identity.adminUsername, ADMIN_PASSWORD: identity.adminPassword,
     APPGOG_ROLE: 'license-center', EMBEDDED_WORKER: 'false', PORT: 8787,
     BUILD_CENTER_PUBLIC_URL: `${buildUrl}/build`, DATABASE_PATH: '/app/var/data/appgog.sqlite',
-    SIGNING_PRIVATE_KEY_PATH: '/app/var/keys/ed25519-private.pem', SIGNING_PUBLIC_KEY_PATH: '/app/var/keys/ed25519-public.pem',
+    ACTIVATION_SIGNING_PRIVATE_KEY_PATH: '/app/var/keys/ed25519-private.pem',
+    ACTIVATION_SIGNING_PUBLIC_KEY_PATH: '/app/var/keys/ed25519-public.pem',
+    PACKAGE_SIGNING_PRIVATE_KEY_PATH: '/app/var/keys/package-ed25519-private.pem',
+    PACKAGE_SIGNING_PUBLIC_KEY_PATH: '/app/var/keys/package-ed25519-public.pem',
+    NOTIFICATION_SIGNING_PRIVATE_KEY_PATH: '/app/var/keys/notification-ed25519-private.pem',
+    NOTIFICATION_SIGNING_PUBLIC_KEY_PATH: '/app/var/keys/notification-ed25519-public.pem',
     ARTIFACT_ROOT: '/app/var/artifacts', UPLOAD_ROOT: '/app/var/uploads', UPDATE_CONTROL_PATH: '/app/var/update-control',
   }));
   atomic(join(configRoot, 'build/runtime.env'), envFile({ NODE_ENV: 'production', BUILD_CENTER_PORT: 8788,

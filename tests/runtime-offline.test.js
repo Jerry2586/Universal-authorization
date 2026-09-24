@@ -38,7 +38,7 @@ function fakeElement(tagName) {
   };
 }
 
-function installBrowser({ token, fetchImpl, publicKey, manifestToken }) {
+function installBrowser({ token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey, manifestToken }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
     location: globalThis.location, fetch: globalThis.fetch, DateNow: Date.now,
@@ -71,7 +71,9 @@ function installBrowser({ token, fetchImpl, publicKey, manifestToken }) {
   Date.now = () => FIXED_NOW;
   browserLicenseRuntime({
     p: 'appgog', v: '1.17.1', b: 'bld_runtime', i: 'pkg_runtime',
-    u: 'https://license.example.com', k: publicKeyDer(publicKey), s: [], o: [], m: manifestToken,
+    u: 'https://license.example.com', k: publicKeyDer(publicKey),
+    a: publicKeyDer(publicKey), q: publicKeyDer(packagePublicKey), n: publicKeyDer(notificationPublicKey),
+    s: [], o: [], m: manifestToken,
   });
   return {
     values, elements, classes,
@@ -188,6 +190,41 @@ test('版本通知只接受与 release_token 完全一致的签名字段', async
     const notice = browser.elements.find((element) => element.id === '__appgog_update');
     assert.match(notice.textContent, /1\.18\.0/);
     assert.equal(notice.children.length, 0, '未签名的打包中心 URL 不应生成跳转链接');
+  } finally { browser.restore(); }
+});
+
+test('浏览器运行时分别使用 Activation、Package 和 Notification 公钥', async () => {
+  const activationKeys = generateKeyPairSync('ed25519');
+  const packageKeys = generateKeyPairSync('ed25519');
+  const notificationKeys = generateKeyPairSync('ed25519');
+  const active = activation(activationKeys.privateKey, {
+    exp: Math.floor(FIXED_NOW / 1000) + 86400,
+    offline_until: Math.floor(FIXED_NOW / 1000) + 172800,
+  });
+  const releaseToken = signCompactToken({
+    typ: 'release', product: 'appgog', version: '1.18.0', display_name: 'APPGOG 1.18.0',
+    release_notes: 'Separated key release', published_at: '2026-09-24T00:00:00.000Z',
+    exp: Math.floor(FIXED_NOW / 1000) + 3600,
+  }, notificationKeys.privateKey);
+  const browser = installBrowser({
+    token: active,
+    publicKey: activationKeys.publicKey,
+    packagePublicKey: packageKeys.publicKey,
+    notificationPublicKey: notificationKeys.publicKey,
+    manifestToken: packageManifest(packageKeys.privateKey),
+    fetchImpl: async (url) => {
+      if (!String(url).includes('/releases/latest')) throw new Error('unexpected request');
+      return { ok: true, status: 200, async json() { return {
+        release_token: releaseToken,
+        latest: { version: '1.18.0', display_name: 'APPGOG 1.18.0', release_notes: 'Separated key release', published_at: '2026-09-24T00:00:00.000Z' },
+        build_center_url: null,
+      }; } };
+    },
+  });
+  try {
+    await browser.settle();
+    assert.equal(browser.classes.has('__appgog_locked'), false);
+    assert.ok(browser.elements.some((element) => element.id === '__appgog_update'));
   } finally { browser.restore(); }
 });
 

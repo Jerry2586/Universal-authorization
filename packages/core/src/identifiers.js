@@ -39,6 +39,14 @@ export function newRefreshSecret() {
   return `RFS_${randomBytes(32).toString('base64url')}`;
 }
 
+export function newInstallationChallengeNonce() {
+  return randomBytes(32).toString('base64url');
+}
+
+export function newProductMigrationGrant() {
+  return `PMG_${randomBytes(36).toString('base64url')}`;
+}
+
 export function newSessionToken() {
   return `SES_${randomBytes(32).toString('base64url')}`;
 }

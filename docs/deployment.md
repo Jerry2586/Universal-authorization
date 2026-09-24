@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-09-25。
+日期：2026-09-24。
 
-APPGOG打包授权系统 v1.2.9 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.10 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -35,7 +35,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.9 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.10 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -124,7 +124,31 @@ sh scripts/docker.sh restore /绝对路径/appgog-备份.tar.gz.enc
 
 整个容器使用只读根文件系统、移除 capabilities、no-new-privileges、2 GiB 内存、2 CPU、512 PID 和受限临时目录。四个进程共享 UID 和数据卷，角色环境变量分离不是文件系统安全隔离；Worker 不执行上传源码。维护时短暂创建同镜像辅助容器进行备份/权限修复，完成即移除，常驻只有一个容器。
 
-## 7. 跨服务器节点
+## 7. 控制中心系统迁移
+
+控制中心迁移用于把整套 APPGOG 从旧服务器搬到新服务器。它不同于客户产品迁机：控制中心迁移继承原数据库、管理员、License Key、上传、成品、配置、Caddy 状态和三类签名密钥，不修改客户业务域名或 Installation ID。
+
+固定步骤：
+
+1. 在新服务器执行第 2 节同一条一键命令，安装与旧服务器完全相同的 APPGOG 版本。
+2. 确认新服务器可通过受信任 HTTPS 地址访问；源目标系统时间误差不超过 120 秒。
+3. 登录新服务器 `/admin`，进入“系统迁移”，点击开启接收，复制 15 分钟有效的一次性配对码。
+4. 登录旧服务器 `/admin` 的“系统迁移”，填写目标 HTTPS 地址和配对码并开始迁移。
+5. 系统自动核对版本、磁盘、Docker、Compose 和时间，源端进入短暂只读并创建最终加密备份。
+6. 备份按 64 MiB 分块传输，每块和整包分别校验 SHA-256；同序号失败分块可安全重传。
+7. 目标先创建自己的回滚备份，再恢复源端持久数据、执行幂等迁移并完成健康检查。
+8. 成功后源服务器进入数据库和 `source-fenced.json` 双重 Fenced；把原 `AUTH_DOMAIN` 与 `BUILD_DOMAIN` 的 DNS A 记录指向新服务器。
+9. 确认两个公网 HTTPS、授权 API、后台和打包中心正常，再停止旧服务器。
+
+迁移日志位于 `/opt/appgog/shared/logs/migration.log`，页面同时展示当前操作状态。源端任何失败都会尝试恢复 Active；目标恢复失败会使用迁移前备份回滚。受控人工回滚命令为：
+
+```sh
+appgog migration-rollback <迁移ID>
+```
+
+不要删除源数据、数据卷、`.env`、`.backup-key` 或旧服务器，直到新服务器完成公网验收。SQLite 最终切换需要短暂只读，不属于完全零停机迁移。
+
+## 8. 跨服务器节点
 
 默认正式路线是一台服务器的单容器。以下是高级扩展接口说明，不是默认安装步骤。需要拆分时，授权中心仍是唯一数据和签名源；打包中心与 Worker 使用后台生成的独立节点凭证，通过 HTTPS 下载源码、上传成品，不共享数据库或私钥。
 
@@ -139,7 +163,7 @@ build-worker ── WORKER_NODE_TOKEN ────────→ license-center
 
 当前授权中心使用单机 SQLite。多个授权中心并行写入、自动数据库高可用、对象存储和分布式队列不属于当前版本已验证能力。
 
-## 8. 故障诊断
+## 9. 故障诊断
 
 ```sh
 sh scripts/docker.sh status
@@ -160,8 +184,9 @@ docker compose exec -T appgog node scripts/docker/health.js
 - 端口占用：停止原 Web 服务后重试，正式路线不与其他反向代理共享 80/443；
 - 初始化失败：检查 `.env` 是否仍是示例域名、旧密钥是否缺失；不要删除数据卷重试；
 - 任务排队：检查 Worker 日志和授权中心节点凭证；
-- 迁移服务器：保留原 `.env`、备份和同版本发布 ZIP，避免生成新签名身份。
+- 控制中心迁移失败：查看 `/opt/appgog/shared/logs/migration.log` 和页面 operation 状态；保留源 `.env`、备份、同版本 Release 和全部密钥，不要删除数据卷或重新生成签名身份；
+- 源端显示 Fenced：先确认目标是否已经健康接管。只有明确执行受控迁移回滚时才能运行 `appgog migration-rollback <迁移ID>`，不能删除 `source-fenced.json` 强行双写。
 
-## 9. 真实环境验收边界
+## 10. 真实环境验收边界
 
 仓库自动测试覆盖稳定引导器结构、签名与哈希校验入口、配置生成、凭证保留、备份恢复防护、Caddy Compose、两阶段授权和构建流程。正式发布验收还必须在全新 VPS 上执行固定命令完成首装，再在同一 VPS 上逐字重跑同一句命令完成跨版本升级，并确认相同版本重跑安全退出、旧版本被拒绝、业务数据和管理员身份不变。真实公网 DNS、ACME、防火墙、不同 Linux 包管理器和 VPS 网络仍需端到端验证，不能由本地 Windows 测试替代。

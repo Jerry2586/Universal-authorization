@@ -90,4 +90,4 @@ if (signingKeyPath) {
 } else {
   console.warn('未设置 APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH；已生成清单，但未生成数字签名。');
 }
-verifyPackagedArtifacts();
+verifyPackagedArtifacts({ allowUnsigned: !privateKey && process.env.APPGOG_ALLOW_UNSIGNED_ARTIFACTS === '1' });

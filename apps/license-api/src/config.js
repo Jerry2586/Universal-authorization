@@ -1,22 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-
-export function loadLocalEnvironment(path = resolve(process.cwd(), process.env.APPGOG_ENV_PATH ?? '.env')) {
-  if (process.env.APPGOG_SKIP_DOTENV === 'true') return;
-  if (!existsSync(path)) return;
-  for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const separator = line.indexOf('=');
-    if (separator <= 0) continue;
-    const key = line.slice(0, separator).trim();
-    let value = line.slice(separator + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (process.env[key] === undefined) process.env[key] = value;
-  }
-}
+import { loadLocalEnvironment } from '../../../packages/core/src/environment.js';
+export { loadLocalEnvironment } from '../../../packages/core/src/environment.js';
 
 function integer(name, fallback) {
   const value = Number.parseInt(process.env[name] ?? String(fallback), 10);
@@ -42,8 +26,12 @@ export function loadConfig(overrides = {}) {
     surface: selectedRole === 'all-in-one' ? 'combined' : 'license-center',
     internalServiceToken: process.env.INTERNAL_SERVICE_TOKEN ?? '',
     databasePath: resolve(cwd, process.env.DATABASE_PATH ?? './var/data/appgog.sqlite'),
-    privateKeyPath: resolve(cwd, process.env.SIGNING_PRIVATE_KEY_PATH ?? './var/keys/ed25519-private.pem'),
-    publicKeyPath: resolve(cwd, process.env.SIGNING_PUBLIC_KEY_PATH ?? './var/keys/ed25519-public.pem'),
+    activationPrivateKeyPath: resolve(cwd, process.env.ACTIVATION_SIGNING_PRIVATE_KEY_PATH ?? process.env.SIGNING_PRIVATE_KEY_PATH ?? './var/keys/ed25519-private.pem'),
+    activationPublicKeyPath: resolve(cwd, process.env.ACTIVATION_SIGNING_PUBLIC_KEY_PATH ?? process.env.SIGNING_PUBLIC_KEY_PATH ?? './var/keys/ed25519-public.pem'),
+    packagePrivateKeyPath: resolve(cwd, process.env.PACKAGE_SIGNING_PRIVATE_KEY_PATH ?? './var/keys/package-ed25519-private.pem'),
+    packagePublicKeyPath: resolve(cwd, process.env.PACKAGE_SIGNING_PUBLIC_KEY_PATH ?? './var/keys/package-ed25519-public.pem'),
+    notificationPrivateKeyPath: resolve(cwd, process.env.NOTIFICATION_SIGNING_PRIVATE_KEY_PATH ?? './var/keys/notification-ed25519-private.pem'),
+    notificationPublicKeyPath: resolve(cwd, process.env.NOTIFICATION_SIGNING_PUBLIC_KEY_PATH ?? './var/keys/notification-ed25519-public.pem'),
     pepper: process.env.KEY_HASH_PEPPER ?? 'development-only-pepper-change-me-now',
     adminToken: process.env.ADMIN_TOKEN ?? 'development-admin-token-change-me',
     adminUsername: process.env.ADMIN_USERNAME ?? 'admin',
@@ -73,6 +61,8 @@ export function loadConfig(overrides = {}) {
   };
   config.role = overrides.role ?? selectedRole;
   config.surface = config.role === 'all-in-one' ? 'combined' : 'license-center';
+  config.privateKeyPath = config.activationPrivateKeyPath;
+  config.publicKeyPath = config.activationPublicKeyPath;
   if (process.env.NODE_ENV === 'production') {
     const secrets = ['KEY_HASH_PEPPER', 'ADMIN_TOKEN', 'WORKER_TOKEN', 'SESSION_SECRET', 'DELIVERY_ENCRYPTION_KEY', 'LICENSE_ENCRYPTION_KEY'];
     for (const name of secrets) {

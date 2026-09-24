@@ -84,6 +84,9 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   const portalAsset = await fetch(`${base}/assets/portal.js`);
   assert.equal(portalAsset.status, 200);
   assert.equal(portalAsset.headers.get('cache-control'), 'no-store');
+  const portalApiClient = await fetch(`${base}/assets/portal/api-client.js`);
+  assert.equal(portalApiClient.status, 200);
+  assert.equal(portalApiClient.headers.get('content-type'), 'text/javascript; charset=utf-8');
 
   const adminPage = await fetch(`${base}/admin`);
   const adminHtml = await adminPage.text();

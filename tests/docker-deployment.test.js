@@ -26,6 +26,17 @@ test('Docker initializes once, retains identities on update, and isolates role c
   for (const name of secretNames.filter(name => name !== 'INTERNAL_SERVICE_TOKEN')) assert.ok(!build.includes(first.identity.secrets[name]));
   assert.match(readFileSync(join(root, 'runtime/license/runtime.env'), 'utf8'), /PUBLIC_BASE_URL=https:\/\/new.appgog.test/);
 });
+test('Docker refuses to start a valid database whose control plane is fenced', t => {
+  const root = fixture(t);
+  initialize({ root, env });
+  const database = new DatabaseSync(join(root, 'var/data/appgog.sqlite'));
+  database.exec(`
+    CREATE TABLE control_plane_identity (id TEXT PRIMARY KEY, status TEXT NOT NULL);
+    INSERT INTO control_plane_identity (id, status) VALUES ('primary', 'fenced');
+  `);
+  database.close();
+  assert.throws(() => initialize({ root, env }), /数据库控制中心身份已被 Fenced/);
+});
 test('Docker refuses to regenerate lost signing keys or overwrite legacy secrets', t => {
   const root = fixture(t);
   initialize({ root, env });

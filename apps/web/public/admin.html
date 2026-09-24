@@ -8,7 +8,7 @@
   <title>运营管理后台 · APPGOG</title>
   <link rel="stylesheet" href="/assets/site.css">
   <link rel="stylesheet" href="/assets/admin-login.css">
-  <script src="/assets/portal.js" defer></script>
+  <script src="/assets/portal.js" type="module"></script>
 </head>
 <body data-portal="admin">
   <section id="login-view" class="admin-entry" aria-labelledby="admin-login-title">
@@ -57,6 +57,7 @@
         <button class="nav-item" type="button" data-view="members" data-title="成员权限"><span class="nav-icon">♙</span><span>成员权限</span></button>
         <button class="nav-item" type="button" data-view="audit" data-title="审计记录"><span class="nav-icon">≡</span><span>审计记录</span></button>
         <button class="nav-item" type="button" data-view="announcements" data-title="公告运营"><span class="nav-icon">◈</span><span>公告运营</span></button>
+        <button class="nav-item" type="button" data-view="migration" data-title="系统迁移"><span class="nav-icon">⇄</span><span>系统迁移</span></button>
         <button class="nav-item" type="button" data-view="cms" data-title="系统与节点"><span class="nav-icon">⚙</span><span>系统与节点</span></button>
       </nav>
       <div class="sidebar-meta">
@@ -90,8 +91,8 @@
         <section class="page-view" data-page="licenses">
           <div class="page-heading"><div><span class="overline">LICENSE MANAGEMENT</span><h2>授权管理</h2><p>签发、暂停、恢复、换绑域名和轮换客户固定 Key。</p></div></div>
           <div class="management-grid">
-            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">ISSUE LICENSE</span><h3>签发新授权</h3></div><span class="surface-number">01</span></div><form id="license-form" class="form-stack form-compact"><label class="field"><span>客户 / 订单编号</span><input name="customer_ref" required placeholder="例如 ORDER-10001"></label><label class="field"><span>授权域名（可选）</span><input name="domain" placeholder="留空后由客户首次绑定"></label><div class="form-columns"><label class="field"><span>更新到期日</span><input name="update_until" type="date"></label><label class="field"><span>每日构建上限</span><input name="max_builds_per_day" type="number" min="1" max="50" value="3"></label></div><label class="field"><span>最大激活环境数</span><input name="max_activations" type="number" min="1" max="20" value="1"></label><button class="button button-primary button-wide" type="submit"><span>创建并生成固定 Key</span><span>→</span></button></form></section>
-            <section class="surface table-surface grow-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="license-search" placeholder="搜索订单、域名或 Key 前缀"></label><select id="license-status-filter" class="filter-select"><option value="">全部状态</option><option value="active">正常</option><option value="suspended">已暂停</option><option value="revoked">已撤销</option></select></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>Key 前缀</th><th>授权域名</th><th>状态</th><th>构建</th><th>激活</th><th>操作</th></tr></thead><tbody id="license-list"><tr><td colspan="7" class="empty-cell">暂无授权</td></tr></tbody></table></div></section>
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">ISSUE LICENSE</span><h3>签发新授权</h3></div><span class="surface-number">01</span></div><form id="license-form" class="form-stack form-compact"><label class="field"><span>客户 / 订单编号</span><input name="customer_ref" required placeholder="例如 ORDER-10001"></label><label class="field"><span>授权域名（可选）</span><input name="domain" placeholder="留空后由客户首次绑定"></label><label class="field"><span>授权套餐</span><select name="plan_code" id="license-plan"><option value="paid">付费版</option><option value="free">免费版</option></select><small>免费版能力由服务端、激活凭证与产品端共同限制。</small></label><div class="form-columns"><label class="field"><span>更新到期日</span><input name="update_until" type="date"></label><label class="field"><span>每日构建上限</span><input name="max_builds_per_day" type="number" min="1" max="10" value="3"></label></div><label class="field"><span>最大激活环境数</span><input name="max_activations" type="number" min="1" max="3" value="1"></label><button class="button button-primary button-wide" type="submit"><span>创建并生成固定 Key</span><span>→</span></button></form></section>
+            <section class="surface table-surface grow-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="license-search" placeholder="搜索订单、域名或 Key 前缀"></label><select id="license-status-filter" class="filter-select"><option value="">全部状态</option><option value="active">正常</option><option value="suspended">已暂停</option><option value="revoked">已撤销</option></select></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>Key 前缀</th><th>套餐</th><th>授权域名</th><th>状态</th><th>构建</th><th>激活</th><th>操作</th></tr></thead><tbody id="license-list"><tr><td colspan="8" class="empty-cell">暂无授权</td></tr></tbody></table></div></section>
           </div>
           <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">DOMAIN MIGRATIONS</span><h3>域名换绑记录</h3><p>客户自助换绑即时完成；管理员后台主动换域名不受冷却限制，所有变更均保留审计。</p></div><span class="status-pill" id="migration-count">0 条记录</span></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>原域名</th><th>新域名</th><th>说明</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody id="migration-list"><tr><td colspan="7" class="empty-cell">暂无域名换绑记录</td></tr></tbody></table></div></section>
         </section>
@@ -158,6 +159,22 @@
               <div class="announcement-preview-status"><span><i id="announcement-preview-dot"></i><b id="announcement-preview-state">当前未启用</b></span><small id="announcement-published-time">尚未发布</small></div>
             </section>
           </div>
+        </section>
+
+        <section class="page-view" data-page="migration">
+          <div class="page-heading"><div><span class="overline">CONTROL PLANE MIGRATION</span><h2>系统迁移</h2><p>新服务器先安装同版本并开启接收；系统自动预检、加密搬迁、校验、接管和 Fenced 旧服务器。</p></div><span class="status-pill" id="migration-operation-state">等待操作</span></div>
+          <div class="stats-grid stats-grid-four">
+            <article class="stat-card"><div class="stat-icon stat-blue">ID</div><div><span>当前部署身份</span><strong id="migration-deployment-id">—</strong><small>控制中心唯一身份</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-violet">G</div><div><span>所有权代次</span><strong id="migration-generation">—</strong><small>只允许单一 Active</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>本机状态</span><strong id="migration-identity-state">—</strong><small>Active / Fenced</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-amber">⇩</div><div><span>接收状态</span><strong id="migration-receiver-state">未开启</strong><small id="migration-receiver-expiry">—</small></div></article>
+          </div>
+          <div class="management-grid cms-grid">
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">TARGET SERVER</span><h3>新服务器：开启接收</h3><p>只生成 15 分钟一次性配对码。迁移包只能写入固定收件箱，不接受任意路径、SQL 或 Shell。</p></div><span class="surface-number">01</span></div><div class="form-stack form-compact"><button id="migration-open-receiver" class="button button-primary button-wide" type="button">生成一次性配对码</button><button id="migration-close-receiver" class="button button-secondary button-wide" type="button">关闭接收会话</button><small>新服务器必须与旧服务器源码版本一致，并使用可验证的 HTTPS 地址。</small></div></section>
+            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">SOURCE SERVER</span><h3>旧服务器：发起搬迁</h3><p>自动完成环境预检、最终一致性快照、加密上传、目标恢复、健康检查和源端 Fenced。</p></div><span class="surface-number">02</span></div><form id="migration-source-form" class="form-stack form-compact"><label class="field"><span>新服务器 HTTPS 地址</span><input name="target_url" type="url" required placeholder="https://new-auth.example.com"></label><label class="field"><span>一次性配对码</span><input name="pairing_code" required autocomplete="off" maxlength="20" placeholder="MIG-XXXXXX-XXXXXX"></label><button id="migration-source-submit" class="button button-primary button-wide" type="submit">预检并开始迁移</button><small>目标接管成功前源服务器可自动回滚；成功后旧服务器禁止直接重启形成双写。</small></form></section>
+            <section class="surface form-surface online-update-card"><div class="surface-head"><div><span class="overline">MIGRATION OPERATION</span><h3>迁移进度与独立日志</h3><p id="migration-operation-message">先在新服务器开启接收，再回到旧服务器输入目标地址和配对码。</p></div></div><pre id="migration-log" class="update-log">暂无迁移日志</pre><div class="update-fallback"><strong>目标接管后</strong><code>将原授权域名 DNS 指向新服务器</code><code>旧服务器仅在确认目标已停止后执行 appgog migration-rollback &lt;迁移ID&gt;</code></div></section>
+          </div>
+          <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">MIGRATION HISTORY</span><h3>迁移记录</h3></div></div><div class="table-scroll"><table><thead><tr><th>操作编号</th><th>方向</th><th>状态</th><th>所有权代次</th><th>更新时间</th></tr></thead><tbody id="migration-history"><tr><td colspan="5" class="empty-cell">暂无迁移记录</td></tr></tbody></table></div></section>
         </section>
 
         <section class="page-view" data-page="cms">

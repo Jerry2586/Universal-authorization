@@ -3,9 +3,13 @@ import { extname, resolve, sep } from 'node:path';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { DomainError, invariant } from '../../../packages/core/src/errors.js';
-import { hashPassword, verifyPassword } from '../../../packages/core/src/password.js';
-import { hashSecret } from '../../../packages/core/src/security.js';
-import { ADMIN_ROLES } from './admin-policy.js';
+import { verifyPassword } from '../../../packages/core/src/password.js';
+import { handleActivationHttp } from './modules/activation/http-routes.js';
+import { handleAdminAccountHttp } from './modules/admin/http-routes.js';
+import { handleControlMigrationHttp } from './modules/migration/http-routes.js';
+import { handleOperationsHttp } from './modules/operations/http-routes.js';
+import { handlePackagingHttp } from './modules/packaging/http-routes.js';
+import { handleSupportHttp } from './modules/support/http-routes.js';
 
 const PUBLIC_ROOT = resolve(process.cwd(), 'apps/web/public');
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
@@ -170,6 +174,14 @@ function requireWebSession(request, sessions, actorType, requireCsrf = false, pe
   return session;
 }
 
+function requireOwnerWebSession(request, sessions, requireCsrf = false) {
+  const auth = sessions.requireAdmin(sessionToken(request, 'admin'), 'system.manage');
+  if (requireCsrf) sessions.verifyCsrf(auth.session, request.headers['x-csrf-token']);
+  invariant(auth.admin.is_owner || auth.admin.role === 'owner' || auth.admin.role === 'super_admin',
+    'MIGRATION_OWNER_REQUIRED', '只有平台所有者可以管理系统迁移', 403);
+  return auth.session;
+}
+
 function serveStatic(pathname, response) {
   const routeMap = {
     '/': 'index.html',
@@ -192,7 +204,7 @@ function serveStatic(pathname, response) {
 function publicCorsHeaders(request) {
   const pathname = new URL(request.url, 'http://localhost').pathname;
   const releaseFeed = pathname === '/api/v1/releases/latest';
-  if (!releaseFeed && pathname !== '/api/v1/install-unlocks' && pathname !== '/api/v1/activations' && pathname !== '/api/v1/activations/refresh') return {};
+  if (!releaseFeed && pathname !== '/api/v1/installation-challenges' && pathname !== '/api/v1/install-unlocks' && pathname !== '/api/v1/activations' && pathname !== '/api/v1/activations/refresh' && pathname !== '/api/v1/product-migrations') return {};
   const origin = request.headers.origin;
   if (!origin) return {};
   try {
@@ -224,15 +236,10 @@ function createRateLimiter() {
   };
 }
 
-export function createHttpHandler({ service, sessions, portal, updates, artifactStore, config, publicKey }) {
+export function createHttpHandler({ service, sessions, portal, updates, migrations, artifactStore, config, publicKey, publicKeys = null }) {
   const rateLimit = createRateLimiter();
   function nodeFromToken(request, role) {
-    const token = bearer(request);
-    if (!token) return null;
-    let node = null;
-    try { node = portal.repository.serviceNodeByCredentialHash(hashSecret(token, config.pepper)); } catch { return null; }
-    if (!node || node.role !== role || node.status !== 'active') return null;
-    return portal.repository.touchServiceNode(node.id, new Date().toISOString());
+    return portal.authenticateServiceNode(bearer(request), role);
   }
 
   function workerIdentity(request, requestedId) {
@@ -280,18 +287,22 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
       }
 
       if (method === 'GET' && url.pathname === '/health') {
-        const stats = portal.repository.dashboardStats(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+        const health = portal.healthStatus();
         return json(response, 200, {
           ok: true,
           service: 'appgog-license-api',
           version: PACKAGE_VERSION,
-          database: 'ok',
-          queue: { pending: stats.queuedJobs },
+          ...health,
         });
       }
 
       if (method === 'GET' && url.pathname === '/api/v1/public-key') {
-        return json(response, 200, { algorithm: 'Ed25519', public_key: publicKey });
+        const resolvedKeys = publicKeys ?? { activation: publicKey, package: publicKey, notification: publicKey };
+        return json(response, 200, {
+          algorithm: 'Ed25519',
+          public_key: resolvedKeys.activation,
+          public_keys: resolvedKeys,
+        });
       }
 
       if (method === 'GET' && url.pathname === '/api/v1/releases/latest') {
@@ -299,6 +310,37 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         invariant(product === 'appgog', 'PRODUCT_NOT_FOUND', '产品不存在', 404);
         return json(response, 200, service.releaseAnnouncement(product), corsHeaders);
       }
+
+      if (await handleControlMigrationHttp({
+        method, url, request, response, migrations,
+        rateLimit: (key, limit, windowMs) => rateLimit(`${key}:${clientAddress(request)}`, limit, windowMs),
+        readJson, bearer, respondJson: json,
+        requireOwnerSession: (incoming, requireCsrf) => requireOwnerWebSession(incoming, sessions, requireCsrf),
+      })) return;
+
+      const requireAdminSession = (requireCsrf, permission = null) => requireWebSession(request, sessions, 'admin', requireCsrf, permission);
+      if (await handleAdminAccountHttp({
+        method, url, request, response, portal, readJson, respondJson: json,
+        requireSession: requireAdminSession, clearAdminCookie: () => clearCookieHeader(config, 'admin'),
+      })) return;
+      if (await handleOperationsHttp({
+        method, url, request, response, portal, updates, readJson, respondJson: json,
+        requireSession: requireAdminSession,
+      })) return;
+      const scopedRateLimit = (key, limit, windowMs) => rateLimit(`${key}:${clientAddress(request)}`, limit, windowMs);
+      if (await handlePackagingHttp({
+        method, url, request, response, service, portal, config, readJson, readBuffer,
+        respondJson: json, requireToken, workerIdentity,
+        zipHeaders: () => securityHeaders('application/zip'), rateLimit: scopedRateLimit,
+      })) return;
+      if (await handleActivationHttp({
+        method, url, request, response, service, portal, readJson, respondJson: json,
+        corsHeaders, rateLimit: scopedRateLimit,
+      })) return;
+      if (await handleSupportHttp({
+        method, url, request, response, portal, sessions, readJson, readBuffer,
+        respondJson: json, requireWebSession, securityHeaders,
+      })) return;
 
       if (method === 'POST' && url.pathname === '/web/customer/login') {
         invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('customer_login_enabled'),
@@ -346,47 +388,6 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         invariant(portal.serviceEnabled('build_center_enabled'), 'BUILD_CENTER_MAINTENANCE', '客户打包中心正在维护', 503);
         const session = requireWebSession(request, sessions, 'customer');
         return json(response, 200, portal.customerOverview(session));
-      }
-
-      if (method === 'POST' && url.pathname === '/web/customer/tickets') {
-        const session = requireWebSession(request, sessions, 'customer', true);
-        const body = await readJson(request);
-        return json(response, 201, portal.createCustomerTicket(session, body));
-      }
-
-      const customerTicketMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)$/);
-      if (method === 'GET' && customerTicketMatch) {
-        const session = requireWebSession(request, sessions, 'customer');
-        return json(response, 200, portal.customerTicket(session, customerTicketMatch[1]));
-      }
-
-      const customerTicketMessageMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)\/messages$/);
-      if (method === 'POST' && customerTicketMessageMatch) {
-        const session = requireWebSession(request, sessions, 'customer', true);
-        const body = await readJson(request);
-        return json(response, 201, portal.addCustomerTicketMessage(session, customerTicketMessageMatch[1], body));
-      }
-
-      const customerTicketAttachmentMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)\/attachments$/);
-      if (method === 'POST' && customerTicketAttachmentMatch) {
-        const session = requireWebSession(request, sessions, 'customer', true);
-        portal.customerTicket(session, customerTicketAttachmentMatch[1]);
-        const buffer = await readBuffer(request, 10 * 1024 * 1024);
-        const attachment = portal.addSupportAttachment({
-          ticketId: customerTicketAttachmentMatch[1], filename: url.searchParams.get('filename'),
-          contentType: String(request.headers['content-type'] ?? '').split(';')[0].trim(), buffer,
-          actorType: 'customer', actorId: session.actor_id,
-        });
-        return json(response, 201, { id: attachment.id, original_name: attachment.original_name, size_bytes: attachment.size_bytes });
-      }
-
-      const customerTicketAttachmentDownloadMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)\/attachments\/([^/]+)$/);
-      if (method === 'GET' && customerTicketAttachmentDownloadMatch) {
-        const session = requireWebSession(request, sessions, 'customer');
-        const attachment = portal.supportAttachmentForCustomer(session, customerTicketAttachmentDownloadMatch[1], customerTicketAttachmentDownloadMatch[2]);
-        response.writeHead(200, { ...securityHeaders(attachment.content_type), 'content-length': attachment.buffer.length,
-          'content-disposition': `attachment; filename="${attachment.original_name.replace(/[^a-zA-Z0-9._-]/g, '_')}"` });
-        return response.end(attachment.buffer);
       }
 
       if (method === 'POST' && url.pathname === '/web/customer/builds') {
@@ -461,165 +462,13 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         return json(response, 200, overview);
       }
 
-      const adminTicketMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)$/);
-      if (method === 'GET' && adminTicketMatch) {
-        requireWebSession(request, sessions, 'admin', false, 'ticket.view');
-        return json(response, 200, portal.adminTicket(adminTicketMatch[1]));
-      }
-
-      const adminTicketMessageMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/messages$/);
-      if (method === 'POST' && adminTicketMessageMatch) {
-        const admin = requireWebSession(request, sessions, 'admin', true, 'ticket.manage');
-        const body = await readJson(request);
-        return json(response, 201, portal.addAdminTicketMessage({ id: adminTicketMessageMatch[1], body: body.body, visibility: body.visibility, actorId: admin.actor_id }));
-      }
-
-      const adminTicketUpdateMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/update$/);
-      if (method === 'POST' && adminTicketUpdateMatch) {
-        const admin = requireWebSession(request, sessions, 'admin', true, 'ticket.manage');
-        const body = await readJson(request);
-        return json(response, 200, portal.updateAdminTicket({
-          id: adminTicketUpdateMatch[1], status: body.status, priority: body.priority,
-          assignedAdminId: body.assigned_admin_id, actorId: admin.actor_id,
-        }));
-      }
-
-      const adminTicketAttachmentMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/attachments$/);
-      if (method === 'POST' && adminTicketAttachmentMatch) {
-        const admin = requireWebSession(request, sessions, 'admin', true, 'ticket.manage');
-        portal.adminTicket(adminTicketAttachmentMatch[1]);
-        const buffer = await readBuffer(request, 10 * 1024 * 1024);
-        const attachment = portal.addSupportAttachment({
-          ticketId: adminTicketAttachmentMatch[1], filename: url.searchParams.get('filename'),
-          contentType: String(request.headers['content-type'] ?? '').split(';')[0].trim(), buffer,
-          actorType: 'admin', actorId: admin.actor_id,
-        });
-        return json(response, 201, { id: attachment.id, original_name: attachment.original_name, size_bytes: attachment.size_bytes });
-      }
-
-      const adminTicketAttachmentDownloadMatch = url.pathname.match(/^\/web\/admin\/tickets\/([^/]+)\/attachments\/([^/]+)$/);
-      if (method === 'GET' && adminTicketAttachmentDownloadMatch) {
-        requireWebSession(request, sessions, 'admin', false, 'ticket.view');
-        const attachment = portal.supportAttachmentForAdmin(adminTicketAttachmentDownloadMatch[1], adminTicketAttachmentDownloadMatch[2]);
-        response.writeHead(200, { ...securityHeaders(attachment.content_type), 'content-length': attachment.buffer.length,
-          'content-disposition': `attachment; filename="${attachment.original_name.replace(/[^a-zA-Z0-9._-]/g, '_')}"` });
-        return response.end(attachment.buffer);
-      }
-
-      if (method === 'POST' && url.pathname === '/web/admin/cms/settings') {
-        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
-        const body = await readJson(request);
-        return json(response, 200, portal.updateCmsSettings(body, session.actor_id));
-      }
-
-      if (method === 'POST' && url.pathname === '/web/admin/announcement') {
-        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
-        const body = await readJson(request);
-        return json(response, 200, portal.updateAnnouncement(body, session.actor_id));
-      }
-
-      if (method === 'GET' && url.pathname === '/web/admin/system/update') {
-        requireWebSession(request, sessions, 'admin', false, 'system.manage');
-        return json(response, 200, updates.status());
-      }
-
-      if (method === 'POST' && url.pathname === '/web/admin/system/update') {
-        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
-        const body = await readJson(request);
-        const queued = updates.enqueue(body.action, body.version);
-        const now = new Date().toISOString();
-        portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: `system_update.${queued.action}`,
-          subjectType: 'system_update', subjectId: queued.id, metadata: { version: queued.version }, now });
-        return json(response, 202, queued);
-      }
-
-      if (method === 'POST' && url.pathname === '/web/admin/cms/nodes') {
-        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
-        const body = await readJson(request);
-        const result = portal.createServiceNode(body, session.actor_id);
-        return json(response, 201, { ...result.node, node_credential: result.credential });
-      }
-
-      const nodeStatusMatch = url.pathname.match(/^\/web\/admin\/cms\/nodes\/([^/]+)\/status$/);
-      if (method === 'POST' && nodeStatusMatch) {
-        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
-        const body = await readJson(request);
-        return json(response, 200, portal.changeServiceNodeStatus(nodeStatusMatch[1], body.status, session.actor_id));
-      }
-
-      const nodeRotateMatch = url.pathname.match(/^\/web\/admin\/cms\/nodes\/([^/]+)\/rotate$/);
-      if (method === 'POST' && nodeRotateMatch) {
-        const session = requireWebSession(request, sessions, 'admin', true, 'system.manage');
-        const result = portal.rotateServiceNodeCredential(nodeRotateMatch[1], session.actor_id);
-        return json(response, 200, { ...result.node, node_credential: result.credential });
-      }
-
-      if (method === 'POST' && url.pathname === '/web/admin/admins') {
-        const session = requireWebSession(request, sessions, 'admin', true, 'admin.manage');
-        const body = await readJson(request);
-        invariant(/^[a-zA-Z][a-zA-Z0-9_.-]{2,39}$/.test(body.username ?? ''), 'ADMIN_USERNAME_INVALID', '管理员账号必须为 3–40 位字母、数字、点、下划线或短横线');
-        invariant(/^\d{6}$/.test(body.password ?? ''), 'ADMIN_PASSWORD_INVALID', '管理员初始密码必须是 6 位数字');
-        invariant(ADMIN_ROLES.includes(body.role) && body.role !== 'owner' && body.role !== 'super_admin', 'ADMIN_ROLE_INVALID', '只能创建非最高权限的管理员');
-        invariant(!portal.repository.adminByUsername(body.username), 'ADMIN_EXISTS', '管理员账号已存在', 409);
-        const admin = portal.repository.createAdmin({ username: body.username, displayName: String(body.display_name ?? body.username).slice(0, 80),
-          passwordHash: hashPassword(body.password), role: body.role, now: new Date().toISOString() });
-        portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: 'admin.created',
-          subjectType: 'admin', subjectId: admin.id, metadata: { username: admin.username, role: admin.role }, now: new Date().toISOString() });
-        return json(response, 201, { id: admin.id, username: admin.username, display_name: admin.display_name, role: admin.role, status: admin.status });
-      }
-
-      const adminStatusMatch = url.pathname.match(/^\/web\/admin\/admins\/([^/]+)\/status$/);
-      if (method === 'POST' && adminStatusMatch) {
-        const session = requireWebSession(request, sessions, 'admin', true, 'admin.manage');
-        const body = await readJson(request);
-        invariant(['active', 'suspended'].includes(body.status), 'ADMIN_STATUS_INVALID', '管理员状态无效');
-        invariant(session.actor_id !== adminStatusMatch[1], 'ADMIN_SELF_STATUS', '不能停用自己的账号', 403);
-        const admin = portal.repository.changeAdminStatus(adminStatusMatch[1], body.status, new Date().toISOString());
-        invariant(admin, 'ADMIN_PROTECTED', '管理员不存在或受到保护', 403);
-        if (body.status === 'suspended') portal.repository.revokeAdminSessions(admin.id);
-        portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: `admin.${body.status}`,
-          subjectType: 'admin', subjectId: admin.id, now: new Date().toISOString() });
-        return json(response, 200, { id: admin.id, status: admin.status });
-      }
-
-      if (method === 'POST' && url.pathname === '/web/admin/account/password') {
-        const session = requireWebSession(request, sessions, 'admin', true);
-        const body = await readJson(request);
-        const admin = portal.repository.adminById(session.actor_id);
-        invariant(admin && verifyPassword(String(body.current_password ?? ''), admin.password_hash), 'ADMIN_PASSWORD_CURRENT_INVALID', '当前密码不正确', 403);
-        invariant(/^\d{6}$/.test(body.new_password ?? ''), 'ADMIN_PASSWORD_INVALID', '新密码必须是 6 位数字');
-        invariant(body.new_password === body.confirm_password, 'ADMIN_PASSWORD_CONFIRM_MISMATCH', '两次输入的新密码不一致');
-        invariant(body.new_password !== body.current_password, 'ADMIN_PASSWORD_UNCHANGED', '新密码不能与当前密码相同');
-        const now = new Date().toISOString();
-        portal.repository.updateAdminPassword(admin.id, hashPassword(body.new_password), now);
-        portal.repository.audit({ actorType: 'admin', actorId: admin.id, action: 'admin.password_changed',
-          subjectType: 'admin', subjectId: admin.id, now });
-        portal.repository.revokeAdminSessions(admin.id);
-        return json(response, 200, { ok: true, reauth_required: true }, { 'set-cookie': clearCookieHeader(config, 'admin') });
-      }
-
-      const adminDeleteMatch = url.pathname.match(/^\/web\/admin\/admins\/([^/]+)$/);
-      if (method === 'DELETE' && adminDeleteMatch) {
-        const session = requireWebSession(request, sessions, 'admin', true, 'admin.manage');
-        invariant(session.actor_id !== adminDeleteMatch[1], 'ADMIN_SELF_DELETE', '不能删除当前登录账号', 403);
-        const target = portal.repository.adminById(adminDeleteMatch[1]);
-        invariant(target && !target.deleted_at, 'ADMIN_NOT_FOUND', '管理员不存在', 404);
-        invariant(!target.is_owner && target.role !== 'owner', 'ADMIN_PROTECTED', '平台所有者账号不能删除', 403);
-        const now = new Date().toISOString();
-        const deleted = portal.repository.deleteAdmin(target.id, now);
-        invariant(deleted, 'ADMIN_PROTECTED', '管理员不存在或受到保护', 403);
-        portal.repository.revokeAdminSessions(target.id);
-        portal.repository.audit({ actorType: 'admin', actorId: session.actor_id, action: 'admin.deleted',
-          subjectType: 'admin', subjectId: target.id, metadata: { username: target.username, role: target.role }, now });
-        return json(response, 200, { id: target.id, deleted: true });
-      }
-
       if (method === 'POST' && url.pathname === '/web/admin/licenses') {
         const admin = requireWebSession(request, sessions, 'admin', true, 'license.issue');
         const body = await readJson(request);
         const result = service.issueLicense({
           productCode: body.product_code, customerRef: body.customer_ref,
           domain: body.domain, updateUntil: body.update_until,
+          planCode: body.plan_code,
           maxBuildsPerDay: body.max_builds_per_day,
           maxActivations: body.max_activations,
           actorId: admin.actor_id,
@@ -702,6 +551,30 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         return json(response, 200, { license_id: license.id, bound_domain: license.bound_domain, generation: license.generation });
       }
 
+      const webPlanMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/plan$/);
+      if (method === 'POST' && webPlanMatch) {
+        const admin = requireWebSession(request, sessions, 'admin', true, 'license.manage');
+        const body = await readJson(request);
+        const license = service.changeLicensePlan({ licenseId: webPlanMatch[1], planCode: body.plan_code, actorId: admin.actor_id });
+        return json(response, 200, {
+          license_id: license.id, plan_code: license.plan_code, generation: license.generation,
+        });
+      }
+
+      const webDeleteLicenseMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)$/);
+      if (method === 'DELETE' && webDeleteLicenseMatch) {
+        rateLimit(`license-delete:${clientAddress(request)}`, 5, 15 * 60 * 1000);
+        const auth = sessions.requireAdmin(sessionToken(request, 'admin'), 'license.manage');
+        sessions.verifyCsrf(auth.session, request.headers['x-csrf-token']);
+        invariant(auth.admin.is_owner || auth.admin.role === 'owner' || auth.admin.role === 'super_admin', 'LICENSE_DELETE_FORBIDDEN', '只有平台所有者可以永久删除授权', 403);
+        const body = await readJson(request);
+        invariant(verifyPassword(String(body.password ?? ''), auth.admin.password_hash), 'ADMIN_PASSWORD_CURRENT_INVALID', '当前管理员密码不正确', 403);
+        invariant(String(body.confirmation ?? '') === `DELETE ${webDeleteLicenseMatch[1]}`, 'LICENSE_DELETE_CONFIRMATION_INVALID', '永久删除确认文本不正确', 400);
+        return json(response, 200, portal.deleteLicensePermanently({
+          licenseId: webDeleteLicenseMatch[1], actorId: auth.admin.id,
+        }));
+      }
+
       const domainMigrationReviewMatch = url.pathname.match(/^\/web\/admin\/domain-migrations\/([^/]+)\/review$/);
       if (method === 'POST' && domainMigrationReviewMatch) {
         const admin = requireWebSession(request, sessions, 'admin', true, 'license.manage');
@@ -728,6 +601,7 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
         const result = service.issueLicense({
           productCode: body.product_code, customerRef: body.customer_ref,
           domain: body.domain, updateUntil: body.update_until,
+          planCode: body.plan_code,
           maxBuildsPerDay: body.max_builds_per_day,
           maxActivations: body.max_activations,
         });
@@ -747,120 +621,6 @@ export function createHttpHandler({ service, sessions, portal, updates, artifact
           license_id: result.license.id, license_key: result.licenseKey,
           generation: result.license.generation,
         });
-      }
-
-      if (method === 'POST' && url.pathname === '/api/v1/builds/authorize') {
-        rateLimit(`build-authorize:${clientAddress(request)}`, 30, 15 * 60 * 1000);
-        const body = await readJson(request);
-        const result = service.authorizeBuild({ licenseKey: body.license_key, version: body.version, domain: body.domain });
-        return json(response, 201, {
-          build_ticket: result.buildTicket, ticket_id: result.ticketId,
-          expires_at: result.expiresAt, product: result.product,
-        });
-      }
-
-      if (method === 'POST' && url.pathname === '/api/v1/worker/builds/claim') {
-        requireToken(request, config.workerToken, '构建 Worker');
-        const body = await readJson(request);
-        const result = service.claimBuild({
-          buildTicket: body.build_ticket, artifactSha256: body.artifact_sha256,
-          installKeyTtlSeconds: body.install_key_ttl_seconds,
-        });
-        return json(response, 201, {
-          build_id: result.buildId, product: result.product, version: result.version,
-          domain: result.domain, package_id: result.packageId,
-          package_secret: result.packageSecret, install_key: result.installKey,
-        });
-      }
-
-      if (method === 'POST' && url.pathname === '/api/v1/worker/jobs/lease') {
-        invariant(portal.serviceEnabled('worker_enabled'), 'WORKER_DISABLED', '构建 Worker 服务已暂停', 503);
-        const body = await readJson(request);
-        const workerId = workerIdentity(request, body.worker_id);
-        const leased = portal.leaseBuild(workerId);
-        return json(response, 200, { task: leased });
-      }
-
-      const progressMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/progress$/);
-      if (method === 'POST' && progressMatch) {
-        const body = await readJson(request);
-        const workerId = workerIdentity(request, body.worker_id);
-        return json(response, 200, portal.updateBuildProgress(workerId, progressMatch[1], body));
-      }
-
-      const sourceMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/source$/);
-      if (method === 'GET' && sourceMatch) {
-        const workerId = workerIdentity(request, url.searchParams.get('worker_id'));
-        const buffer = portal.sourceForWorker(workerId, sourceMatch[1]);
-        response.writeHead(200, { ...securityHeaders('application/zip'), 'content-length': buffer.length });
-        return response.end(buffer);
-      }
-
-      const artifactMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/artifact$/);
-      if (method === 'PUT' && artifactMatch) {
-        const workerId = workerIdentity(request, url.searchParams.get('worker_id'));
-        invariant(request.headers['content-type'] === 'application/zip', 'ARTIFACT_CONTENT_TYPE_INVALID', '构建成品必须为 ZIP', 415);
-        const buffer = await readBuffer(request, config.maxSourceUploadBytes);
-        return json(response, 201, portal.saveWorkerArtifact(workerId, artifactMatch[1], buffer));
-      }
-
-      const completeMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/complete$/);
-      if (method === 'POST' && completeMatch) {
-        const body = await readJson(request);
-        const workerId = workerIdentity(request, body.worker_id);
-        return json(response, 200, portal.completeBuild(workerId, completeMatch[1], body));
-      }
-
-      const failMatch = url.pathname.match(/^\/api\/v1\/worker\/jobs\/([^/]+)\/fail$/);
-      if (method === 'POST' && failMatch) {
-        const body = await readJson(request);
-        const workerId = workerIdentity(request, body.worker_id);
-        return json(response, 200, portal.failBuild(workerId, failMatch[1], body));
-      }
-
-      if (method === 'POST' && url.pathname === '/api/v1/install-unlocks') {
-        invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
-        rateLimit(`install-unlock:${clientAddress(request)}`, 30, 15 * 60 * 1000);
-        const body = await readJson(request);
-        const result = service.unlockInstall({
-          installKey: body.install_key, buildId: body.build_id,
-          packageProof: body.package_proof, domain: body.domain,
-          backendUrl: body.backend_url, installationId: body.installation_id,
-        });
-        return json(response, 201, {
-          install_receipt_id: result.receiptId,
-          install_receipt_secret: result.receiptSecret,
-          unlocked_at: result.unlockedAt,
-        }, corsHeaders);
-      }
-
-      if (method === 'POST' && url.pathname === '/api/v1/activations') {
-        invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
-        rateLimit(`activate:${clientAddress(request)}`, 30, 15 * 60 * 1000);
-        const body = await readJson(request);
-        const result = service.activate({
-          licenseKey: body.license_key,
-          installReceiptId: body.install_receipt_id,
-          installReceiptSecret: body.install_receipt_secret,
-          buildId: body.build_id,
-          packageProof: body.package_proof, domain: body.domain,
-          backendUrl: body.backend_url, installationId: body.installation_id,
-        });
-        return json(response, 201, {
-          activation_id: result.activationId, activation_token: result.token,
-          refresh_secret: result.refreshSecret, expires_at: result.expiresAt,
-        }, corsHeaders);
-      }
-
-      if (method === 'POST' && url.pathname === '/api/v1/activations/refresh') {
-        invariant(portal.serviceEnabled('license_service_enabled'), 'LICENSE_SERVICE_MAINTENANCE', '授权服务正在维护', 503);
-        rateLimit(`refresh:${clientAddress(request)}`, 120, 15 * 60 * 1000);
-        const body = await readJson(request);
-        const result = service.refresh({
-          activationId: body.activation_id, refreshSecret: body.refresh_secret,
-          domain: body.domain, installationId: body.installation_id, backendUrl: body.backend_url,
-        });
-        return json(response, 200, { activation_token: result.token, expires_at: result.expiresAt }, corsHeaders);
       }
 
       if (method === 'GET' && serveStatic(url.pathname, response)) return undefined;

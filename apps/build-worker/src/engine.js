@@ -123,10 +123,21 @@ function injectRuntime(html, runtimeSrc, marker) {
 }
 
 export class HardenedThemeBuildEngine extends BuildEngine {
-  constructor({ artifactStore, publicKey, publicBaseUrl }) {
+  constructor({
+    artifactStore,
+    publicKey,
+    activationPublicKey = publicKey,
+    packagePublicKey = publicKey,
+    notificationPublicKey = publicKey,
+    publicBaseUrl,
+  }) {
     super();
     this.artifactStore = artifactStore;
-    this.publicKey = publicKey;
+    this.activationPublicKey = activationPublicKey;
+    this.packagePublicKey = packagePublicKey;
+    this.notificationPublicKey = notificationPublicKey;
+    // Legacy alias kept for callers that still inspect the old property.
+    this.publicKey = activationPublicKey;
     this.publicBaseUrl = publicBaseUrl;
   }
 
@@ -158,7 +169,10 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       packageManifestToken,
       watermark,
       licenseServer: this.publicBaseUrl,
-      publicKey: this.publicKey,
+      publicKey: this.activationPublicKey,
+      activationPublicKey: this.activationPublicKey,
+      packagePublicKey: this.packagePublicKey,
+      notificationPublicKey: this.notificationPublicKey,
     });
     const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
     const root = roots[0] === '.' ? '' : `${roots[0]}/`;
@@ -170,7 +184,10 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     files.set(protectedIdentityPath, protectedIdentity);
     const runtime = createBrowserLicenseRuntime({
       injection,
-      publicKeyPem: this.publicKey,
+      publicKeyPem: this.activationPublicKey,
+      activationPublicKeyPem: this.activationPublicKey,
+      packagePublicKeyPem: this.packagePublicKey,
+      notificationPublicKeyPem: this.notificationPublicKey,
       protectedIdentity: { ref: posix.basename(protectedIdentityPath), sha256: sha256(protectedIdentity) },
     });
     files.set(runtimePath, Buffer.from(runtime, 'utf8'));
@@ -249,7 +266,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     for (const field of identityFields) {
       invariant(manifest[field] === expected[field], 'BUILD_RESULT_MISMATCH', `成品构建身份字段 ${field} 不匹配`, 409);
     }
-    const signed = verifyCompactToken(manifest.package_manifest_token, this.publicKey);
+    const signed = verifyCompactToken(manifest.package_manifest_token, this.packagePublicKey);
     invariant(signed.typ === 'package-manifest', 'PACKAGE_MANIFEST_TOKEN_INVALID', '签名包身份类型无效', 409);
     invariant(signed.iss === expected.issuer, 'PACKAGE_MANIFEST_TOKEN_INVALID', '签名包身份签发方不匹配', 409);
     for (const field of identityFields) {

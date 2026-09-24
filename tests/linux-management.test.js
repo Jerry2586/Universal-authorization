@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
-import { accessSync, constants, readFileSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const root = resolve(import.meta.dirname, '..');
+const projectVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const scripts = {
   bootstrap: join(root, 'install-docker.sh'),
   docker: join(root, 'scripts/docker.sh'),
   installer: join(root, 'scripts/install-linux.sh'),
   manager: join(root, 'scripts/appgog.sh'),
   updateHelper: join(root, 'scripts/update-helper.sh'),
+  migration: join(root, 'scripts/migration.sh'),
+  dockerInstallLibrary: join(root, 'scripts/lib/docker-install.sh'),
+  platformLibrary: join(root, 'scripts/lib/platform.sh'),
 };
 
 function text(path) {
@@ -22,8 +27,10 @@ function text(path) {
 test('Linux installer installs Docker, protects existing configuration, and creates the global manager', () => {
   const installer = text(scripts.installer);
   assert.match(installer, /docker-ce docker-ce-cli containerd\.io docker-buildx-plugin docker-compose-plugin/);
-  assert.match(installer, /minor.*-ge 24/);
-  assert.match(installer, /x86_64\|amd64\|aarch64\|arm64/);
+  assert.match(installer, /appgog_compose_version_supported 24/);
+  assert.match(text(scripts.dockerInstallLibrary), /compose_minor.*-ge "\$required_minor"/);
+  assert.match(installer, /appgog_supported_arch "\$ARCH"/);
+  assert.match(text(scripts.platformLibrary), /x86_64\|amd64\|aarch64\|arm64/);
   assert.match(installer, /docker buildx version/);
   assert.match(installer, /4194304/);
   assert.match(installer, /add-port=443\/udp/);
@@ -116,16 +123,74 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
   assert.doesNotMatch(manager, /appgog rollback|回滚最近一次更新/);
 });
 
-test('online update helper only accepts signed check, install, and repair actions', () => {
+test('online update helper accepts signed lifecycle actions and bounded migration actions', () => {
   const helper = text(scripts.updateHelper);
   assert.match(helper, /check-update\)/);
   assert.match(helper, /install-version\)/);
   assert.match(helper, /repair-current\)/);
+  assert.match(helper, /transfer-source\|import-target\)/);
+  assert.match(helper, /scripts\/migration\.sh/);
   assert.match(helper, /openssl pkeyutl -verify/);
   assert.match(helper, /install-docker\.sh/);
   assert.match(helper, /chmod 770 "\$CONTROL_DIR" "\$REQUEST_DIR"/);
+  assert.match(helper, /--healthcheck/);
+  assert.match(helper, /latest_version:\(if \$latest == "" then null else \$latest end\)/);
+  assert.doesNotMatch(helper, /latest_version:\(\$latest\|select\(length>0\)\)/);
   assert.match(helper, /exec "\$CURRENT_LINK\/scripts\/update-helper\.sh" --daemon/);
   assert.ok(!helper.includes('eval '));
+
+  const migration = text(scripts.migration);
+  assert.match(migration, /source-fenced\.json/);
+  assert.match(migration, /api\/v1\/control-migrations\/handshake/);
+  assert.match(migration, /APPGOG_BACKUP_LEAVE_STOPPED=true/);
+  assert.match(migration, /APPGOG_RESTORE_NO_START=true/);
+  assert.match(migration, /sha256sum/);
+  assert.match(migration, /split -b 64m/);
+  assert.match(migration, /bundle\/chunks\/\$chunk_number/);
+  assert.match(migration, /bundle\/complete/);
+  assert.doesNotMatch(migration, /eval |docker compose down -v/);
+
+  const installer = text(scripts.installer);
+  assert.match(installer, /update-helper-startup-/);
+  assert.match(installer, /业务系统已经健康运行，但在线更新助手尚未就绪/);
+  assert.doesNotMatch(installer, /fail '在线更新助手启动失败/);
+});
+
+test('online update helper writes valid readiness JSON before a latest version exists', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('Windows Node test environment does not guarantee POSIX sh and jq');
+    return;
+  }
+  accessSync('/bin/sh', constants.X_OK);
+  if (spawnSync('jq', ['--version'], { stdio: 'ignore' }).status !== 0) {
+    t.skip('jq is required for the real update-helper readiness regression test');
+    return;
+  }
+
+  const installRoot = mkdtempSync(join(tmpdir(), 'appgog-update-helper-'));
+  t.after(() => rmSync(installRoot, { recursive: true, force: true }));
+  mkdirSync(join(installRoot, 'current'), { recursive: true });
+  writeFileSync(join(installRoot, 'current', 'package.json'), `${JSON.stringify({ version: projectVersion })}\n`);
+
+  const child = spawn('/bin/sh', [scripts.updateHelper, '--daemon', installRoot], { stdio: 'ignore' });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGTERM'); });
+
+  const statusPath = join(installRoot, 'shared', 'update-control', 'status.json');
+  let status = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try { status = JSON.parse(readFileSync(statusPath, 'utf8')); break; } catch { /* wait for atomic write */ }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+
+  assert.ok(status, '更新助手必须在启动后生成非空、有效的 JSON 状态文件');
+  assert.equal(status.schema, 1);
+  assert.equal(status.state, 'idle');
+  assert.equal(status.current_version, projectVersion);
+  assert.equal(status.latest_version, null);
+  assert.equal(status.install_root, installRoot);
+
+  const health = spawnSync('/bin/sh', [scripts.updateHelper, '--healthcheck', installRoot], { encoding: 'utf8' });
+  assert.equal(health.status, 0, health.stderr || health.stdout);
 });
 
 test('Docker operations keep destructive volume removal out of the supported workflow', () => {

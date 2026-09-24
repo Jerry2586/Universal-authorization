@@ -380,6 +380,50 @@ test('support tickets isolate customers, hide internal notes, and allow admin as
   assert.ok(audit.some((event) => event.action === 'support_ticket.updated'));
 });
 
+test('customer and admin can close tickets, only admin can reopen, and lifecycle is audited', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, { customerRef: 'ORDER-TICKET-LIFECYCLE', domain: 'ticket-life.example.com' });
+  const customer = await app.customer(issued.license_key);
+  const created = await app.send('/web/customer/tickets', {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf,
+    body: { category: 'install', priority: 'normal', subject: '安装问题', body: '安装后需要确认工单关闭流程。' },
+  });
+  assert.equal(created.status, 201);
+
+  const closedByCustomer = await app.send(`/web/customer/tickets/${created.data.id}/close`, {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf, body: { reason: '客户确认问题已经解决' },
+  });
+  assert.equal(closedByCustomer.status, 200);
+  assert.equal(closedByCustomer.data.status, 'closed');
+  assert.equal(closedByCustomer.data.closed_by_type, 'customer');
+  assert.equal(closedByCustomer.data.close_reason, '客户确认问题已经解决');
+  assert.equal((await app.send(`/web/customer/tickets/${created.data.id}/messages`, {
+    method: 'POST', cookie: customer.cookie, csrf: customer.csrf, body: { body: '关闭后不能继续回复' },
+  })).status, 409);
+
+  const reopened = await app.send(`/web/admin/tickets/${created.data.id}/update`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { status: 'pending', close_reason: '需要补充验证信息' },
+  });
+  assert.equal(reopened.status, 200);
+  assert.equal(reopened.data.status, 'pending');
+  assert.ok(reopened.data.reopened_at);
+  assert.equal(reopened.data.close_reason, null);
+
+  const closedByAdmin = await app.send(`/web/admin/tickets/${created.data.id}/update`, {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { status: 'closed', close_reason: '管理员完成最终验证' },
+  });
+  assert.equal(closedByAdmin.status, 200);
+  assert.equal(closedByAdmin.data.closed_by_type, 'admin');
+  assert.equal(closedByAdmin.data.close_reason, '管理员完成最终验证');
+
+  const events = app.repository.listAudit(50).filter((event) => event.subject_id === created.data.id).map((event) => event.action);
+  assert.ok(events.includes('support_ticket.closed'));
+  assert.ok(events.includes('support_ticket.reopened'));
+});
+
 test('管理员停用后旧会话立即失效，所有者账号受保护', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
@@ -455,21 +499,64 @@ test('普通管理员可软删除并释放用户名，所有者和当前账号�
   assert.ok(app.repository.listAudit(20).some((event) => event.action === 'admin.deleted' && event.subject_id === created.data.id));
 });
 
-test('授权 Key 没有删除接口，撤销只改变状态并保留记录', async (t) => {
+test('只有平台所有者二次验证并输入确认文本后可永久删除 Key、关联记录和文件', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
-  const issued = await issue(app, owner, { customerRef: 'ORDER-KEEP-KEY' });
+  const issued = await issue(app, owner, { customerRef: 'ORDER-DELETE-KEY', domain: 'delete.example.com' });
+  const customer = await app.customer(issued.license_key);
+  const now = '2026-09-22T08:00:00.000Z';
+  const uploadRef = `license-uploads/${issued.license_id}/source.zip`;
+  const attachmentRef = `support/${issued.license_id}/proof.txt`;
+  app.artifactStore.put(uploadRef, Buffer.from('source'));
+  app.artifactStore.put(attachmentRef, Buffer.from('proof'));
+  const job = app.repository.createBuildJob({
+    id: 'job_delete_contract', licenseId: issued.license_id, version: '1.0.0',
+    domain: 'delete.example.com', sourceKind: 'upload', uploadRef, now,
+  });
+  const ticket = app.repository.createSupportTicket({
+    id: 'tkt_delete_contract', ticketNumber: 'TK-DELETE-CONTRACT', licenseId: issued.license_id,
+    buildJobId: job.id, category: 'packaging', subject: '删除测试', now,
+  });
+  const message = app.repository.addSupportMessage({ ticketId: ticket.id, actorType: 'customer', actorId: issued.license_id, body: '测试附件', now });
+  app.repository.createSupportAttachment({
+    ticketId: ticket.id, messageId: message.id, originalName: 'proof.txt', storageRef: attachmentRef,
+    contentType: 'text/plain', sizeBytes: 5, sha256: '0'.repeat(64), now,
+  });
+
+  const wrongPassword = await app.send(`/web/admin/licenses/${issued.license_id}`, {
+    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+    body: { password: 'wrong', confirmation: `DELETE ${issued.license_id}` },
+  });
+  assert.equal(wrongPassword.status, 403);
+  const wrongConfirmation = await app.send(`/web/admin/licenses/${issued.license_id}`, {
+    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+    body: { password: app.config.adminPassword, confirmation: 'DELETE' },
+  });
+  assert.equal(wrongConfirmation.status, 400);
+
   const deleted = await app.send(`/web/admin/licenses/${issued.license_id}`, {
     method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
+    body: { password: app.config.adminPassword, confirmation: `DELETE ${issued.license_id}` },
   });
-  assert.equal(deleted.status, 404);
-  const revoked = await app.send(`/web/admin/licenses/${issued.license_id}/status`, {
-    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { status: 'revoked' },
-  });
-  assert.equal(revoked.status, 200);
-  const row = app.repository.licenseById(issued.license_id);
-  assert.ok(row);
-  assert.equal(row.status, 'revoked');
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.data.deleted, true);
+  assert.equal(deleted.data.cleanup_pending, 0);
+  assert.equal(app.repository.licenseById(issued.license_id), undefined);
+  for (const table of ['build_jobs', 'support_tickets', 'support_messages', 'support_attachments', 'license_events']) {
+    const row = app.database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${table === 'support_messages' || table === 'support_attachments' ? "ticket_id = 'tkt_delete_contract'" : 'license_id = ?'}`);
+    const result = table === 'support_messages' || table === 'support_attachments' ? row.get() : row.get(issued.license_id);
+    assert.equal(result.count, 0, `${table} 应清空`);
+  }
+  assert.equal((await app.send('/web/customer/overview', { cookie: customer.cookie })).status, 401);
+  assert.throws(() => app.artifactStore.read(uploadRef));
+  assert.throws(() => app.artifactStore.read(attachmentRef));
+  assert.equal(app.database.prepare('SELECT COUNT(*) AS count FROM erasure_jobs').get().count, 0);
+  const tombstone = app.database.prepare('SELECT * FROM erasure_tombstones').get();
+  assert.equal(tombstone.result, 'completed');
+  const serialized = JSON.stringify(tombstone);
+  assert.ok(!serialized.includes(issued.license_id));
+  assert.ok(!serialized.includes('ORDER-DELETE-KEY'));
+  assert.ok(!serialized.includes('delete.example.com'));
 });
 
 test('只有平台所有者重新验证密码后可查看加密保存的完整 Key，审计不记录明文', async (t) => {
@@ -662,7 +749,7 @@ test('已有 SQLite 数据库自动追加新字段并保留原管理员身份', 
       assert.ok(migration?.applied_at);
       assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.0.0-domain-normalization'").get());
     } finally { upgraded.close(); }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('已经记录旧基线迁移的生产数据库仍会追加完整 Key 加密字段', () => {
@@ -687,7 +774,7 @@ test('已经记录旧基线迁移的生产数据库仍会追加完整 Key 加密
       assert.ok(upgraded.prepare('PRAGMA table_info(licenses)').all().some((column) => column.name === 'key_encrypted'));
       assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-23-v1.2.0-license-key-encryption'").get());
     } finally { upgraded.close(); }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 });
 
 test('已经记录旧基线迁移但缺少后续列的生产数据库会安全补齐并保留管理员', () => {

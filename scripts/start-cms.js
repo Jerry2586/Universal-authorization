@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { loadLocalEnvironment } from '../apps/license-api/src/config.js';
+import { loadLocalEnvironment } from '../packages/core/src/environment.js';
 
 loadLocalEnvironment();
 const role = process.env.APPGOG_ROLE ?? 'all-in-one';

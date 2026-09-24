@@ -1,14 +1,31 @@
-const mode = document.body.dataset.portal;
-const $ = (id) => document.getElementById(id);
-const state = { csrf: null, data: null, loading: false, notificationTimer: null, permissions: [], session: null, selectedCustomerTicketId: null, selectedAdminTicketId: null };
+import { $, can, mode, state } from './portal/core.js';
+import { createApiClient } from './portal/api-client.js';
+import {
+  badge, button, channelLabel, date, element, fileSize, installationRoleLabel, intentLabel, match,
+  progress, progressCell, releaseKindLabel, renderRows, roleLabel, search, td,
+} from './portal/ui.js';
+import { appendDialogActions, createDialog, showSecretDialog } from './portal/dialog.js';
+import { createTicketUi } from './portal/tickets.js';
+import { createLicenseUi } from './portal/licenses.js';
+import { createMigrationUi } from './portal/migrations.js';
+import { createAnnouncementUi } from './portal/announcements.js';
+import { createMembersUi } from './portal/members.js';
+import { createOperationsUi } from './portal/operations.js';
 
-function can(permission) { return mode === 'admin' && (state.permissions.includes('*') || state.permissions.includes(permission)); }
+const { request, uploadZip, uploadTicketAttachment } = createApiClient({ state, onSessionInvalid: () => setView(false) });
+const { renderCustomerTickets, renderAdminTickets } = createTicketUi({
+  state, request, uploadTicketAttachment, notify, refresh, can,
+});
+const { licenseRow } = createLicenseUi({ request, notify, refresh, showSecret });
+const migrationUi = createMigrationUi({ request, notify, showSecret, selectView });
+const announcementUi = createAnnouncementUi({ request, notify, refresh });
+const operationsUi = createOperationsUi({ request, notify, can });
 
 function applyAdminPermissions(session) {
   if (mode !== 'admin') return;
   state.session = session;
   state.permissions = Array.isArray(session.permissions) ? session.permissions : [];
-  const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view', announcements: 'system.manage', cms: 'system.manage' };
+  const sections = { licenses: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view', activations: 'activation.view', members: 'admin.manage', audit: 'audit.view', announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage' };
   for (const [view, permission] of Object.entries(sections)) {
     const item = document.querySelector(`.nav-item[data-view="${view}"]`);
     if (item) item.hidden = !can(permission);
@@ -25,67 +42,8 @@ function applyAdminPermissions(session) {
   if (role) role.textContent = roleLabel(session.role);
   const avatar = document.querySelector('.operator-avatar');
   if (avatar) avatar.textContent = String(session.display_name || session.username || 'A').slice(0, 1).toUpperCase();
-}
-
-async function request(path, { method = 'GET', body, raw = false } = {}) {
-  const response = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers: {
-      ...(raw ? { 'content-type': 'application/zip' } : body ? { 'content-type': 'application/json' } : {}),
-      ...(method !== 'GET' && state.csrf && !path.endsWith('/login') ? { 'x-csrf-token': state.csrf } : {}),
-    },
-    ...(body !== undefined ? { body: raw ? body : JSON.stringify(body) } : {}),
-  });
-  const result = await response.json();
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403 && result.error?.code === 'SESSION_INVALID') {
-      state.csrf = null;
-      setView(false);
-    }
-    throw new Error(result.error?.message ?? `请求失败 (${response.status})`);
-  }
-  return result;
-}
-
-function uploadZip(path, file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', path);
-    xhr.responseType = 'json';
-    xhr.withCredentials = true;
-    xhr.setRequestHeader('content-type', 'application/zip');
-    if (state.csrf) xhr.setRequestHeader('x-csrf-token', state.csrf);
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
-    });
-    xhr.addEventListener('load', () => {
-      const result = xhr.response ?? (() => { try { return JSON.parse(xhr.responseText); } catch { return {}; } })();
-      if (xhr.status >= 200 && xhr.status < 300) return resolve(result);
-      if (xhr.status === 401 || xhr.status === 403 && result.error?.code === 'SESSION_INVALID') {
-        state.csrf = null;
-        state.session = null;
-        setView(false);
-      }
-      reject(new Error(result.error?.message ?? `上传失败 (${xhr.status})`));
-    });
-    xhr.addEventListener('error', () => reject(new Error('网络连接中断，主题 ZIP 上传失败')));
-    xhr.addEventListener('abort', () => reject(new Error('主题 ZIP 上传已取消')));
-    xhr.send(file);
-  });
-}
-
-async function uploadTicketAttachment(path, file) {
-  if (!(file instanceof File) || !file.size) return null;
-  if (file.size > 10 * 1024 * 1024) throw new Error('附件不能超过 10 MB');
-  const response = await fetch(`${path}?filename=${encodeURIComponent(file.name)}`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'content-type': file.type || (file.name.toLowerCase().endsWith('.log') ? 'text/plain' : 'application/octet-stream'), 'x-csrf-token': state.csrf },
-    body: file,
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.message ?? `附件上传失败 (${response.status})`);
-  return result;
+  const migrationNav = document.querySelector('.nav-item[data-view="migration"]');
+  if (migrationNav) migrationNav.hidden = !can('system.manage') || !session.is_owner;
 }
 
 function notify(message, error = false) {
@@ -122,73 +80,6 @@ function selectView(view) {
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
-function date(value) {
-  if (!value) return '未设置';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString('zh-CN');
-}
-
-function renderAnnouncementPreview(publishedAt = null) {
-  const form = $('announcement-form');
-  if (!form) return;
-  const title = String(form.elements.title?.value ?? '').trim();
-  const body = String(form.elements.body?.value ?? '').trim();
-  const enabled = form.elements.enabled?.checked === true && Boolean(title || body);
-  if ($('announcement-title-count')) $('announcement-title-count').textContent = `${form.elements.title?.value.length ?? 0} / 200`;
-  if ($('announcement-body-count')) $('announcement-body-count').textContent = `${form.elements.body?.value.length ?? 0} / 4000`;
-  if ($('announcement-preview-title')) $('announcement-preview-title').textContent = title || '公告标题';
-  if ($('announcement-preview-body')) $('announcement-preview-body').textContent = body || '公告内容会显示在这里。';
-  if ($('announcement-preview-time')) $('announcement-preview-time').textContent = publishedAt ? `发布于 ${date(publishedAt)}` : '尚未发布';
-  if ($('announcement-preview-state')) $('announcement-preview-state').textContent = enabled ? '客户可见' : '当前未启用';
-  if ($('announcement-published-time')) $('announcement-published-time').textContent = publishedAt ? `最近发布：${date(publishedAt)}` : '尚未发布';
-  $('announcement-preview-card')?.classList.toggle('is-disabled', !enabled);
-  $('announcement-preview-dot')?.classList.toggle('is-live', enabled);
-}
-
-function element(tag, text, className) {
-  const node = document.createElement(tag);
-  if (text !== undefined && text !== null) node.textContent = String(text);
-  if (className) node.className = className;
-  return node;
-}
-
-function td(value, className) { return element('td', value == null || value === '' ? '—' : value, className); }
-function badge(status) {
-  const value = { active: '正常', inactive: '已停用', disabled: '已停用', suspended: '已暂停', revoked: '已撤销', queued: '排队中', processing: '构建中', succeeded: '已完成', failed: '失败', draft: '草稿' }[status] ?? status ?? '—';
-  const cell = element('td');
-  cell.append(element('span', value, `badge ${['active', 'succeeded'].includes(status) ? 'success' : ['revoked', 'failed'].includes(status) ? 'failed' : ['processing', 'suspended'].includes(status) ? 'processing' : ''}`));
-  return cell;
-}
-function roleLabel(role) { return { owner: '平台所有者', super_admin: '超级管理员', license_ops: '授权运营', license_operator: '授权运营', release_manager: '版本管理员', support: '客服管理员', auditor: '审计员' }[role] ?? role ?? '未分配'; }
-function nodeRoleLabel(role) { return { 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未知节点'; }
-function installationRoleLabel(role) { return { 'all-in-one': '完整系统', 'license-center': '授权中心', 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未设置'; }
-function channelLabel(channel) { return { stable: '正式版', beta: '测试版', preview: '预览版' }[channel] ?? channel ?? '正式版'; }
-function releaseKindLabel(kind) { return { feature: '功能更新', security: '安全更新', hotfix: '问题修复' }[kind] ?? kind ?? '常规更新'; }
-function intentLabel(intent) { return { update: '更新包', reinstall: '重装包' }[intent] ?? '安装包'; }
-function ticketCategoryLabel(value) { return { packaging: '打包问题', build: '构建问题', install: '安装问题', license: '授权问题', consulting: '使用咨询' }[value] ?? value ?? '其他'; }
-function ticketPriorityLabel(value) { return { low: '低', normal: '普通', high: '较急', urgent: '紧急' }[value] ?? value ?? '普通'; }
-function ticketStatusLabel(value) { return { pending: '待处理', processing: '处理中', waiting_customer: '等客户', resolved: '已解决', closed: '已关闭' }[value] ?? value ?? '未知'; }
-function renderRows(id, items, count, render, empty = '暂无记录') {
-  const target = $(id);
-  target.replaceChildren();
-  if (!items.length) {
-    const row = element('tr');
-    const emptyCell = td(empty, 'empty-cell');
-    emptyCell.colSpan = count;
-    row.append(emptyCell);
-    target.append(row);
-    return;
-  }
-  for (const item of items) target.append(render(item));
-}
-function match(value, query) { return String(value ?? '').toLocaleLowerCase().includes(query); }
-function search(id) { return ($(id)?.value ?? '').trim().toLocaleLowerCase(); }
-function fileSize(value) {
-  const size = Number(value) || 0;
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 function detectedVersionFromFilename(name) {
   if (!/appgog/i.test(name ?? '')) return null;
   return String(name).replace(/\.zip$/i, '').match(/(?:^|[-_\s])v?(\d+\.\d+\.\d+)(?:$|[-_\s])/i)?.[1] ?? null;
@@ -236,73 +127,16 @@ function setSourceFile(file) {
     $('source-file-status').textContent = '未从文件名识别版本，请手动填写；服务端会优先读取 config.json 校验';
   }
 }
-function button(text, action, className = 'mini-button') {
-  const node = element('button', text, className);
-  node.type = 'button';
-  node.addEventListener('click', action);
-  return node;
-}
-function progress(value) {
-  const wrap = element('span');
-  const track = element('span', null, 'progress-track');
-  const fill = element('span', null, 'progress-fill');
-  fill.style.width = `${Math.min(100, Math.max(0, Number(value) || 0))}%`;
-  track.append(fill);
-  wrap.append(track, element('span', `${value ?? 0}%`, 'progress-label'));
-  return wrap;
-}
-function progressCell(value) { const node = element('td'); node.append(progress(value)); return node; }
-function closeDialog(overlay) {
-  overlay.dataset.closing = '';
-  setTimeout(() => overlay.remove(), 220);
-}
-function dialog(title, description, build) {
-  const overlay = element('div', null, 'modal-overlay');
-  const card = element('div', null, 'modal-card');
-  card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-modal', 'true');
-  const heading = element('h2', title);
-  heading.id = 'dialog-heading';
-  card.setAttribute('aria-labelledby', heading.id);
-  card.append(heading, element('p', description));
-  build(card, () => closeDialog(overlay));
-  overlay.append(card);
-  overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) closeDialog(overlay); });
-  const onKey = (event) => { if (event.key === 'Escape') { closeDialog(overlay); document.removeEventListener('keydown', onKey); } };
-  document.addEventListener('keydown', onKey);
-  overlay.addEventListener('transitionend', () => { if (!overlay.isConnected) document.removeEventListener('keydown', onKey); });
-  document.body.append(overlay);
-  card.querySelector('input,button,a')?.focus();
-  return { card, close: () => closeDialog(overlay) };
-}
+const dialog = createDialog;
 function actions(card, close, label, onConfirm, danger = false) {
-  const row = element('div', null, 'dialog-actions');
-  row.append(button('取消', close, 'button button-secondary'));
-  const confirm = button(label, async () => {
-    confirm.disabled = true;
-    try { await onConfirm(); close(); } catch (error) { notify(error.message, true); }
-    finally { confirm.disabled = false; }
-  }, `button ${danger ? 'button-danger' : 'button-primary'}`);
-  row.append(confirm);
-  card.append(row);
+  appendDialogActions({ card, close, label, onConfirm, danger, notify });
 }
 function showSecret(title, secret, description, downloadHref) {
-  dialog(title, description, (card, close) => {
-    card.append(element('code', secret, 'key-code'));
-    const row = element('div', null, 'dialog-actions');
-    row.append(button('复制 Key', async () => {
-      try { await navigator.clipboard.writeText(secret); notify('已复制到剪贴板'); }
-      catch { notify('复制失败，请手动选择并复制', true); }
-    }, 'button button-secondary'));
-    if (downloadHref) {
-      const link = element('a', '下载主题 ZIP →', 'button button-primary');
-      link.href = downloadHref;
-      row.append(link);
-    }
-    row.append(button('关闭', close, 'button button-secondary'));
-    card.append(row);
-  });
+  showSecretDialog({ title, secret, description, downloadHref, notify });
 }
+const membersUi = createMembersUi({
+  request, notify, refresh, showSecret, openDialog: dialog, appendActions: actions,
+});
 
 function customerRow(job) {
   const row = element('tr');
@@ -348,97 +182,6 @@ function customerVersionCard(version) {
   footer.append(element('small', date(version.created_at || version.published_at)), action);
   item.append(top, notes, meta, footer);
   return item;
-}
-
-function ticketListItem(ticket, selected, onSelect) {
-  const item = element('button', null, `ticket-list-item${selected ? ' selected' : ''}`);
-  item.type = 'button';
-  const top = element('span', null, 'ticket-list-top');
-  top.append(element('b', ticket.ticket_number), element('span', ticketStatusLabel(ticket.status), `ticket-status status-${ticket.status}`));
-  const title = element('strong', ticket.subject);
-  const meta = element('small', `${ticketCategoryLabel(ticket.category)} · ${ticketPriorityLabel(ticket.priority)} · ${date(ticket.updated_at)}`);
-  item.append(top, title, meta);
-  item.addEventListener('click', onSelect);
-  return item;
-}
-
-function ticketConversation(ticket, actor) {
-  const wrap = element('div', null, 'ticket-conversation');
-  for (const message of ticket.messages || []) {
-    const item = element('article', null, `ticket-message ${message.actor_type === actor ? 'mine' : ''} ${message.visibility === 'internal' ? 'internal' : ''}`);
-    const head = element('div', null, 'ticket-message-head');
-    head.append(element('strong', message.visibility === 'internal' ? `${message.actor_name} · 内部备注` : message.actor_name), element('time', date(message.created_at)));
-    item.append(head, element('p', message.body));
-    wrap.append(item);
-  }
-  return wrap;
-}
-
-function ticketAttachments(ticket, actor) {
-  const wrap = element('div', null, 'ticket-attachments');
-  for (const attachment of ticket.attachments || []) {
-    const link = element('a', `${attachment.original_name} · ${formatSize(attachment.size_bytes)}`, 'ticket-attachment');
-    link.href = `/web/${actor}/tickets/${encodeURIComponent(ticket.id)}/attachments/${encodeURIComponent(attachment.id)}`;
-    link.target = '_blank'; link.rel = 'noopener';
-    wrap.append(link);
-  }
-  return wrap;
-}
-
-function renderCustomerTicketDetail(ticket) {
-  const target = $('customer-ticket-detail');
-  target.replaceChildren();
-  if (!ticket) {
-    const empty = element('div', null, 'empty-state');
-    empty.append(element('span', '↗'), element('strong', '选择一张工单'), element('p', '查看客服回复并继续补充信息。'));
-    target.append(empty); return;
-  }
-  const head = element('div', null, 'ticket-detail-head');
-  const identity = element('div');
-  identity.append(element('span', ticket.ticket_number, 'overline'), element('h3', ticket.subject), element('p', `${ticketCategoryLabel(ticket.category)} · ${ticketPriorityLabel(ticket.priority)}${ticket.build_version ? ` · 构建 ${ticket.build_version}` : ''}`));
-  head.append(identity, element('span', ticketStatusLabel(ticket.status), `ticket-status status-${ticket.status}`));
-  target.append(head, ticketConversation(ticket, 'customer'), ticketAttachments(ticket, 'customer'));
-  if (ticket.status !== 'closed') {
-    const form = element('form', null, 'ticket-reply-form');
-    const textarea = element('textarea'); textarea.required = true; textarea.maxLength = 5000; textarea.placeholder = '补充信息或回复客服…';
-    const controls = element('div', null, 'ticket-reply-actions');
-    const file = element('input'); file.type = 'file'; file.accept = '.png,.jpg,.jpeg,.webp,.txt,.log,.pdf';
-    const submit = element('button', '发送回复', 'button button-primary'); submit.type = 'submit';
-    controls.append(file, submit); form.append(textarea, controls);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault(); submit.disabled = true;
-      try {
-        await request(`/web/customer/tickets/${encodeURIComponent(ticket.id)}/messages`, { method: 'POST', body: { body: textarea.value } });
-        await uploadTicketAttachment(`/web/customer/tickets/${encodeURIComponent(ticket.id)}/attachments`, file.files?.[0]);
-        notify('工单回复已发送'); await refresh();
-      } catch (error) { notify(error.message, true); }
-      finally { submit.disabled = false; }
-    });
-    target.append(form);
-  }
-}
-
-function renderCustomerTickets(tickets, builds) {
-  if (!$('customer-ticket-list')) return;
-  $('customer-ticket-count').textContent = `${tickets.length} 张工单`;
-  const select = $('ticket-build-select');
-  if (select) {
-    const current = select.value;
-    select.replaceChildren(new Option('不关联构建', ''));
-    for (const build of builds) select.append(new Option(`${build.version} · ${ticketStatusLabel(build.status)} · ${String(build.id).slice(-8)}`, build.id));
-    if ([...select.options].some((option) => option.value === current)) select.value = current;
-  }
-  if (!tickets.some((ticket) => ticket.id === state.selectedCustomerTicketId)) state.selectedCustomerTicketId = tickets[0]?.id ?? null;
-  const list = $('customer-ticket-list'); list.replaceChildren();
-  if (!tickets.length) {
-    const empty = element('div', null, 'empty-state compact-empty');
-    empty.append(element('span', '✦'), element('strong', '暂无工单'), element('p', '遇到问题时从左侧提交。')); list.append(empty);
-  } else {
-    for (const ticket of tickets) list.append(ticketListItem(ticket, ticket.id === state.selectedCustomerTicketId, () => {
-      state.selectedCustomerTicketId = ticket.id; renderCustomerTickets(tickets, builds);
-    }));
-  }
-  renderCustomerTicketDetail(tickets.find((ticket) => ticket.id === state.selectedCustomerTicketId));
 }
 
 function renderCustomer(data) {
@@ -515,54 +258,6 @@ async function showBuild(id) {
   } catch (error) { notify(error.message, true); }
 }
 
-function licenseRow(license) {
-  const row = element('tr');
-  const keyCell = element('td');
-  const keyWrap = element('div', null, 'key-preview');
-  keyWrap.append(element('code', `${license.key_prefix}••••`));
-  if (can('license.manage') && state.session?.is_owner) {
-    const reveal = button('查看', () => revealLicenseKey(license), 'key-reveal-button');
-    reveal.title = license.key_recoverable ? '重新验证密码后查看完整 Key' : '历史 Key 需要先轮换才能查看';
-    keyWrap.append(reveal);
-  }
-  keyCell.append(keyWrap);
-  row.append(td(license.customer_ref), keyCell, td(license.bound_domain), badge(license.status), td(license.build_count), td(license.active_activation_count));
-  const action = element('td', null, 'actions');
-  if (can('license.manage')) action.append(button('换域名', () => changeDomain(license)), button('轮换 Key', () => confirmAction(license, 'rotate')));
-  if (can('license.manage') && license.status !== 'revoked') {
-    action.append(button(license.status === 'active' ? '暂停' : '恢复', () => confirmAction(license, license.status === 'active' ? 'suspended' : 'active')));
-    action.append(button('撤销', () => confirmAction(license, 'revoked')));
-  }
-  row.append(action);
-  return row;
-}
-function revealLicenseKey(license) {
-  dialog('查看完整固定 Key', license.key_recoverable ? '请输入当前管理员密码。完整 Key 显示后不会写入日志。' : '该历史 Key 只保存了不可逆哈希，必须先轮换 Key 才能查看。', (card, close) => {
-    if (!license.key_recoverable) {
-      const row = element('div', null, 'dialog-actions');
-      row.append(button('关闭', close, 'button button-secondary'));
-      card.append(row);
-      return;
-    }
-    const form = element('form', null, 'form-stack');
-    const label = element('label', null, 'field');
-    label.append(element('span', '当前管理员密码'));
-    const input = element('input'); input.type = 'password'; input.autocomplete = 'current-password'; input.required = true;
-    label.append(input); form.append(label);
-    const row = element('div', null, 'dialog-actions');
-    row.append(button('取消', close, 'button button-secondary'));
-    const submit = element('button', '验证并查看', 'button button-primary'); submit.type = 'submit'; row.append(submit); form.append(row);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault(); submit.disabled = true;
-      try {
-        const result = await request(`/web/admin/licenses/${encodeURIComponent(license.id)}/key`, { method: 'POST', body: { password: input.value } });
-        close(); setTimeout(() => showSecret('完整固定授权 Key', result.license_key, '查看操作已写入审计记录，审计中不会保存 Key 明文。'), 230);
-      } catch (error) { notify(error.message, true); }
-      finally { submit.disabled = false; }
-    });
-    card.append(form);
-  });
-}
 function migrationRow(requestItem) {
   const row = element('tr');
   row.append(td(requestItem.customer_ref), td(requestItem.previous_domain), td(requestItem.requested_domain), td(requestItem.reason), badge(requestItem.status), td(date(requestItem.requested_at)));
@@ -597,164 +292,6 @@ function buildRow(job) {
   row.append(td(job.build_id || job.id, 'key-inline'), td(job.version), td(job.domain), badge(job.status), progressCell(job.progress), td(job.message), td(date(job.created_at)));
   return row;
 }
-function adminRow(admin) {
-  const row = element('tr');
-  const member = element('td');
-  const identity = element('div', null, 'member-identity');
-  const avatar = element('span', String(admin.display_name || admin.username || 'A').slice(0, 1).toUpperCase(), 'member-avatar');
-  const name = element('div');
-  name.append(element('strong', admin.display_name || admin.username || '未命名管理员'));
-  if (admin.is_owner || admin.role === 'owner') name.append(element('small', '平台所有者'));
-  identity.append(avatar, name);
-  member.append(identity);
-  const status = admin.status || (admin.active === false ? 'suspended' : 'active');
-  row.append(member, td(admin.username), td(roleLabel(admin.role)), badge(status), td(date(admin.last_login_at)));
-  const action = element('td', null, 'actions');
-  if (admin.is_owner || admin.role === 'owner') {
-    action.append(element('span', '受保护账号', 'table-muted'));
-  } else if (admin.id === state.session?.id) {
-    action.append(element('span', '当前账号', 'table-muted'));
-  } else {
-    const next = status === 'active' ? 'suspended' : 'active';
-    action.append(button(next === 'active' ? '恢复账号' : '停用账号', async (event) => {
-      const trigger = event.currentTarget;
-      trigger.disabled = true;
-      try {
-        await request(`/web/admin/admins/${encodeURIComponent(admin.id)}/status`, { method: 'POST', body: { status: next } });
-        notify(next === 'active' ? '管理员账号已恢复' : '管理员账号已停用');
-        await refresh();
-      } catch (error) { notify(error.message, true); }
-      finally { if (trigger.isConnected) trigger.disabled = false; }
-    }));
-    action.append(button('删除账号', () => {
-      dialog('删除管理员账号', `将删除“${admin.display_name || admin.username}”的登录权限，并立即撤销其全部会话。历史审计记录会继续保留。`, (card, close) => {
-        actions(card, close, '确认删除', async () => {
-          await request(`/web/admin/admins/${encodeURIComponent(admin.id)}`, { method: 'DELETE' });
-          notify('管理员账号已删除');
-          await refresh();
-        }, true);
-      });
-    }, 'mini-button mini-button-danger'));
-  }
-  row.append(action);
-  return row;
-}
-function nodeRow(node) {
-  const row = element('tr');
-  const identity = element('td');
-  const name = element('div', null, 'node-identity');
-  name.append(element('strong', node.name), element('small', node.id));
-  identity.append(name);
-  row.append(identity, td(nodeRoleLabel(node.role)), td(node.public_url), td(`${node.credential_prefix}••••`, 'key-inline'), badge(node.status), td(date(node.last_seen_at)));
-  const action = element('td', null, 'actions');
-  const next = node.status === 'active' ? 'disabled' : 'active';
-  action.append(button(next === 'active' ? '启用' : '停用', async (event) => {
-    const trigger = event.currentTarget;
-    trigger.disabled = true;
-    try {
-      await request(`/web/admin/cms/nodes/${encodeURIComponent(node.id)}/status`, { method: 'POST', body: { status: next } });
-      notify(next === 'active' ? '节点已启用' : '节点已停用');
-      await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { if (trigger.isConnected) trigger.disabled = false; }
-  }));
-  action.append(button('轮换凭证', async (event) => {
-    const trigger = event.currentTarget;
-    trigger.disabled = true;
-    try {
-      const result = await request(`/web/admin/cms/nodes/${encodeURIComponent(node.id)}/rotate`, { method: 'POST', body: {} });
-      showSecret('新的节点凭证', result.node_credential, `${node.name} 的旧凭证已立即失效。请马上更新该节点环境变量并重启服务。`);
-      await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { if (trigger.isConnected) trigger.disabled = false; }
-  }));
-  row.append(action);
-  return row;
-}
-
-function renderAdminTicketDetail(ticket, admins) {
-  const target = $('admin-ticket-detail');
-  if (!target) return;
-  target.replaceChildren();
-  if (!ticket) {
-    const empty = element('div', null, 'empty-state');
-    empty.append(element('span', '↗'), element('strong', '选择一张工单'), element('p', '查看客户、授权、构建上下文并进行回复。'));
-    target.append(empty); return;
-  }
-  const head = element('div', null, 'ticket-detail-head');
-  const identity = element('div');
-  identity.append(element('span', ticket.ticket_number, 'overline'), element('h3', ticket.subject), element('p', `${ticket.customer_ref || '客户'} · Key ${ticket.key_prefix || '—'}•••• · ${ticket.bound_domain || '未绑定域名'}`));
-  head.append(identity, element('span', ticketStatusLabel(ticket.status), `ticket-status status-${ticket.status}`));
-  const context = element('div', null, 'ticket-context-grid');
-  const fields = [
-    ['类型', ticketCategoryLabel(ticket.category)], ['关联构建', ticket.build_version || '未关联'],
-    ['构建状态', ticket.build_status || '—'], ['更新时间', date(ticket.updated_at)],
-  ];
-  for (const [label, value] of fields) { const item = element('div'); item.append(element('span', label), element('strong', value)); context.append(item); }
-  const controls = element('div', null, 'ticket-admin-controls');
-  const status = element('select');
-  for (const [value, label] of Object.entries({ pending: '待处理', processing: '处理中', waiting_customer: '等客户', resolved: '已解决', closed: '已关闭' })) status.append(new Option(label, value));
-  status.value = ticket.status;
-  const priority = element('select');
-  for (const [value, label] of Object.entries({ low: '低', normal: '普通', high: '较急', urgent: '紧急' })) priority.append(new Option(label, value));
-  priority.value = ticket.priority;
-  const assignee = element('select'); assignee.append(new Option('未指派', ''));
-  for (const admin of admins.filter((item) => item.status === 'active')) assignee.append(new Option(admin.display_name || admin.username, admin.id));
-  assignee.value = ticket.assigned_admin_id || '';
-  const save = element('button', '保存处理状态', 'button button-secondary'); save.type = 'button';
-  save.disabled = !can('ticket.manage');
-  save.addEventListener('click', async () => {
-    save.disabled = true;
-    try {
-      await request(`/web/admin/tickets/${encodeURIComponent(ticket.id)}/update`, { method: 'POST', body: { status: status.value, priority: priority.value, assigned_admin_id: assignee.value || null } });
-      notify('工单状态已更新'); await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { save.disabled = !can('ticket.manage'); }
-  });
-  controls.append(status, priority, assignee, save);
-  target.append(head, context, controls, ticketConversation(ticket, 'admin'), ticketAttachments(ticket, 'admin'));
-  if (ticket.status !== 'closed' && can('ticket.manage')) {
-    const form = element('form', null, 'ticket-reply-form');
-    const textarea = element('textarea'); textarea.required = true; textarea.maxLength = 5000; textarea.placeholder = '回复客户或记录内部处理备注…';
-    const actions = element('div', null, 'ticket-reply-actions');
-    const visibility = element('select'); visibility.append(new Option('客户可见回复', 'public'), new Option('内部备注', 'internal'));
-    const file = element('input'); file.type = 'file'; file.accept = '.png,.jpg,.jpeg,.webp,.txt,.log,.pdf';
-    const submit = element('button', '发送', 'button button-primary'); submit.type = 'submit';
-    actions.append(visibility, file, submit); form.append(textarea, actions);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault(); submit.disabled = true;
-      try {
-        await request(`/web/admin/tickets/${encodeURIComponent(ticket.id)}/messages`, { method: 'POST', body: { body: textarea.value, visibility: visibility.value } });
-        await uploadTicketAttachment(`/web/admin/tickets/${encodeURIComponent(ticket.id)}/attachments`, file.files?.[0]);
-        notify(visibility.value === 'internal' ? '内部备注已保存' : '回复已发送给客户'); await refresh();
-      } catch (error) { notify(error.message, true); }
-      finally { submit.disabled = false; }
-    });
-    target.append(form);
-  }
-}
-
-function renderAdminTickets(tickets, admins) {
-  if (!$('admin-ticket-list')) return;
-  const query = search('admin-ticket-search');
-  const status = $('admin-ticket-status-filter')?.value || '';
-  const filtered = tickets.filter((ticket) => (!status || ticket.status === status)
-    && [ticket.ticket_number, ticket.subject, ticket.customer_ref, ticket.bound_domain, ticket.key_prefix].some((value) => match(value, query)));
-  const pending = tickets.filter((ticket) => ['pending', 'processing', 'waiting_customer'].includes(ticket.status)).length;
-  $('admin-ticket-count').textContent = `${pending} 个待处理`;
-  if (!tickets.some((ticket) => ticket.id === state.selectedAdminTicketId)) state.selectedAdminTicketId = tickets[0]?.id ?? null;
-  const list = $('admin-ticket-list'); list.replaceChildren();
-  if (!filtered.length) {
-    const empty = element('div', null, 'empty-state compact-empty');
-    empty.append(element('span', '✦'), element('strong', '没有匹配的工单'), element('p', '调整搜索或状态筛选。')); list.append(empty);
-  } else {
-    for (const ticket of filtered) list.append(ticketListItem(ticket, ticket.id === state.selectedAdminTicketId, () => {
-      state.selectedAdminTicketId = ticket.id; renderAdminTickets(tickets, admins);
-    }));
-  }
-  renderAdminTicketDetail(tickets.find((ticket) => ticket.id === state.selectedAdminTicketId), admins);
-}
-
 function renderAdmin(data) {
   const stats = data.stats ?? {};
   const licenses = Array.isArray(data.licenses) ? data.licenses : [];
@@ -778,7 +315,7 @@ function renderAdmin(data) {
   renderRows('overview-license-list', licenses.slice(0, 5), 5, (license) => { const row = element('tr'); row.append(td(license.customer_ref), td(license.bound_domain), badge(license.status), td(license.build_count), td(date(license.created_at))); return row; });
   const licenseQuery = search('license-search');
   const licenseStatus = $('license-status-filter').value;
-  renderRows('license-list', licenses.filter((license) => (!licenseStatus || license.status === licenseStatus) && [license.customer_ref, license.bound_domain, license.key_prefix].some((value) => match(value, licenseQuery))), 7, licenseRow, '没有匹配的授权');
+  renderRows('license-list', licenses.filter((license) => (!licenseStatus || license.status === licenseStatus) && [license.customer_ref, license.bound_domain, license.key_prefix, license.plan_name, license.plan_code].some((value) => match(value, licenseQuery))), 8, licenseRow, '没有匹配的授权');
   if ($('migration-count')) $('migration-count').textContent = `${migrations.length} 条记录`;
   if ($('migration-list')) renderRows('migration-list', migrations, 7, migrationRow, '暂无域名迁移申请');
   const list = $('version-list');
@@ -818,8 +355,7 @@ function renderAdmin(data) {
   renderAdminTickets(tickets, admins);
   const activationQuery = search('activation-search');
   renderRows('activation-list', activations.filter((item) => [item.customer_ref, item.domain, item.backend_origin, item.version].some((value) => match(value, activationQuery))), 7, (item) => { const row = element('tr'); row.append(td(item.customer_ref), td(item.version), td(item.domain), td(item.backend_origin), badge(item.status), td(date(item.last_seen_at)), td(date(item.created_at))); return row; }, '没有匹配的激活站点');
-  $('admin-count').textContent = `${admins.length} 位成员`;
-  renderRows('admin-list', admins, 6, adminRow, '暂无管理员数据；后端提供 admins 字段后会自动显示');
+  membersUi.render(admins, nodes);
   const auditQuery = search('audit-search');
   renderRows('audit-list', audit.filter((item) => [item.action, item.actor_type, item.actor_id, item.subject_type, item.subject_id].some((value) => match(value, auditQuery))), 6, (item) => { const row = element('tr'); row.append(td(item.action), td(item.actor_type), td(item.actor_id), td(item.subject_type), td(item.subject_id), td(date(item.created_at))); return row; }, '没有匹配的审计记录');
   const cmsForm = $('cms-settings-form');
@@ -828,17 +364,7 @@ function renderAdmin(data) {
       if (cmsForm.elements[key]) cmsForm.elements[key].value = cms[key] ?? '';
     }
   }
-  const announcementForm = $('announcement-form');
-  if (announcementForm) {
-    announcementForm.elements.title.value = cms.announcement_title ?? '';
-    announcementForm.elements.body.value = cms.announcement_body ?? '';
-    announcementForm.elements.enabled.checked = cms.announcement_enabled === true;
-    renderAnnouncementPreview(cms.announcement_published_at);
-  }
-  if ($('announcement-state')) {
-    $('announcement-state').textContent = cms.announcement_enabled ? '已启用' : '未启用';
-    $('announcement-state').classList.toggle('status-success', cms.announcement_enabled === true);
-  }
+  announcementUi.render(cms);
   if ($('cms-role-badge')) $('cms-role-badge').textContent = installationRoleLabel(cms.installation_role);
   if ($('cms-license-url')) $('cms-license-url').textContent = cms.license_public_url ?? '—';
   if ($('cms-build-url')) $('cms-build-url').textContent = cms.build_public_url ?? '—';
@@ -848,9 +374,7 @@ function renderAdmin(data) {
     cms.build_center_enabled !== false ? '打包中心在线' : '打包中心停用',
     cms.worker_enabled !== false ? 'Worker 在线' : 'Worker 停用',
   ].join(' · ');
-  if ($('node-count')) $('node-count').textContent = `${nodes.length} 个节点`;
-  if ($('node-list')) renderRows('node-list', nodes, 7, nodeRow, '尚未创建独立节点');
-  refreshUpdateStatus();
+  operationsUi.refresh();
 }
 
 function withdrawVersion(version) {
@@ -861,70 +385,6 @@ function withdrawVersion(version) {
       await request(`/web/admin/versions/${encodeURIComponent(version.id)}/withdraw`, { method: 'POST', body: { reason: input.value.trim() } });
       notify('版本已撤回'); await refresh();
     }, true);
-  });
-}
-
-async function refreshUpdateStatus() {
-  if (mode !== 'admin' || !$('update-state') || !can('system.manage')) return;
-  try {
-    const update = await request('/web/admin/system/update');
-    $('update-state').textContent = update.available ? ({ idle: '可用', queued: '已排队', running: '更新中', succeeded: '已完成', failed: '失败' }[update.state] || update.state) : '助手离线';
-    $('update-state').classList.toggle('status-success', update.available && ['idle', 'succeeded'].includes(update.state));
-    $('update-current-version').textContent = update.current_version ? `v${update.current_version}` : '—';
-    $('update-latest-version').textContent = update.latest_version ? `v${update.latest_version}` : '尚未检查';
-    $('update-message').textContent = update.message || '等待操作';
-    $('update-log').textContent = Array.isArray(update.log) ? update.log.slice(-12).join('\n') : update.last_log || '暂无更新日志';
-    if ($('update-fallback')) $('update-fallback').hidden = update.available;
-    for (const id of ['check-update', 'install-update', 'repair-current']) $(id).disabled = !update.available || ['queued', 'running'].includes(update.state);
-  } catch (error) {
-    $('update-state').textContent = '读取失败'; $('update-message').textContent = error.message;
-    if ($('update-fallback')) $('update-fallback').hidden = false;
-  }
-}
-
-function changeDomain(license) {
-  dialog('更换授权域名', `订单 ${license.customer_ref}。更换后，旧域名激活在下一次刷新时失效。`, (card, close) => {
-    const form = element('form', null, 'form-stack');
-    const label = element('label', null, 'field');
-    label.append(element('span', '新的授权域名'));
-    const input = element('input');
-    input.required = true;
-    input.value = license.bound_domain ?? '';
-    input.placeholder = 'new.example.com';
-    label.append(input);
-    form.append(label);
-    const row = element('div', null, 'dialog-actions');
-    row.append(button('取消', close, 'button button-secondary'));
-    const confirm = element('button', '确认换绑', 'button button-primary');
-    confirm.type = 'submit';
-    row.append(confirm);
-    form.append(row);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      confirm.disabled = true;
-      try {
-        await request(`/web/admin/licenses/${license.id}/domain`, { method: 'POST', body: { domain: input.value.trim() } });
-        close(); notify('授权域名已更新'); await refresh();
-      } catch (error) { notify(error.message, true); }
-      finally { confirm.disabled = false; }
-    });
-    card.append(form);
-  });
-}
-function confirmAction(license, action) {
-  const names = { rotate: '轮换固定 Key', active: '恢复授权', suspended: '暂停授权', revoked: '永久撤销授权' };
-  const details = { rotate: '旧固定 Key 将立即不能登录和打包；新 Key 只在操作完成时显示。', active: '恢复后客户可以再次登录和构建。', suspended: '客户将无法登录或构建；已有激活下次刷新时不能续期。', revoked: '撤销不可恢复，客户和所有既有激活将失效。' };
-  dialog(names[action], `订单 ${license.customer_ref}：${details[action]}`, (card, close) => {
-    actions(card, close, `确认${names[action]}`, async () => {
-      if (action === 'rotate') {
-        const result = await request(`/web/admin/licenses/${license.id}/rotate-key`, { method: 'POST' });
-        setTimeout(() => showSecret('新的固定授权 Key', result.license_key, '请安全交给客户。关闭后不再显示明文 Key。'), 230);
-      } else {
-        await request(`/web/admin/licenses/${license.id}/status`, { method: 'POST', body: { status: action } });
-        notify(`${names[action]}成功`);
-      }
-      await refresh();
-    }, action === 'revoked');
   });
 }
 
@@ -1104,6 +564,10 @@ if (mode === 'customer') {
     if (!document.hidden && !$('dashboard-view').hidden && state.data?.builds?.some((job) => ['queued', 'processing'].includes(job.status))) refresh();
   }, 5000);
 } else {
+  migrationUi.bind();
+  membersUi.bind();
+  announcementUi.bind();
+  operationsUi.bind();
   $('open-account-center')?.addEventListener('click', openAccountCenter);
   $('refresh-admin').addEventListener('click', refresh);
   const uploadZone = $('source-upload');
@@ -1140,6 +604,7 @@ if (mode === 'customer') {
       const until = fields.get('update_until');
       const result = await request('/web/admin/licenses', { method: 'POST', body: {
         product_code: 'appgog', customer_ref: fields.get('customer_ref'), domain: fields.get('domain'),
+        plan_code: fields.get('plan_code'),
         update_until: until ? new Date(`${until}T23:59:59Z`).toISOString() : null,
         max_builds_per_day: Number(fields.get('max_builds_per_day')),
         max_activations: Number(fields.get('max_activations')),
@@ -1149,6 +614,19 @@ if (mode === 'customer') {
       await refresh();
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
+  });
+  $('license-plan')?.addEventListener('change', (event) => {
+    const form = event.currentTarget.form;
+    const buildLimit = form.elements.max_builds_per_day;
+    const activationLimit = form.elements.max_activations;
+    if (event.currentTarget.value === 'free') {
+      buildLimit.value = '1'; buildLimit.max = '1';
+      activationLimit.value = '1'; activationLimit.max = '1';
+    } else {
+      buildLimit.max = '10'; activationLimit.max = '3';
+      if (Number(buildLimit.value) < 1) buildLimit.value = '3';
+      if (Number(activationLimit.value) < 1) activationLimit.value = '1';
+    }
   });
   $('version-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1186,25 +664,6 @@ if (mode === 'customer') {
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
   });
-  $('admin-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const submit = form.querySelector('[type="submit"]');
-    submit.disabled = true;
-    try {
-      const fields = new FormData(form);
-      await request('/web/admin/admins', { method: 'POST', body: {
-        username: String(fields.get('username') || '').trim(),
-        display_name: String(fields.get('display_name') || '').trim(),
-        password: String(fields.get('password') || ''),
-        role: String(fields.get('role') || ''),
-      } });
-      form.reset();
-      notify('管理员账号已创建');
-      await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { submit.disabled = false; }
-  });
   $('cms-settings-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -1221,55 +680,6 @@ if (mode === 'customer') {
     } catch (error) { notify(error.message, true); }
     finally { submit.disabled = false; }
   });
-  $('announcement-form')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const submit = form.querySelector('[type="submit"]'); submit.disabled = true;
-    try {
-      const fields = new FormData(form);
-      await request('/web/admin/announcement', { method: 'POST', body: {
-        title: String(fields.get('title') || '').trim(),
-        body: String(fields.get('body') || '').trim(),
-        enabled: fields.has('enabled'),
-      } });
-      notify('客户公告已保存'); await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { submit.disabled = false; }
-  });
-  $('announcement-form')?.addEventListener('input', () => renderAnnouncementPreview(state.data?.cms?.announcement_published_at));
-  $('announcement-form')?.addEventListener('change', () => renderAnnouncementPreview(state.data?.cms?.announcement_published_at));
-  async function triggerUpdate(action) {
-    const labels = { 'check-update': '检查更新', 'install-version': '安全更新最新版本', 'repair-current': '修复当前版本' };
-    try {
-      await request('/web/admin/system/update', { method: 'POST', body: { action } });
-      notify(`${labels[action]}任务已提交，服务重启后页面会自动恢复`);
-      await refreshUpdateStatus();
-    } catch (error) { notify(error.message, true); }
-  }
-  $('check-update')?.addEventListener('click', () => triggerUpdate('check-update'));
-  $('install-update')?.addEventListener('click', () => triggerUpdate('install-version'));
-  $('repair-current')?.addEventListener('click', () => triggerUpdate('repair-current'));
-  setInterval(() => {
-    if (!document.hidden && !$('dashboard-view').hidden && can('system.manage')) refreshUpdateStatus();
-  }, 5000);
-  $('node-form')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const submit = form.querySelector('[type="submit"]');
-    submit.disabled = true;
-    try {
-      const fields = new FormData(form);
-      const result = await request('/web/admin/cms/nodes', { method: 'POST', body: {
-        name: String(fields.get('name') || '').trim(),
-        role: String(fields.get('role') || ''),
-        public_url: String(fields.get('public_url') || '').trim() || null,
-      } });
-      form.reset();
-      showSecret('节点凭证创建成功', result.node_credential, '凭证只显示这一次。请复制到对应节点的环境变量，然后重启节点服务。');
-      await refresh();
-    } catch (error) { notify(error.message, true); }
-    finally { submit.disabled = false; }
-  });
 }
 
 request(`/web/session?actor=${mode}`).then((session) => {
@@ -1281,4 +691,5 @@ request(`/web/session?actor=${mode}`).then((session) => {
   const requested = location.hash.slice(1);
   selectView([...document.querySelectorAll('.page-view')].some((item) => item.dataset.page === requested) ? requested : 'overview');
   refresh();
+  if (mode === 'admin' && session.is_owner) migrationUi.refresh();
 }).catch(() => setView(false));

@@ -48,23 +48,25 @@ export function browserLicenseRuntime(config) {
     return output;
   };
   const store = (value) => { saved = value; localStorage.setItem(storageKey, JSON.stringify(value)); };
-  const publicKey = crypto.subtle.importKey('spki', bytes(config.k), { name: 'Ed25519' }, false, ['verify']);
+  const activationPublicKey = crypto.subtle.importKey('spki', bytes(config.a || config.k), { name: 'Ed25519' }, false, ['verify']);
+  const packagePublicKey = crypto.subtle.importKey('spki', bytes(config.q || config.k), { name: 'Ed25519' }, false, ['verify']);
+  const notificationPublicKey = crypto.subtle.importKey('spki', bytes(config.n || config.k), { name: 'Ed25519' }, false, ['verify']);
 
-  async function signedPayload(token) {
+  async function signedPayload(token, keyPromise) {
     try {
       if (typeof token !== 'string') return null;
       const parts = token.split('.');
       if (parts.length !== 3) return null;
       const header = parsed(parts[0]);
       if (header.alg !== 'EdDSA' || header.typ !== 'APPGOG-ACT' || header.v !== 1) return null;
-      const key = await publicKey;
+      const key = await keyPromise;
       if (!await crypto.subtle.verify('Ed25519', key, bytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`))) return null;
       return parsed(parts[1]);
     } catch { return null; }
   }
 
   async function activationPayload(token, backendOrigin) {
-    const payload = await signedPayload(token);
+    const payload = await signedPayload(token, activationPublicKey);
     if (!payload || payload.typ !== 'activation' || payload.product !== config.p
       || payload.build_id !== config.b || payload.package_id !== config.i
       || payload.domain !== domain() || payload.installation_id !== installationId
@@ -96,7 +98,7 @@ export function browserLicenseRuntime(config) {
   }
 
   async function packageIdentityValid() {
-    const payload = await signedPayload(config.m);
+    const payload = await signedPayload(config.m, packagePublicKey);
     return Boolean(payload && payload.typ === 'package-manifest' && payload.product === config.p
       && payload.build_id === config.b && payload.package_id === config.i
       && payload.version === config.v && payload.domain === domain()
@@ -170,7 +172,7 @@ export function browserLicenseRuntime(config) {
       const response = await fetch(`${config.u}/api/v1/releases/latest?product=${encodeURIComponent(config.p)}`);
       if (!response.ok) return;
       const result = await response.json();
-      const feed = await signedPayload(result.release_token);
+      const feed = await signedPayload(result.release_token, notificationPublicKey);
       const latest = result.latest;
       if (!feed || !['release', 'release-feed'].includes(feed.typ) || feed.product !== config.p
         || !Number.isSafeInteger(feed.exp) || feed.exp <= now() || !latest
@@ -299,7 +301,14 @@ function randomizedIdentifiers(source, packageId) {
   return output;
 }
 
-export function createBrowserLicenseRuntime({ injection, publicKeyPem, protectedIdentity = null }) {
+export function createBrowserLicenseRuntime({
+  injection,
+  publicKeyPem,
+  activationPublicKeyPem = publicKeyPem,
+  packagePublicKeyPem = publicKeyPem,
+  notificationPublicKeyPem = publicKeyPem,
+  protectedIdentity = null,
+}) {
   const runtimeConfig = {
     p: injection.product,
     v: injection.version,
@@ -307,6 +316,9 @@ export function createBrowserLicenseRuntime({ injection, publicKeyPem, protected
     i: injection.package_id,
     u: injection.license_server,
     k: publicKeyDer(publicKeyPem),
+    a: publicKeyDer(activationPublicKeyPem),
+    q: publicKeyDer(packagePublicKeyPem),
+    n: publicKeyDer(notificationPublicKeyPem),
     s: injection.package_proof_parts.map((part) => Buffer.from(part, 'utf8').toString('base64')),
     o: injection.package_proof_order,
     m: injection.package_manifest_token,

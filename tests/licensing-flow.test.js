@@ -5,6 +5,10 @@ import { createBuildInjection, restorePackageProof } from '../apps/build-worker/
 import { bootstrap } from '../apps/license-api/src/bootstrap.js';
 import { openDatabase } from '../apps/license-api/src/database.js';
 import { verifyActivation } from '../packages/appgog-sdk/src/verifier.js';
+import { requireActivation } from '../packages/appgog-sdk/src/guard.js';
+import { signInstallationChallenge } from '../packages/appgog-sdk/src/installation-identity.js';
+import { installationFingerprint, installationIdFromPublicKey } from '../packages/core/src/installation-proof.js';
+import { verifyCompactToken } from '../packages/core/src/signing.js';
 
 function fixture() {
   const database = openDatabase(':memory:');
@@ -25,6 +29,58 @@ function fixture() {
     advance(milliseconds) { now = new Date(now.getTime() + milliseconds); },
   };
 }
+
+test('Activation、Package 与 Notification 使用独立签名密钥且不能交叉验签', () => {
+  const database = openDatabase(':memory:');
+  const activation = generateKeyPairSync('ed25519');
+  const packageKeys = generateKeyPairSync('ed25519');
+  const notification = generateKeyPairSync('ed25519');
+  const publicPem = (pair) => pair.publicKey.export({ type: 'spki', format: 'pem' });
+  const config = {
+    pepper: 'separated-signing-pepper-longer-than-thirty-two-chars',
+    publicBaseUrl: 'https://license.example.com',
+    buildCenterPublicUrl: 'https://build.example.com/build',
+    activationTokenTtlSeconds: 604800,
+    buildTicketTtlSeconds: 900,
+  };
+  const app = bootstrap({
+    database,
+    config,
+    keyring: {
+      activation: { privateKey: activation.privateKey, publicKey: publicPem(activation) },
+      package: { privateKey: packageKeys.privateKey, publicKey: publicPem(packageKeys) },
+      notification: { privateKey: notification.privateKey, publicKey: publicPem(notification) },
+    },
+    clock: () => new Date('2026-09-24T00:00:00.000Z'),
+  });
+  const product = app.service.ensureProduct();
+  app.repository.createSourceVersion({
+    productId: product.id, version: '2.0.0', displayName: 'APPGOG 2.0.0', sourceKind: 'official',
+    sourceRef: 'sources/appgog/2.0.0/source.zip', status: 'active', releaseNotes: '密钥隔离测试',
+    channel: 'stable', releaseKind: 'security', rollbackAllowed: false, now: '2026-09-24T00:00:00.000Z',
+  });
+  const issued = app.service.issueLicense({ customerRef: 'keyring-test', domain: 'keyring.example.com' });
+  const authorization = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '2.0.0', domain: 'keyring.example.com' });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'keyring.example.com', backendUrl: 'https://panel.example.com', installationId: 'ins_keyring_test',
+  });
+  const activated = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId, installReceiptSecret: receipt.receiptSecret,
+    buildId: build.buildId, packageProof: build.packageSecret, domain: 'keyring.example.com',
+    backendUrl: 'https://panel.example.com', installationId: 'ins_keyring_test',
+  });
+  const release = app.service.releaseAnnouncement();
+
+  assert.equal(verifyCompactToken(activated.token, activation.publicKey).typ, 'activation');
+  assert.equal(verifyCompactToken(build.packageManifestToken, packageKeys.publicKey).typ, 'package-manifest');
+  assert.equal(verifyCompactToken(release.release_token, notification.publicKey).typ, 'release');
+  assert.throws(() => verifyCompactToken(activated.token, packageKeys.publicKey));
+  assert.throws(() => verifyCompactToken(build.packageManifestToken, notification.publicKey));
+  assert.throws(() => verifyCompactToken(release.release_token, activation.publicKey));
+  database.close();
+});
 
 test('完整链路：固定 Key 打包、Install Key 解锁、固定 Key 激活、SDK 本地验签', () => {
   const app = fixture();
@@ -73,6 +129,156 @@ test('完整链路：固定 Key 打包、Install Key 解锁、固定 Key 激活�
   });
   assert.equal(payload.build_id, build.buildId);
   assert.equal(payload.package_id, build.packageId);
+  app.database.close();
+});
+
+test('免费版能力写入签名激活凭证，SDK 在产品后端强制拒绝付费能力', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({ customerRef: 'customer-free', domain: 'free.example.com', planCode: 'free' });
+  const authorization = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '1.0.0', domain: 'free.example.com' });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const installationId = 'installation_free_123456';
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'free.example.com', backendUrl: 'https://panel.example.com', installationId,
+  });
+  const activation = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'free.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+  });
+  const common = {
+    token: activation.token, publicKey: app.publicKey, domain: 'free.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+    now: new Date('2026-09-22T00:01:00.000Z'),
+  };
+  const payload = requireActivation({ ...common, capability: 'settings:read' });
+  assert.equal(payload.plan, 'free');
+  assert.ok(payload.capabilities.includes('settings:read'));
+  assert.ok(!payload.capabilities.includes('settings:write'));
+  assert.throws(() => requireActivation({ ...common, capability: 'settings:write' }), (error) => error.code === 'APPGOG_CAPABILITY_DENIED');
+  app.database.close();
+});
+
+test('服务器 Ed25519 安装身份使用一次性挑战证明，重放和复制 Installation ID 均被拒绝', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({ customerRef: 'customer-proof', domain: 'proof.example.com' });
+  const authorization = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '1.0.0', domain: 'proof.example.com' });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'proof.example.com', backendUrl: 'https://panel.example.com',
+    installationId: 'placeholder-installation-id',
+  });
+  const identity = generateKeyPairSync('ed25519');
+  const publicKeyPem = identity.publicKey.export({ type: 'spki', format: 'pem' });
+  const installationId = installationIdFromPublicKey(publicKeyPem);
+  app.database.prepare('UPDATE install_receipts SET installation_id = ? WHERE id = ?').run(installationId, receipt.receiptId);
+  const context = {
+    install_receipt_id: receipt.receiptId, build_id: build.buildId,
+    domain: 'proof.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const challenge = app.service.createInstallationChallenge({ purpose: 'activation', publicKey: publicKeyPem, context });
+  const signature = signInstallationChallenge({ challenge, privateKey: identity.privateKey });
+  const request = {
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'proof.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+    installationPublicKey: publicKeyPem, challengeId: challenge.id, challengeSignature: signature,
+  };
+  const activation = app.service.activate(request);
+  const payload = verifyActivation({
+    token: activation.token, publicKey: app.publicKey, domain: 'proof.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+    now: new Date('2026-09-22T00:01:00.000Z'),
+  });
+  assert.equal(payload.installation_identity_mode, 'server_key');
+  assert.ok(payload.installation_public_key_fingerprint);
+  assert.equal(app.repository.installationIdentityById(installationId).status, 'active');
+  assert.throws(() => app.service.activate(request), (error) => ['INSTALL_RECEIPT_USED', 'INSTALLATION_CHALLENGE_USED'].includes(error.code));
+
+  const attacker = generateKeyPairSync('ed25519');
+  const attackerPublic = attacker.publicKey.export({ type: 'spki', format: 'pem' });
+  const refreshContext = { activation_id: activation.activationId, domain: 'proof.example.com', backend_origin: 'https://panel.example.com' };
+  const attackerChallenge = app.service.createInstallationChallenge({ purpose: 'refresh', publicKey: attackerPublic, context: refreshContext });
+  assert.throws(() => app.service.refresh({
+    activationId: activation.activationId, refreshSecret: activation.refreshSecret,
+    domain: 'proof.example.com', backendUrl: 'https://panel.example.com', installationId,
+    installationPublicKey: attackerPublic, challengeId: attackerChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: attackerChallenge, privateKey: attacker.privateKey }),
+  }), (error) => error.code === 'INSTALLATION_IDENTITY_MISMATCH');
+  app.database.close();
+});
+
+test('受控产品迁机由旧服务器签发一次性 Grant，新服务器接管后旧实例立即 Fenced', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({ customerRef: 'customer-move', domain: 'move.example.com' });
+  const authorization = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '1.0.0', domain: 'move.example.com' });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const sourceKeys = generateKeyPairSync('ed25519');
+  const sourcePublicKey = sourceKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const sourceInstallationId = installationIdFromPublicKey(sourcePublicKey);
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'move.example.com', backendUrl: 'https://panel.example.com', installationId: sourceInstallationId,
+  });
+  const activationContext = {
+    install_receipt_id: receipt.receiptId, build_id: build.buildId,
+    domain: 'move.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const activationChallenge = app.service.createInstallationChallenge({ purpose: 'activation', publicKey: sourcePublicKey, context: activationContext });
+  const sourceActivation = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: sourceInstallationId, installationPublicKey: sourcePublicKey,
+    challengeId: activationChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: activationChallenge, privateKey: sourceKeys.privateKey }),
+  });
+
+  const targetKeys = generateKeyPairSync('ed25519');
+  const targetPublicKey = targetKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const issueContext = {
+    activation_id: sourceActivation.activationId,
+    target_public_key_fingerprint: installationFingerprint(targetPublicKey),
+  };
+  const issueChallenge = app.service.createInstallationChallenge({ purpose: 'migration_issue', publicKey: sourcePublicKey, context: issueContext });
+  const grant = app.service.issueProductMigrationGrant({
+    activationId: sourceActivation.activationId, refreshSecret: sourceActivation.refreshSecret,
+    targetInstallationPublicKey: targetPublicKey, installationPublicKey: sourcePublicKey,
+    challengeId: issueChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: issueChallenge, privateKey: sourceKeys.privateKey }),
+  });
+  assert.match(grant.grantToken, /^PMG_/);
+  assert.notEqual(grant.targetInstallationId, sourceInstallationId);
+
+  const acceptContext = {
+    grant_id: grant.grantId, build_id: build.buildId,
+    domain: 'move.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const acceptChallenge = app.service.createInstallationChallenge({ purpose: 'migration_accept', publicKey: targetPublicKey, context: acceptContext });
+  const targetActivation = app.service.acceptProductMigration({
+    grantToken: grant.grantToken, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: grant.targetInstallationId, installationPublicKey: targetPublicKey,
+    challengeId: acceptChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: acceptChallenge, privateKey: targetKeys.privateKey }),
+  });
+  assert.equal(targetActivation.sourceStatus, 'fenced');
+  assert.equal(targetActivation.targetStatus, 'active');
+  assert.equal(app.repository.installationIdentityById(sourceInstallationId).status, 'fenced');
+  assert.equal(app.repository.installationIdentityById(grant.targetInstallationId).status, 'active');
+  assert.equal(app.repository.activationById(sourceActivation.activationId).status, 'fenced');
+  assert.equal(app.repository.productMigrationGrantByHash('not-a-hash'), undefined);
+  assert.throws(() => app.service.acceptProductMigration({
+    grantToken: grant.grantToken, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: grant.targetInstallationId, installationPublicKey: targetPublicKey,
+    challengeId: acceptChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: acceptChallenge, privateKey: targetKeys.privateKey }),
+  }), (error) => error.code === 'PRODUCT_MIGRATION_GRANT_USED');
   app.database.close();
 });
 

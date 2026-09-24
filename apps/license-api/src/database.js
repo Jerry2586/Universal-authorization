@@ -32,6 +32,18 @@ const MIGRATIONS = Object.freeze({
   licenses: [
     ['max_activations', 'INTEGER NOT NULL DEFAULT 1'],
     ['key_encrypted', 'TEXT'],
+    ['plan_id', 'TEXT REFERENCES license_plans(id)'],
+  ],
+  support_tickets: [
+    ['closed_by_type', 'TEXT'],
+    ['closed_by_id', 'TEXT'],
+    ['close_reason', 'TEXT'],
+    ['reopened_at', 'TEXT'],
+    ['reopened_by', 'TEXT'],
+  ],
+  activations: [
+    ['identity_mode', "TEXT NOT NULL DEFAULT 'legacy'"],
+    ['installation_public_key_fingerprint', 'TEXT'],
   ],
 });
 
@@ -85,6 +97,11 @@ function migrate(database) {
     if (!licenseColumns.has('key_encrypted')) database.exec('ALTER TABLE licenses ADD COLUMN key_encrypted TEXT');
   });
 
+  const supportLifecycleVersion = '2026-09-24-v1.2.10-support-ticket-lifecycle';
+  runMigration(database, supportLifecycleVersion, () => addMissingColumns(database, {
+    support_tickets: MIGRATIONS.support_tickets,
+  }));
+
   const domainVersion = '2026-09-23-v1.0.0-domain-normalization';
   runMigration(database, domainVersion, () => {
     const domainColumns = [
@@ -100,6 +117,46 @@ function migrate(database) {
     for (const [table, column] of domainColumns) {
       database.exec(`UPDATE ${table} SET ${column} = substr(${column}, 5) WHERE lower(${column}) LIKE 'www.%'`);
     }
+  });
+
+  const entitlementErasureVersion = '2026-09-24-v1.2.10-entitlements-erasure';
+  runMigration(database, entitlementErasureVersion, () => {
+    addMissingColumns(database, { licenses: MIGRATIONS.licenses });
+    const now = new Date().toISOString();
+    const insertPlan = database.prepare(`
+      INSERT OR IGNORE INTO license_plans (
+        id, code, name, status, capabilities_json, limits_json, created_at, updated_at
+      ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
+    `);
+    insertPlan.run(
+      'plan_free', 'free', '免费版',
+      JSON.stringify(['settings:read', 'protected:read', 'updates:read']),
+      JSON.stringify({ max_builds_per_day: 1, max_activations: 1 }), now, now,
+    );
+    insertPlan.run(
+      'plan_paid', 'paid', '付费版',
+      JSON.stringify(['settings:read', 'settings:write', 'theme:enable', 'xboard:connect', 'protected:read', 'updates:read']),
+      JSON.stringify({ max_builds_per_day: 10, max_activations: 3 }), now, now,
+    );
+    insertPlan.run(
+      'plan_legacy', 'legacy', '历史兼容版',
+      JSON.stringify(['settings:read', 'settings:write', 'theme:enable', 'xboard:connect', 'protected:read', 'updates:read']),
+      JSON.stringify({ preserve_license_limits: true }), now, now,
+    );
+    database.prepare(`UPDATE licenses SET plan_id = 'plan_legacy' WHERE plan_id IS NULL`).run();
+    database.exec('CREATE INDEX IF NOT EXISTS idx_licenses_plan ON licenses(plan_id)');
+  });
+
+  const installationProofVersion = '2026-09-24-v1.2.10-installation-proof';
+  runMigration(database, installationProofVersion, () => addMissingColumns(database, {
+    activations: MIGRATIONS.activations,
+  }));
+
+  const controlMigrationVersion = '2026-09-24-v1.2.10-control-plane-migration';
+  runMigration(database, controlMigrationVersion, () => {
+    // SCHEMA creates the additive tables first. Keeping a dedicated marker
+    // makes production upgrade state and rollback diagnostics explicit.
+    database.prepare('SELECT 1 FROM control_plane_identity LIMIT 1').get();
   });
 }
 

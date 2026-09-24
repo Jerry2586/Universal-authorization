@@ -1,9 +1,11 @@
 import { resolve } from 'node:path';
 import { LocalArtifactStore } from '../../../packages/adapters/src/local-artifact-store.js';
 import { HardenedThemeBuildEngine } from './engine.js';
-import { loadLocalEnvironment } from '../../license-api/src/config.js';
+import { loadLocalEnvironment } from '../../../packages/core/src/environment.js';
 
-export async function runWorkerOnce({ baseUrl, token, workerId, artifactStore, publicKey, publicBaseUrl, remoteTransfer = false }) {
+export async function runWorkerOnce({
+  baseUrl, token, workerId, artifactStore, publicKey, publicKeys = null, publicBaseUrl, remoteTransfer = false,
+}) {
   async function post(path, body) {
     const response = await fetch(new URL(path, baseUrl), {
       method: 'POST',
@@ -36,7 +38,15 @@ export async function runWorkerOnce({ baseUrl, token, workerId, artifactStore, p
       ? await binary(`/api/v1/worker/jobs/${job.id}/source?worker_id=${encodeURIComponent(workerId)}`)
       : null;
     const canonicalBaseUrl = build.licenseServer ?? publicBaseUrl;
-    const engine = new HardenedThemeBuildEngine({ artifactStore, publicKey, publicBaseUrl: canonicalBaseUrl });
+    const resolvedKeys = publicKeys ?? { activation: publicKey, package: publicKey, notification: publicKey };
+    const engine = new HardenedThemeBuildEngine({
+      artifactStore,
+      publicKey: resolvedKeys.activation,
+      activationPublicKey: resolvedKeys.activation,
+      packagePublicKey: resolvedKeys.package,
+      notificationPublicKey: resolvedKeys.notification,
+      publicBaseUrl: canonicalBaseUrl,
+    });
     const output = await engine.build({
       sourceRef: source.source_ref, sourceBuffer,
       product: build.product,
@@ -101,7 +111,9 @@ export async function startWorker() {
   if (process.env.NODE_ENV === 'production' && new URL(publicBaseUrl).protocol !== 'https:') throw new Error('生产环境 PUBLIC_BASE_URL 必须使用 HTTPS');
   const keyResponse = await fetch(new URL('/api/v1/public-key', baseUrl));
   if (!keyResponse.ok) throw new Error('无法从授权中心读取公钥');
-  const { public_key: publicKey } = await keyResponse.json();
+  const keyDocument = await keyResponse.json();
+  const publicKey = keyDocument.public_key;
+  const publicKeys = keyDocument.public_keys ?? { activation: publicKey, package: publicKey, notification: publicKey };
   const remoteTransfer = (process.env.WORKER_REMOTE_TRANSFER ?? (process.env.WORKER_NODE_TOKEN ? 'true' : 'false')).toLowerCase() === 'true';
   const artifactStore = new LocalArtifactStore(resolve(process.cwd(), process.env.ARTIFACT_ROOT ?? './var/artifacts'));
   let stopped = false;
@@ -111,7 +123,7 @@ export async function startWorker() {
   console.log(`APPGOG Worker ${workerId} started`);
   while (!stopped) {
     try {
-      await runWorkerOnce({ baseUrl, token, workerId, artifactStore, publicKey, publicBaseUrl, remoteTransfer });
+      await runWorkerOnce({ baseUrl, token, workerId, artifactStore, publicKey, publicKeys, publicBaseUrl, remoteTransfer });
     } catch (error) { console.error('[worker]', error); }
     await new Promise((resolve) => setTimeout(resolve, 1200));
   }

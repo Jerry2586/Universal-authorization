@@ -26,13 +26,17 @@
 | `POST /web/customer/tickets` | 客户 | 创建打包、构建、安装、授权或咨询工单，可关联自己的构建任务 |
 | `GET /web/customer/tickets/{id}` | 所属客户 | 查看工单公开对话与附件，不返回内部备注 |
 | `POST /web/customer/tickets/{id}/messages` | 所属客户 + CSRF | 继续回复工单 |
+| `POST /web/customer/tickets/{id}/close` | 所属客户 + CSRF | 输入关闭原因并关闭自己的工单；关闭后不能继续回复 |
 | `POST /web/customer/tickets/{id}/attachments?filename=...` | 所属客户 + CSRF | 上传 PNG/JPEG/WebP/TXT/LOG/PDF，单文件不超过 10 MB |
 | `GET /web/admin/overview` | 管理员 | 统计、授权、版本、构建、工单、激活与审计 |
 | `POST /web/admin/licenses` | 管理员 | 签发长期固定 Key；明文 Key 只在本次响应中显示 |
 | `POST /web/admin/versions` | 管理员 | 登记尚未发布的草稿版本 |
 | `POST /web/admin/versions/upload?product_code=appgog&version=1.0.0&display_name=APPGOG` | 管理员 | 请求体为 ZIP 原始字节，`Content-Type: application/zip`；检查并发布可安装主题版本 |
 | `POST /web/admin/licenses/{id}/rotate-key` | 管理员 | 轮换固定 Key，返回只显示一次的新 Key |
+| `POST /web/admin/licenses/{id}/reveal-key` | 授权管理员 + 当前密码 | 单独查看完整固定 Key，并写安全审计；列表接口仍只返回脱敏值 |
 | `POST /web/admin/licenses/{id}/domain` | 管理员 | 输入 `{ "domain": "new.example.com" }` 换绑域名 |
+| `POST /web/admin/licenses/{id}/plan` | 授权管理员 | 切换免费版、付费版或历史兼容版，并增加 License generation |
+| `DELETE /web/admin/licenses/{id}` | 平台所有者 + 当前密码 + 精确确认文本 | 永久删除授权及关联业务记录/文件；失败文件进入补偿清理，不保留可识别业务数据 |
 | `POST /web/admin/domain-migrations/{id}/review` | 授权管理员 | 兼容处理旧版尚未结束的迁移申请；v1.1.0 客户新换绑不再等待审批 |
 | `POST /web/admin/licenses/{id}/status` | 管理员 | 输入 `{ "status": "active" }`，也支持 `suspended`、`revoked` |
 | `POST /web/admin/account/password` | 当前管理员 | 校验当前密码并把密码修改为新的六位数字，成功后撤销该账号全部会话 |
@@ -42,6 +46,10 @@
 | `POST /web/admin/tickets/{id}/messages` | `ticket.manage` | 发送客户可见回复或内部备注 |
 | `POST /web/admin/tickets/{id}/update` | `ticket.manage` | 更新优先级、处理状态和指派管理员 |
 | `POST /web/admin/tickets/{id}/attachments?filename=...` | `ticket.manage` | 上传安全白名单附件 |
+| `GET /web/admin/system/migrations` | 平台所有者 | 查看控制中心身份、接收会话、当前操作和迁移历史 |
+| `POST /web/admin/system/migrations/receiver` | 平台所有者 + CSRF | 在目标服务器开启 15 分钟一次性迁移接收并返回配对码 |
+| `POST /web/admin/system/migrations/receiver/close` | 平台所有者 + CSRF | 关闭当前迁移接收会话 |
+| `POST /web/admin/system/migrations/source` | 平台所有者 + CSRF | 输入目标 HTTPS 地址和配对码，排队执行源服务器受控迁移 |
 
 当前构建下载同时要求客户会话和短期 HMAC 下载票据；票据绑定会话 ID、构建任务、随机 nonce 和过期时间，成品引用不直接暴露为公共静态 URL。`Install Key` 在已完成构建详情中可再次查看；它只有首次成功安装解锁可用一次，不应把“只使用一次”误解为“只展示一次”。自助换绑后 License generation 增加，未使用 Install Receipt 和旧 Activation 立即撤销，客户在新域名重新输入原固定 Key 激活。
 
@@ -81,7 +89,21 @@ Worker 内部队列接口均使用 `Authorization: Bearer <WORKER_TOKEN>`：
 
 ## 两阶段安装与激活
 
-`GET /api/v1/public-key` 返回 Ed25519 公钥。安装后的主题使用公钥本地验签。
+`GET /api/v1/public-key` 返回三类 Ed25519 公钥。旧 `public_key` 是 Activation 公钥兼容别名；新客户端使用 `public_keys`：
+
+```json
+{
+  "algorithm": "Ed25519",
+  "public_key": "<activation-public-key>",
+  "public_keys": {
+    "activation": "<activation-public-key>",
+    "package": "<package-public-key>",
+    "notification": "<notification-public-key>"
+  }
+}
+```
+
+产品服务器首次安装时生成本地 Ed25519 安装身份。调用 `POST /api/v1/installation-challenges` 提交用途、安装公钥和规范化上下文，取得一次性 Challenge；安装解锁或刷新时同时提交 `installation_public_key`、`challenge_id` 和 `challenge_signature`。Challenge 只能消费一次，Installation ID 由安装公钥指纹派生。
 
 第一阶段调用 `POST /api/v1/install-unlocks`，只提交一次性 Install Key：
 
@@ -128,6 +150,26 @@ Worker 内部队列接口均使用 `Authorization: Bearer <WORKER_TOKEN>`：
 ```
 
 刷新时检查授权状态、Key generation、域名、后台 Origin 和 Installation ID。旧固定 Key 轮换后不能继续打包，旧激活在下次刷新时失效。
+
+## 客户产品受控迁机
+
+- `POST /api/v1/product-migrations`：旧 Active 实例使用 Refresh Secret、安装公钥和一次性 Challenge Proof 申请短期 `PMG_` Grant，并指定目标安装公钥。
+- `POST /api/v1/product-migrations/accept`：目标实例提交 Grant、Build/Package、域名、Origin、新安装身份和新的 Challenge Proof。
+
+接管成功后返回新 Activation/Refresh 凭据；旧 Installation Identity 与旧 Activation 进入 Fenced。Grant 一次性使用，相同域名不能绕过安装身份验证，也不允许新旧实例长期双活。
+
+## 控制中心迁移传输协议
+
+控制中心迁移接口仅供两台已安装同版本 APPGOG 的服务器使用：
+
+| 方法和路径 | 用途 |
+|---|---|
+| `POST /api/v1/control-migrations/handshake` | 使用一次性配对码建立迁移上传会话 |
+| `PUT /api/v1/control-migrations/{id}/bundle/chunks/{index}` | 上传固定序号分块；要求 Bearer 上传凭证、`X-APPGOG-Chunk-SHA256` 和 `X-APPGOG-Total-Chunks` |
+| `POST /api/v1/control-migrations/{id}/bundle/complete` | 提交总块数、整包 SHA-256 和备份恢复密钥；全部块校验成功后才排队恢复 |
+| `GET /api/v1/control-migrations/{id}/status` | 使用 Bearer 上传凭证查询目标恢复状态 |
+
+正式脚本固定使用 64 MiB 分块。目标只写入受控收件箱，同序号重传覆盖同一文件；缺块、块摘要不符或整包摘要不符都会拒绝恢复。旧整包 `PUT .../bundle` 仅保留兼容，不作为正式迁移通道。
 
 ## 版本和部署约束
 

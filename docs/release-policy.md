@@ -47,3 +47,5 @@
 7. 从 GitHub 回下载七个附件，重新验证签名、哈希与 Latest 状态。
 
 任意一步失败都必须停止发布。升级失败时保留数据与备份、保存独立诊断日志，并恢复原健康版本。
+
+`node scripts/verify-release-contract.js --artifacts` 默认要求并验证 `release-manifest.json.sig`。GitHub PR/CI 由于不保存正式私钥，只能显式设置 `APPGOG_ALLOW_UNSIGNED_ARTIFACTS=1` 做非正式制品结构与 Docker 流程验证；该 CI 产物不得直接作为正式 Release。发布操作员本地不得设置此开关。

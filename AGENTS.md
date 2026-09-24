@@ -27,3 +27,20 @@
 7. 从 GitHub Release 回下载全部附件，再次验证 Ed25519 签名、哈希、附件数量与 Latest 状态。
 
 详细检查表见 `docs/release-policy.md`。这些规则不得为了赶版本而跳过。
+
+## 强制模块边界
+
+- 依赖方向固定为 `UI → HTTP/BFF → Application Use Case → Domain → Port → Adapter`，禁止反向依赖。
+- `packages` 禁止导入 `apps`；HTTP 路由禁止直接执行 SQL；前端禁止作为授权、套餐或权限的最终判断边界。
+- Identity、Licensing、Entitlement、Activation、Product、Packaging、Support、Operations、Migration、Audit 各自拥有自己的写模型。跨领域只能调用公开 Service/Port 或发布领域事件，禁止直接写入其他领域的数据表。
+- 签名、加密和认证密钥必须按用途隔离，禁止自动回退到其他用途的密钥。完整约束见 `docs/refactor-blueprint.md`。
+- 高风险状态变化和对应审计记录必须位于同一个数据库事务；数据库外副作用使用幂等任务或 Outbox 补偿。
+
+## 强制服务器迁移边界
+
+- 控制中心迁移与客户产品迁移是两种不同流程，禁止混用。
+- 控制中心迁移必须保留数据库、服务域名、签名身份、加密密钥、管理员、Key、激活、构建和业务文件；不得批量修改客户授权域名、Installation ID 或重新签发 Key。
+- 客户产品迁移必须生成新的目标 Installation ID，通过受控迁移凭据接管授权，并在切换后撤销或隔离旧安装；禁止把“复制旧 Installation ID”作为受支持迁移方式。
+- 任意迁移时只能有一个可写 Active 实例。源实例、目标实例、所有权代次和回滚状态必须由状态机管理，禁止两边同时写入。
+- SQLite 迁移允许在线预同步，但最终一致性切换必须进入短暂只读窗口。不得宣称当前架构可以实现完全零停机。
+- 迁移全过程必须加密、分块校验、可恢复、可审计；失败时源实例和原始数据保持可用。详细标准见 `docs/server-migration-standard.md`。

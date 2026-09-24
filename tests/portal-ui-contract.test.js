@@ -9,6 +9,9 @@ const read = (name) => readFileSync(resolve(root, name), 'utf8');
 test('admin UI exposes independent announcement, protected key reveal, and signed online update controls', () => {
   const html = read('apps/web/public/admin.html');
   const script = read('apps/web/public/assets/portal.js');
+  const licenses = read('apps/web/public/assets/portal/licenses.js');
+  const announcements = read('apps/web/public/assets/portal/announcements.js');
+  const operations = read('apps/web/public/assets/portal/operations.js');
   assert.match(html, /data-view="announcements"/);
   assert.match(html, /id="announcement-form"/);
   assert.match(html, /class="announcement-operations-grid"/);
@@ -26,10 +29,14 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
   assert.doesNotMatch(html, /返回首页/);
   assert.doesNotMatch(html, /name="min_xboard_version"|name="min_upgrade_version"/);
   assert.doesNotMatch(html, /rollback_allowed|rollback_to|允许生成回滚包|推荐回滚版本/);
-  assert.match(script, /重新验证密码后查看完整 Key/);
-  assert.match(script, /\/web\/admin\/announcement/);
-  assert.match(script, /renderAnnouncementPreview/);
-  assert.match(script, /install-version/);
+  assert.match(licenses, /重新验证密码后查看完整 Key/);
+  assert.match(licenses, /永久删除授权与全部记录/);
+  assert.match(html, /name="plan_code"/);
+  assert.match(script, /createAnnouncementUi/);
+  assert.match(script, /createOperationsUi/);
+  assert.match(announcements, /\/web\/admin\/announcement/);
+  assert.match(announcements, /function preview/);
+  assert.match(operations, /install-version/);
 });
 
 test('customer build UI keeps the version catalog in build tasks and removes migration notes', () => {
@@ -50,4 +57,7 @@ test('customer build UI keeps the version catalog in build tasks and removes mig
   assert.doesNotMatch(html, /生成回滚包|回滚构建/);
   assert.match(script, /renderCustomerTickets/);
   assert.match(script, /renderAdminTickets/);
+  const ticketModule = read('apps/web/public/assets/portal/tickets.js');
+  assert.match(ticketModule, /\/web\/customer\/tickets\/\$\{encodeURIComponent\(ticket\.id\)\}\/close/);
+  assert.match(ticketModule, /重新打开工单/);
 });

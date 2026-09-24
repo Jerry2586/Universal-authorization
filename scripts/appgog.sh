@@ -23,6 +23,8 @@ SHARED_DIR="$INSTALL_ROOT/shared"
 DOCKER_SCRIPT="$ROOT_DIR/scripts/docker.sh"
 ENV_FILE="$ROOT_DIR/.env"
 OPERATIONS_LOG="$SHARED_DIR/logs/operations.log"
+. "$ROOT_DIR/scripts/lib/dns.sh"
+. "$ROOT_DIR/scripts/lib/lifecycle.sh"
 
 [ -f "$DOCKER_SCRIPT" ] && [ -f "$ROOT_DIR/compose.yaml" ] || {
   echo "APPGOG 安装目录无效：$ROOT_DIR" >&2
@@ -111,6 +113,25 @@ uninstall_keep_data() {
   say_ok "程序已卸载；数据库、Key、上传、构建成品、配置和备份仍保留。日志：$uninstall_log"
 }
 
+migration_rollback() {
+  fence=$(appgog_source_fence_path "$INSTALL_ROOT")
+  [ -s "$fence" ] || { say_error '当前服务器没有控制中心迁移 Fenced 标记。'; return 1; }
+  migration_id=$(jq -r '.migration_id // empty' "$fence" 2>/dev/null || true)
+  [ -n "$migration_id" ] || { say_error 'Fenced 标记损坏，拒绝自动解除。'; return 1; }
+  requested=${1:-}
+  if [ -z "$requested" ]; then
+    printf '%b%s%b\n' "$RED" '只有确认目标服务器未继续提供写服务时才能回滚，否则会形成双写。' "$RESET"
+    tty_read "请输入迁移 ID $migration_id 确认回滚："
+    requested=$REPLY_VALUE
+  fi
+  [ "$requested" = "$migration_id" ] || { say_error '迁移 ID 不匹配，已取消。'; return 1; }
+  rm -f "$fence"
+  (cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml run --rm --no-deps -T appgog \
+    node scripts/docker/migration-state.js rollback-source "$migration_id")
+  run_docker start
+  say_ok '源服务器已解除 Fenced 并恢复运行；请立即确认目标服务器已经停止。'
+}
+
 env_value() {
   key=$1
   [ -f "$ENV_FILE" ] || return 0
@@ -131,11 +152,7 @@ set_env_value() {
 }
 
 valid_domain() {
-  value=$1
-  case "$value" in
-    ''|*://*|*/*|*:*|*[!A-Za-z0-9.-]*|.*|*.) return 1 ;;
-  esac
-  case "$value" in *.*) return 0 ;; *) return 1 ;; esac
+  appgog_valid_domain "$1"
 }
 
 cloudflare_request() {
@@ -374,6 +391,7 @@ main_menu() {
       ' 12. 系统诊断与高级工具' \
       ' 13. 修复系统源码' \
       ' 14. 卸载系统（保留数据）' \
+      ' 15. 迁移失败后恢复源服务器' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -392,6 +410,7 @@ main_menu() {
       12) advanced_menu ;;
       13) confirm '确认重新下载当前签名版本、备份并深度重建源码？' && repair_source; pause_menu ;;
       14) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
+      15) migration_rollback; pause_menu ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -417,6 +436,7 @@ APPGOG 管理命令
   appgog uninstall       卸载程序并保留业务数据与备份
   appgog backup          创建 AES-256 加密完整备份
   appgog restore <文件>  从备份恢复到空部署
+  appgog migration-rollback <迁移ID>  目标已停止后解除源服务器 Fenced
   appgog doctor          系统诊断
   appgog diagnostics     导出不含凭证的诊断报告
   appgog repair          修复配置与密钥权限
@@ -437,6 +457,7 @@ case "${1:-menu}" in
   config) configure_domains ;;
   services) configure_services ;;
   restore) [ -n "${2:-}" ] || { usage >&2; exit 1; }; run_docker restore "$2" ;;
+  migration-rollback) migration_rollback "${2:-}" ;;
   help|-h|--help) usage ;;
   *) usage >&2; exit 1 ;;
 esac

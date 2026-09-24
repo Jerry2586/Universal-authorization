@@ -1,16 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT_DIR/scripts/lib/docker-install.sh"
+. "$ROOT_DIR/scripts/lib/backup.sh"
+. "$ROOT_DIR/scripts/lib/diagnostics.sh"
 cd "$ROOT_DIR"
 BACKUP_KEY_FILE=${APPGOG_BACKUP_KEY_FILE:-$ROOT_DIR/.backup-key}
 compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$ROOT_DIR/compose.yaml" "$@"; }
 fail() { echo "错误：$*" >&2; exit 1; }
 compose_version_supported() {
-  version=$(docker compose version --short 2>/dev/null | sed 's/^v//; s/[^0-9.].*$//')
-  old_ifs=$IFS; IFS=.; set -- $version; IFS=$old_ifs
-  major=${1:-0}; minor=${2:-0}
-  case "$major:$minor" in *[!0-9:]*|:) return 1 ;; esac
-  [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 24 ]; }
+  appgog_compose_version_supported 24
 }
 require_docker() {
   command -v docker >/dev/null 2>&1 || fail '未安装 Docker，请先执行 sudo sh scripts/install-linux.sh。'
@@ -98,6 +97,7 @@ project_containers() {
 }
 backup() (
   umask 077
+  leave_stopped=${APPGOG_BACKUP_LEAVE_STOPPED:-false}
   command -v openssl >/dev/null 2>&1 || fail '创建加密备份需要 OpenSSL。'
   mkdir -p backups
   if [ ! -f "$BACKUP_KEY_FILE" ]; then
@@ -114,10 +114,11 @@ backup() (
   trap 'rm -f "$plain" "$encrypted"; if [ -n "$running" ]; then docker start $running >/dev/null || true; fi' 0
   [ -z "$running" ] || docker stop $running >/dev/null
   compose run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --entrypoint tar appgog -C /app -czf - \
-    var/data var/keys var/artifacts var/uploads runtime/license runtime/build runtime/worker runtime/caddy-data runtime/caddy-config > "$plain"
+    $(appgog_backup_paths) > "$plain"
   openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -pass "file:$BACKUP_KEY_FILE" -in "$plain" -out "$encrypted"
   rm -f "$plain"
   mv "$encrypted" "$target"
+  if [ "$leave_stopped" = true ]; then running=''; fi
   echo "加密完整备份：$ROOT_DIR/$target"
   echo "恢复密钥：$BACKUP_KEY_FILE（请单独离线保存，不要和备份放在同一位置）"
 )
@@ -307,10 +308,10 @@ doctor() {
 diagnostics() (
   umask 077
   mkdir -p logs
-  target="logs/diagnostic-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+  target="logs/diagnostic-$(appgog_utc_filename_timestamp)-$$.txt"
   {
     echo 'APPGOG 诊断报告'
-    echo "生成时间：$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "生成时间：$(appgog_utc_timestamp)"
     echo "系统：$(uname -a 2>/dev/null || echo unknown)"
     echo "Docker：$(docker --version 2>/dev/null || echo unavailable)"
     echo "Compose：$(docker compose version 2>/dev/null || echo unavailable)"
@@ -397,7 +398,9 @@ case "${1:-help}" in
     require_docker
     require_config
     prepare_update_control
-    compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
+    if [ "${APPGOG_RESTORE_NO_START:-false}" != true ]; then
+      compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
+    fi
     ;;
 
   backup) require_docker; require_config; backup ;;
