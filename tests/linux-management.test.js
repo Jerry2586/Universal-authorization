@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -13,6 +13,7 @@ const scripts = {
   installer: join(root, 'scripts/install-linux.sh'),
   manager: join(root, 'scripts/appgog.sh'),
   updateHelper: join(root, 'scripts/update-helper.sh'),
+  releaseDownloadLibrary: join(root, 'scripts/lib/release-download.sh'),
   migration: join(root, 'scripts/migration.sh'),
   dockerInstallLibrary: join(root, 'scripts/lib/docker-install.sh'),
   platformLibrary: join(root, 'scripts/lib/platform.sh'),
@@ -170,7 +171,9 @@ test('online update helper writes valid readiness JSON before a latest version e
   const installRoot = mkdtempSync(join(tmpdir(), 'appgog-update-helper-'));
   t.after(() => rmSync(installRoot, { recursive: true, force: true }));
   mkdirSync(join(installRoot, 'current'), { recursive: true });
+  mkdirSync(join(installRoot, 'current', 'scripts', 'lib'), { recursive: true });
   writeFileSync(join(installRoot, 'current', 'package.json'), `${JSON.stringify({ version: projectVersion })}\n`);
+  copyFileSync(scripts.releaseDownloadLibrary, join(installRoot, 'current', 'scripts', 'lib', 'release-download.sh'));
 
   const child = spawn('/bin/sh', [scripts.updateHelper, '--daemon', installRoot], { stdio: 'ignore' });
   t.after(() => { if (child.exitCode === null) child.kill('SIGTERM'); });
