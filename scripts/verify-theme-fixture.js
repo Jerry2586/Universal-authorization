@@ -81,6 +81,13 @@ try {
     }
   }
   const manifest = JSON.parse(files.get(themeRoot + 'appgog-license/build.json'));
+  const expectedRuntimePath = '/theme/' + descriptor.name + '/' + manifest.protection.runtime_path.slice(themeRoot.length);
+  for (const entry of ['index.html', 'editor.html', 'dashboard.blade.php']) {
+    const html = files.get(themeRoot + entry).toString();
+    const src = html.match(/data-appgog-license-runtime="[^"]+" src="([^"]+)"/)[1];
+    const page = entry.endsWith('.blade.php') ? '/' : '/theme/' + descriptor.name + '/' + entry;
+    assert.equal(new URL(src, 'https://fixture.example.com' + page).pathname, expectedRuntimePath, entry + ' runtime URL must resolve to the published asset');
+  }
   const expected = { issuer: config.publicBaseUrl, product: leased.build.product, version,
     build_id: leased.build.buildId, package_id: leased.build.packageId,
     domain: leased.build.domain, watermark: leased.build.watermark };
@@ -113,7 +120,7 @@ try {
   console.log(JSON.stringify({ result: 'passed', source: resolve(input), version,
     source_sha256: createHash('sha256').update(source).digest('hex'), artifact_sha256: output.sha256,
     files: files.size, entrypoints: 3, protection: manifest.protection.javascript_protection,
-    checks: ['real_http_worker_process', 'real_zip_build', 'three_gated_entries', 'bridge_bundle', 'business_js_protection',
+    checks: ['real_http_worker_process', 'real_zip_build', 'three_gated_entries', 'published_runtime_urls', 'bridge_bundle', 'business_js_protection',
       'no_source_maps', 'tamper_rejected', 'wrong_key_rejected', 'install_key_single_use', 'signed_install_window', 'fixed_key_activation'] }, null, 2));
 } finally {
   database.close();

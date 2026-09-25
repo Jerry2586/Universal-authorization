@@ -130,6 +130,8 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   }
   const runtimeName = [...output.keys()].find((name) => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(name));
   assert.ok(runtimeName);
+  const runtimeUrl = new URL(dashboard.match(/data-appgog-license-runtime="[^"]+" src="([^"]+)"/)[1], 'https://demo.example.com/');
+  assert.equal(runtimeUrl.pathname, '/theme/' + runtimeName);
   const runtime = output.get(runtimeName).toString('utf8');
   assert.match(runtime, /开始激活/);
   assert.match(runtime, /剩余激活时间/);
@@ -427,4 +429,33 @@ test('作废文件清理失败保留重试记录且不能继续下载', async (t
   assert.equal(app.repository.buildJobById(built.job.id).artifact_ref, null);
   assert.throws(() => app.artifactStore.read(ref), { code: 'ENOENT' });
   assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 1);
+});
+
+// Xboard extracts the config directory and serves Blade at /; ZIP paths are not browser URLs.
+test('Blade runtime URL follows Xboard public theme name at root and nested routes', async () => {
+  const app = fixture();
+  try {
+    for (const wrapper of ['', 'download-wrapper/']) {
+      const sourceBuffer = writeZip(new Map([
+        [wrapper + 'config.json', Buffer.from(JSON.stringify({ name: 'CustomTheme', version: '1.0.0' }))],
+        [wrapper + 'dashboard.blade.php', Buffer.from('<html><head><base href="/account/"></head><body>Theme</body></html>')],
+        [wrapper + 'editor.html', Buffer.from('<html><head></head><body>Editor</body></html>')],
+      ]));
+      const result = await app.buildEngine.build({ sourceBuffer, product: 'appgog', version: '1.0.0',
+        buildId: 'bld-runtime-path', packageId: 'pkg-runtime-path', packageSecret: 'fixture-only-package-proof-for-runtime-path',
+        packageManifestToken: 'fixture-token', watermark: 'fixture-path', domain: 'demo.example.com' });
+      const files = readZip(result.buffer);
+      const manifest = JSON.parse(files.get(wrapper + 'appgog-license/build.json'));
+      const expected = '/theme/CustomTheme/' + manifest.protection.runtime_path.slice(wrapper.length);
+      const blade = files.get(wrapper + 'dashboard.blade.php').toString();
+      const src = blade.match(/data-appgog-license-runtime="[^"]+" src="([^"]+)"/)[1];
+      for (const base of ['https://demo.example.com/', 'https://demo.example.com/account/', 'https://demo.example.com/nested/route']) {
+        assert.equal(new URL(src, base).pathname, expected);
+      }
+      const editor = files.get(wrapper + 'editor.html').toString();
+      const editorSrc = editor.match(/data-appgog-license-runtime="[^"]+" src="([^"]+)"/)[1];
+      assert.equal(new URL(editorSrc, 'https://demo.example.com/theme/CustomTheme/editor.html').pathname, expected);
+      assert.ok(files.has(wrapper + expected.slice('/theme/CustomTheme/'.length)));
+    }
+  } finally { app.close(); }
 });

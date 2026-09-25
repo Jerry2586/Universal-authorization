@@ -314,7 +314,11 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     for (const entry of entries) {
       const html = files.get(entry).toString('utf8');
       const relative = posix.relative(posix.dirname(entry), runtimePath);
-      const runtimeSrc = relative.startsWith('.') ? relative : `./${relative}`;
+      // Blade is rendered at the site route, not at its ZIP directory. Xboard
+      // publishes theme assets under config.name, independent of the ZIP wrapper.
+      const runtimeSrc = entry.toLowerCase().endsWith('.blade.php')
+        ? `/theme/${theme.name}/${posix.relative(root || '.', runtimePath)}`
+        : (relative.startsWith('.') ? relative : `./${relative}`);
       files.set(entry, Buffer.from(injectRuntime(html, runtimeSrc, packageId), 'utf8'));
     }
     files.set(`${root}APPGOG-ACTIVATION.txt`, Buffer.from([
