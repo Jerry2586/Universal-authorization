@@ -20,7 +20,12 @@ export async function runWorkerOnce({
     }
   }
   async function request(path, options, timeoutMs) {
-    return networkOperation(() => fetchImpl(new URL(path, baseUrl), { ...options, signal: AbortSignal.timeout(timeoutMs) }));
+    // Obfuscation can block the event loop beyond the server's idle timeout.
+    // Close each response connection so later state-changing calls never reuse
+    // a socket closed during that work. Do not replay lease/complete requests.
+    const headers = new Headers(options.headers);
+    headers.set('connection', 'close');
+    return networkOperation(() => fetchImpl(new URL(path, baseUrl), { ...options, headers, signal: AbortSignal.timeout(timeoutMs) }));
   }
   async function post(path, body) {
     const response = await request(path, {

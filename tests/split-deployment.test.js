@@ -38,7 +38,12 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   const app = bootstrap({ database, config, privateKey, publicKey: publicKeyPem });
   const buildNode = app.portal.createServiceNode({ name: '独立打包中心', role: 'build-center', public_url: 'https://build.example.com' }, 'test-owner');
   const workerNode = app.portal.createServiceNode({ name: '独立构建节点', role: 'worker' }, 'test-owner');
-  const center = createServer(createHttpHandler({ ...app, config, publicKey: publicKeyPem }));
+  const workerSockets = [];
+  const handler = createHttpHandler({ ...app, config, publicKey: publicKeyPem });
+  const center = createServer((request, response) => {
+    if (request.url.startsWith('/api/v1/worker/')) workerSockets.push(request.socket);
+    return handler(request, response);
+  });
   center.listen(0, '127.0.0.1');
   await once(center, 'listening');
   const centerUrl = `http://127.0.0.1:${center.address().port}`;
@@ -97,6 +102,10 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
     artifactStore: remoteWorkerStore, publicKey: publicKeyPem, publicBaseUrl: centerUrl, remoteTransfer: true,
   });
   assert.equal(worked, true);
+  // Lease, two progress reports, source, artifact and completion each get a
+  // fresh connection: CPU-heavy work must not leave a stale pooled socket.
+  assert.equal(workerSockets.length, 6);
+  assert.equal(new Set(workerSockets).size, 6);
   const storedJob = app.repository.buildJobById(queued.data.id);
   assert.equal(storedJob.lease_owner, workerNode.node.id);
   const detail = await send(buildUrl, `/web/customer/builds/${queued.data.id}`, { cookie: customerCookie });
@@ -154,4 +163,13 @@ test('Worker 下载响应体停滞也返回阶段超时诊断', async () => {
       assert.equal(error.code, 'WORKER_TIMEOUT'); assert.match(error.message, /领取构建任务/); return true;
     });
   } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+});
+
+ test('Worker 不重试响应丢失的领取请求，避免重复领取任务', async (t) => {
+  let calls = 0;
+  const server = createServer((request) => { calls++; request.resume(); request.socket.destroy(); });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
+  await assert.rejects(runWorkerOnce({ baseUrl: 'http://127.0.0.1:' + server.address().port, token: 'test', workerId: 'lost-response' }), { code: 'WORKER_UND_ERR_SOCKET' });
+  assert.equal(calls, 1);
 });
