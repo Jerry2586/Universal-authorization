@@ -301,12 +301,14 @@ export function browserLicenseRuntime(config) {
       activationAdminRequired = true;
     }
     if (runtime?.state) store({ ...(saved || {}), ...runtime.state });
-    if (adminToken()) {
+    // Activated pages use the public signed runtime state; secrets stay in the bridge.
+    if (adminToken() && !saved?.activation_id) {
       const remote = await bridgeRequest('/state/read', {
         package_id: config.i, package_proof: packageProof(),
       }, true);
       if (remote?.state) store({ ...(saved || {}), ...remote.state });
-    } else if (saved) {
+    }
+    if (saved && (!adminToken() || saved.activation_id)) {
       const { refresh_secret, install_receipt_secret, install_window_token, ...runtimeSafeState } = saved;
       store(runtimeSafeState);
     }

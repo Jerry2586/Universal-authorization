@@ -495,12 +495,14 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
   const writes = [];
   const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
   let serverState = { ...initial };
+  let adminReads = 0;
   const fetchImpl = async (url, options={}) => {
     const path = new URL(url, 'https://demo.example.com').pathname;
     if (path.endsWith('/health')) return Response.json({ok:true,code:'appgog_license_bridge',version:'1.0.2',identity});
     if (path === '/api/v2/secure_test/plugin/getPlugins') return Response.json({data:[]});
     if (path.endsWith('/register')) return Response.json(identity);
-    if (path.endsWith('/state/runtime') || path.endsWith('/state/read')) return Response.json({state:serverState});
+    if (path.endsWith('/state/runtime')) return Response.json({state:Object.fromEntries(Object.entries(serverState).filter(([field])=>['install_window_id','install_window_expires_at','backend_origin','activation_id','activation_token','denied'].includes(field)))});
+    if (path.endsWith('/state/read')) { adminReads += 1; return Response.json({state:serverState}); }
     if (path.endsWith('/state/write')) { const state = JSON.parse(options.body).state; writes.push(state); serverState={...serverState,...state}; return Response.json({saved:true}); }
     if (path === '/api/v2/install-unlocks') return Response.json({install_receipt_id:'receipt',install_receipt_secret:'receipt-secret'});
     if (path === '/api/v1/installation-challenges') return Response.json({challenge_id:'challenge'});
@@ -536,5 +538,18 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     for(const field of ['install_window_token','install_receipt_secret','refresh_secret']) assert.equal(activated[field],undefined);
     assert.equal(serverState.refresh_secret,'refresh-secret');
     assert.equal(serverState.install_window_token,'window-proof');
+  } finally { browser.restore(); }
+  // Real reload used to repopulate secrets through the admin state endpoint.
+  const readsBeforeReload = adminReads;
+  browser=boot();
+  try {
+    await browser.settle();
+    const reloaded=JSON.parse(values.get(key));
+    assert.equal(adminReads,readsBeforeReload);
+    assert.equal(reloaded.activation_id,'activation');
+    assert.equal(reloaded.xboard_admin_path,'secure_test');
+    assert.equal(browser.classes.has('__appgog_unlocked'),true);
+    for(const field of ['install_window_token','install_receipt_secret','refresh_secret']) assert.equal(reloaded[field],undefined);
+    assert.equal(serverState.refresh_secret,'refresh-secret');
   } finally { browser.restore(); }
 });
