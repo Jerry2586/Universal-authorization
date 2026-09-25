@@ -71,7 +71,7 @@ export function verifySourceContract() {
   requireCondition(dockerInstallLibrary.includes('[ "$compose_minor" -ge "$required_minor" ]'), 'Docker 公共库缺少最低 Compose 版本判断');
   requireCondition(installer.includes(`appgog_compose_version_supported ${composeMinor}`), 'Linux 安装器最低 Compose 版本不匹配');
   requireCondition(read('scripts/docker.sh').includes(`appgog_compose_version_supported ${composeMinor}`), 'Docker 管理脚本最低 Compose 版本不匹配');
-  for (const library of ['common', 'platform', 'docker-install', 'release-download', 'dns', 'backup', 'diagnostics', 'lifecycle']) {
+  for (const library of ['common', 'platform', 'docker-install', 'release-download', 'release-install', 'dns', 'backup', 'diagnostics', 'lifecycle', 'manager-migration']) {
     requireCondition(existsSync(join(root, `scripts/lib/${library}.sh`)), `缺少运维模块 scripts/lib/${library}.sh`);
   }
   const migrationScript = read('scripts/migration.sh');
@@ -98,6 +98,12 @@ export function verifySourceContract() {
   requireCondition(workflow.includes('node scripts/verify-release-contract.js --source'), 'GitHub Actions 缺少源文件发布合同检查');
   requireCondition(workflow.includes('node scripts/verify-release-contract.js --artifacts'), 'GitHub Actions 缺少安装包发布合同检查');
   requireCondition(workflow.includes("APPGOG_ALLOW_UNSIGNED_ARTIFACTS: '1'"), 'GitHub Actions 未明确标记非正式无签名制品');
+  const dockerVerification = read('scripts/docker/verify.sh');
+  requireCondition(dockerVerification.includes('APPGOG forced candidate startup failure'), 'Docker E2E 缺少候选启动失败回滚');
+  requireCondition(dockerVerification.includes('APPGOG_NO_CACHE=true'), 'Docker E2E 缺少源码修复数据保留验证');
+  const publishedVerifier = read('scripts/verify-published-release.js');
+  requireCondition(publishedVerifier.includes('/releases/latest'), '缺少 GitHub Latest Release 回下载校验');
+  requireCondition(publishedVerifier.includes('verifyPackagedArtifacts'), 'GitHub 回下载没有复用本地制品合同');
 
   requireCondition(read('README.md').startsWith(`# APPGOG打包授权系统 v${version}\n`), 'README 标题版本不匹配');
   requireCondition(read('docs/architecture.md').startsWith(`# APPGOG打包授权系统架构（v${version}）\n`), '架构文档版本不匹配');
@@ -114,9 +120,17 @@ export function verifySourceContract() {
   return { packageManifest, contract, version };
 }
 
-export function verifyPackagedArtifacts({ allowUnsigned = false } = {}) {
-  const { packageManifest, contract, version } = verifySourceContract();
-  const dist = join(root, 'dist');
+export function verifyPackagedArtifacts({
+  allowUnsigned = false,
+  artifactDirectory = join(root, 'dist'),
+  expectedVersion,
+  publicKeyPem = read('scripts/release-public.pem'),
+} = {}) {
+  const { packageManifest, contract, version: sourceVersion } = verifySourceContract();
+  const version = expectedVersion ?? sourceVersion;
+  requireCondition(/^\d+\.\d+\.\d+$/.test(version), `期望版本 ${version} 不是正式语义版本`);
+  requireCondition(packageManifest.version === version, `源码版本 ${packageManifest.version} 与期望版本 ${version} 不匹配`);
+  const dist = resolve(artifactDirectory);
   const releaseName = `APPGOG-Packaging-Licensing-System-${version}`;
   const zipPath = join(dist, `${releaseName}.zip`);
   const runPath = join(dist, `${releaseName}.run`);
@@ -139,13 +153,13 @@ export function verifyPackagedArtifacts({ allowUnsigned = false } = {}) {
   requireCondition(readFileSync(`${runPath}.sha256`, 'utf8') === `${releaseManifest.run_sha256}  ${releaseManifest.run_name}\n`, 'RUN SHA-256 文件内容不匹配');
   requireCondition(readFileSync(join(dist, 'install.sh'), 'utf8') === read('install-docker.sh').replaceAll('\r\n', '\n'), 'dist/install.sh 与稳定引导器不一致');
   if (existsSync(signaturePath)) {
-    requireCondition(verify(null, readFileSync(manifestPath), read('scripts/release-public.pem'), readFileSync(signaturePath)),
+    requireCondition(verify(null, readFileSync(manifestPath), publicKeyPem, readFileSync(signaturePath)),
       'release-manifest.json.sig Ed25519 验签失败');
   }
   const runContents = readFileSync(runPath, 'utf8');
   if (!allowUnsigned) {
     requireCondition(runContents.includes('openssl pkeyutl -verify'), '正式 RUN 缺少内嵌 Ed25519 验签步骤');
-    requireCondition(runContents.includes(Buffer.from(read('scripts/release-public.pem')).toString('base64')),
+    requireCondition(runContents.includes(Buffer.from(publicKeyPem).toString('base64')),
       '正式 RUN 内嵌发布公钥不匹配');
   }
 

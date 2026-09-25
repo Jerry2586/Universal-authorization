@@ -1,6 +1,6 @@
 # APPGOG 强制升级与发布标准
 
-日期：2026-09-24
+日期：2026-09-25
 
 本标准是仓库正式版本的阻断条件，不是建议。根目录 `AGENTS.md` 约束开发流程，`release-contract.json` 保存机器可读的环境合同，`scripts/verify-release-contract.js` 和 GitHub Actions 负责自动阻断不一致版本。
 
@@ -44,8 +44,10 @@
 4. 本地验证签名、ZIP/RUN 哈希和包内版本/环境合同。
 5. 提交并推送 `main`，等待 GitHub Ubuntu/Docker CI 完成真实首装、构建、升级和恢复。
 6. CI 成功后创建版本标签和 Latest Release。
-7. 从 GitHub 回下载七个附件，重新验证签名、哈希与 Latest 状态。
+7. 执行 `node scripts/verify-published-release.js --tag v<版本>`，从 GitHub Release API 返回的地址回下载七个附件，重新验证签名、ZIP/RUN 哈希、版本、精确附件数量与 Latest 状态。
 
 任意一步失败都必须停止发布。升级失败时保留数据与备份、保存独立诊断日志，并恢复原健康版本。
 
 `node scripts/verify-release-contract.js --artifacts` 默认要求并验证 `release-manifest.json.sig`。GitHub PR/CI 由于不保存正式私钥，只能显式设置 `APPGOG_ALLOW_UNSIGNED_ARTIFACTS=1` 做非正式制品结构与 Docker 流程验证；该 CI 产物不得直接作为正式 Release。发布操作员本地不得设置此开关。
+
+`scripts/verify-published-release.js` 默认仓库为 `Jerry2586/Universal-authorization`，可用 `--repo owner/name`、`--api-base URL` 和 `--output DIR` 指定企业 GitHub 或保留下载目录。除历史审计显式使用 `--allow-not-latest` 外，正式发布验收必须要求目标标签就是 GitHub Latest Release。

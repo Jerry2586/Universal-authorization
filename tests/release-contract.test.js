@@ -22,6 +22,10 @@ test('正式打包流程必须在生成前后执行发布合同校验', () => {
   assert.match(verifier, /Ed25519 验签失败/);
   assert.match(verifier, /正式 RUN 缺少内嵌 Ed25519 验签步骤/);
   assert.match(verifier, /APPGOG_ALLOW_UNSIGNED_ARTIFACTS === '1'/);
+  const publishedVerifier = readFileSync(resolve(root, 'scripts/verify-published-release.js'), 'utf8');
+  assert.match(publishedVerifier, /releases\/latest/);
+  assert.match(publishedVerifier, /assets\.length === expectedNames\.length/);
+  assert.match(publishedVerifier, /verifyPackagedArtifacts/);
   const policy = readFileSync(resolve(root, 'AGENTS.md'), 'utf8');
   assert.match(policy, /CI 成功后才能创建版本标签/);
   assert.match(policy, /数据库.*管理员账号和密码.*授权 Key.*公告.*设置/s);

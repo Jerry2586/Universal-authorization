@@ -14,6 +14,8 @@ const scripts = {
   manager: join(root, 'scripts/appgog.sh'),
   updateHelper: join(root, 'scripts/update-helper.sh'),
   releaseDownloadLibrary: join(root, 'scripts/lib/release-download.sh'),
+  releaseInstallLibrary: join(root, 'scripts/lib/release-install.sh'),
+  managerMigrationLibrary: join(root, 'scripts/lib/manager-migration.sh'),
   migration: join(root, 'scripts/migration.sh'),
   dockerInstallLibrary: join(root, 'scripts/lib/docker-install.sh'),
   platformLibrary: join(root, 'scripts/lib/platform.sh'),
@@ -27,6 +29,7 @@ function text(path) {
 
 test('Linux installer installs Docker, protects existing configuration, and creates the global manager', () => {
   const installer = text(scripts.installer);
+  const releaseInstaller = text(scripts.releaseInstallLibrary);
   assert.match(installer, /docker-ce docker-ce-cli containerd\.io docker-buildx-plugin docker-compose-plugin/);
   assert.match(installer, /appgog_compose_version_supported 24/);
   assert.match(text(scripts.dockerInstallLibrary), /compose_minor.*-ge "\$required_minor"/);
@@ -37,8 +40,9 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /add-port=443\/udp/);
   assert.match(installer, /verify_download/);
   assert.match(installer, /--source MODE/);
-  assert.match(installer, /release-manifest\.json\.sig/);
-  assert.match(installer, /openssl pkeyutl -verify/);
+  assert.match(installer, /scripts\/lib\/release-install\.sh/);
+  assert.match(releaseInstaller, /release-manifest\.json\.sig/);
+  assert.match(releaseInstaller, /openssl pkeyutl -verify/);
   assert.match(installer, /cloudflare_upsert_record/);
   assert.match(installer, /APPGOG_DOCKER_REGISTRY_MIRROR/);
   assert.match(installer, /select_base_images/);
@@ -94,7 +98,7 @@ test('stable bootstrap downloads, verifies, installs, upgrades, and rejects down
 test('existing installations bypass the fresh-install DNS ownership gate during upgrades', () => {
   const installer = text(scripts.installer);
   const start = installer.indexOf('preflight_network() {');
-  const end = installer.indexOf('\n}\n\nverify_download()', start);
+  const end = installer.indexOf('\n}\n\nprompt_domain()', start);
   assert.ok(start >= 0 && end > start, '无法定位安装器网络预检函数');
   const preflight = installer.slice(start, end);
   assert.match(preflight, /if \[ "\$UPGRADE_MODE" = true \]; then/);
@@ -123,6 +127,8 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
   assert.match(manager, /安全更新最新版本/);
   assert.doesNotMatch(manager, /appgog rollback|回滚最近一次更新/);
   assert.match(manager, /migration-rollback-export/);
+  assert.match(manager, /scripts\/lib\/manager-migration\.sh/);
+  assert.match(text(scripts.managerMigrationLibrary), /rollback-inbox/);
   assert.match(manager, /migration-rollback-import/);
   assert.doesNotMatch(manager, /rm -f "\$fence"/);
 });
