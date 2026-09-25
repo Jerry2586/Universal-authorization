@@ -299,9 +299,9 @@ export function createSqliteStatements(database) {
     insertSourceVersion: database.prepare(`
       INSERT INTO source_versions (
         id, product_id, version, display_name, source_kind, source_ref, status,
-        release_notes, channel, release_kind, min_xboard_version, min_upgrade_version,
+        release_notes, channel, release_kind, access_tier, min_xboard_version, min_upgrade_version,
         rollback_allowed, rollback_to, published_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     sourceVersionById: database.prepare(`
       SELECT source_versions.*, products.code AS product_code
@@ -316,7 +316,7 @@ export function createSqliteStatements(database) {
     publishSourceVersion: database.prepare(`
       UPDATE source_versions
       SET display_name = ?, source_kind = ?, source_ref = ?, release_notes = ?, channel = ?, release_kind = ?,
-        min_xboard_version = ?, min_upgrade_version = ?, rollback_allowed = ?, rollback_to = ?,
+        access_tier = ?, min_xboard_version = ?, min_upgrade_version = ?, rollback_allowed = ?, rollback_to = ?,
         published_at = ?, status = 'active', withdrawn_reason = NULL
       WHERE id = ? AND status = 'draft'
     `),

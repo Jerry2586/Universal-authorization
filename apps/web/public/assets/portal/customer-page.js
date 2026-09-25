@@ -43,17 +43,20 @@ export function createCustomerPage(shell) {
     const name = element('div', null, 'version-name-row');
     name.append(element('strong', version.display_name || `APPGOG ${version.version}`));
     if (version.is_latest) name.append(element('span', '最新版本', 'badge success'));
+    if (version.is_latest_eligible && !version.is_latest) name.append(element('span', '你的最新版本', 'badge success'));
     if (version.is_current) name.append(element('span', '当前版本', 'badge'));
+    name.append(element('span', version.access_tier === 'paid' ? '仅付费授权' : '免费授权可用', `badge ${version.access_tier === 'paid' ? '' : 'success'}`));
     identity.append(name, element('small', `${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)}`));
-    top.append(identity, element('span', version.eligible === false ? '当前授权不可用' : '可构建', `status-pill ${version.eligible === false ? '' : 'status-success'}`));
+    top.append(identity, element('span', version.eligible === false ? (version.eligibility_reason || '当前授权不可用') : '可构建', `status-pill ${version.eligible === false ? '' : 'status-success'}`));
     const notes = element('p', version.release_notes || '本版本暂无更新说明。', 'version-notes');
     const footer = element('div', null, 'version-card-footer');
     const eligible = version.eligible !== false;
     let intent = 'update';
     let label = '构建更新包';
     if (version.is_current) { intent = 'reinstall'; label = '重新构建当前版本'; }
-    const allowed = eligible && (version.is_latest || version.is_current);
-    const action = button(allowed ? label : '历史版本仅供查看', () => createCustomerBuild(version, intent, action), `button ${version.is_current ? 'button-secondary' : 'button-primary'}`);
+    const allowed = eligible && (version.is_latest_eligible || version.is_current);
+    const unavailableLabel = !eligible ? (version.eligibility_reason || '当前授权不可用') : '历史版本仅供查看';
+    const action = button(allowed ? label : unavailableLabel, () => createCustomerBuild(version, intent, action), `button ${version.is_current ? 'button-secondary' : 'button-primary'}`);
     action.disabled = !allowed;
     footer.append(element('small', date(version.created_at || version.published_at)), action);
     item.append(top, notes, element('div', null, 'version-meta'), footer);
@@ -118,7 +121,7 @@ export function createCustomerPage(shell) {
       empty.append(element('span', '▦'), element('strong', '暂无可用版本'), element('p', '授权管理员发布版本后会显示在这里。'));
       catalog.append(empty);
     } else {
-      versions.filter((version) => version.is_latest || version.is_current)
+      versions.filter((version) => version.is_latest || version.is_latest_eligible || version.is_current)
         .forEach((version) => catalog.append(customerVersionCard(version)));
     }
     renderRows('recent-build-list', builds.slice(0, 5), 6, customerRow, '还没有构建任务');

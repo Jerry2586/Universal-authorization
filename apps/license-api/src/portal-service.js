@@ -3,11 +3,11 @@ import { createCustomerPortalService } from './modules/customer/service.js';
 import { createLicenseErasureService } from './modules/licensing/erasure-service.js';
 
 export function createPortalService({
-  database, repositories, licensing, operations, support, artifactStore,
+  database, repositories, licensing, entitlementAccess, operations, support, artifactStore,
   clock = () => new Date(), packageVersion = 'development',
 }) {
   const customer = createCustomerPortalService({
-    repository: repositories.customer, licensing, support, clock, packageVersion,
+    repository: repositories.customer, licensing, entitlementAccess, support, clock, packageVersion,
   });
   const admin = createAdminOverviewService({
     repository: repositories.adminOverview, licensing, operations, support, clock,

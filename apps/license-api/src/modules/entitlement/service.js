@@ -3,7 +3,30 @@ import { transaction } from '../../database.js';
 import { iso, parseJsonObject } from '../shared/service-utils.js';
 
 export function createEntitlementService({ database, repository, activationLifecycle, audit, clock = () => new Date() }) {
+  function versionEligibility({ license, source }) {
+    const accessTier = source?.access_tier === 'paid' ? 'paid' : 'free';
+    const planCode = license?.plan_code ?? 'legacy';
+    if (accessTier === 'paid' && planCode === 'free') {
+      return Object.freeze({
+        eligible: false,
+        code: 'VERSION_PLAN_REQUIRED',
+        reason: '该版本仅限付费授权使用',
+        accessTier,
+        planCode,
+      });
+    }
+    return Object.freeze({ eligible: true, code: null, reason: null, accessTier, planCode });
+  }
+
+  function assertVersionAccess({ license, source }) {
+    const result = versionEligibility({ license, source });
+    invariant(result.eligible, result.code, result.reason, 403);
+    return result;
+  }
+
   return Object.freeze({
+    versionEligibility,
+    assertVersionAccess,
     changeLicensePlan({ licenseId, planCode, actorId = null }) {
       const license = repository.licenseById(licenseId);
       invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);

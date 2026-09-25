@@ -127,11 +127,11 @@ export function createAdminPage(shell) {
       const form = event.currentTarget; const submit = form.querySelector('[type="submit"]'); submit.disabled = true;
       try {
         const fields = new FormData(form);
-        await request('/web/admin/cms/settings', { method: 'POST', body: {
+        const saved = await request('/web/admin/cms/settings', { method: 'POST', body: {
           platform_name: String(fields.get('platform_name') || '').trim(),
           domain_migration_cooldown_hours: Number(fields.get('domain_migration_cooldown_hours')),
         } });
-        notify('运营设置已保存'); await refresh();
+        notify(`运营设置已保存并同步生效：${saved.platform_name}`); await refresh();
       } catch (error) { notify(error.message, true); }
       finally { submit.disabled = false; }
     });

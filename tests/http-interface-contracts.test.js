@@ -80,6 +80,8 @@ test('HTTP contracts: operations, admin lifecycle, license key rotation and revo
   const post = (path, body, status = 200) => send(path, { actor: admin, body, status });
   const cms = await post('/web/admin/cms/settings', { platform_name: 'HTTP contract platform', domain_migration_cooldown_hours: 0 });
   assert.equal(cms.data.platform_name, 'HTTP contract platform');
+  const branding = await send('/web/branding', { status: 200 });
+  assert.equal(branding.data.platform_name, 'HTTP contract platform');
   const announcement = await post('/web/admin/announcement', { title: 'Notice', body: 'Contract verified', enabled: true });
   assert.equal(announcement.data.announcement_enabled, true);
   const node = (await post('/web/admin/cms/nodes', { name: 'Contract worker', role: 'worker' }, 201)).data;

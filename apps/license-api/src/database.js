@@ -18,6 +18,7 @@ const MIGRATIONS = Object.freeze({
     ['release_notes', "TEXT NOT NULL DEFAULT ''"],
     ['channel', "TEXT NOT NULL DEFAULT 'stable'"],
     ['release_kind', "TEXT NOT NULL DEFAULT 'feature'"],
+    ['access_tier', "TEXT NOT NULL DEFAULT 'free'"],
     ['min_xboard_version', 'TEXT'],
     ['min_upgrade_version', 'TEXT'],
     ['rollback_allowed', 'INTEGER NOT NULL DEFAULT 1'],
@@ -231,6 +232,12 @@ function migrate(database) {
     addMissingColumns(database, { activations: MIGRATIONS.activations });
     database.prepare('SELECT 1 FROM install_activation_windows LIMIT 1').get();
     database.prepare('SELECT 1 FROM offline_license_files LIMIT 1').get();
+  });
+
+  const versionAccessTierVersion = '2026-09-25-v1.2.24-version-access-tier';
+  runMigration(database, versionAccessTierVersion, () => {
+    addMissingColumns(database, { source_versions: [['access_tier', "TEXT NOT NULL DEFAULT 'free'"]] });
+    database.exec("UPDATE source_versions SET access_tier = 'free' WHERE access_tier IS NULL OR access_tier NOT IN ('free', 'paid')");
   });
 }
 

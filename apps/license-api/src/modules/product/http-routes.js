@@ -9,6 +9,7 @@ export async function handleProductHttp({
     const version = portal.registerSourceVersion({
       productCode: body.product_code, version: body.version, displayName: body.display_name,
       releaseNotes: body.release_notes, channel: body.channel, releaseKind: body.release_kind,
+      accessTier: body.access_tier,
     });
     respondJson(response, 201, versionResult(version));
     return true;
@@ -22,6 +23,7 @@ export async function handleProductHttp({
       version: url.searchParams.get('version'), displayName: url.searchParams.get('display_name'),
       sourceFilename: url.searchParams.get('source_filename'), releaseNotes: url.searchParams.get('release_notes'),
       channel: url.searchParams.get('channel'), releaseKind: url.searchParams.get('release_kind'),
+      accessTier: url.searchParams.get('access_tier'),
       actorId: admin.actor_id, zipBuffer: await readBuffer(request, config.maxSourceUploadBytes),
     });
     respondJson(response, 201, versionResult(version));
@@ -45,6 +47,6 @@ export async function handleProductHttp({
 function versionResult(version) {
   return {
     id: version.id, version: version.version, display_name: version.display_name,
-    source_kind: version.source_kind, status: version.status,
+    source_kind: version.source_kind, status: version.status, access_tier: version.access_tier,
   };
 }

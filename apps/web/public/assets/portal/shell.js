@@ -17,6 +17,16 @@ export function createPortalShell(actor) {
     state.notificationTimer = setTimeout(() => { toast.hidden = true; }, 5000);
   }
 
+  function applyBranding(branding = {}) {
+    const platformName = String(branding.platform_name || 'APPGOG打包授权系统').trim();
+    document.querySelectorAll('[data-brand-name]').forEach((item) => { item.textContent = platformName; });
+    document.querySelectorAll('.wordmark span').forEach((item) => { item.textContent = platformName; });
+    document.querySelectorAll('.admin-entry-footer span:nth-child(2)').forEach((item) => {
+      item.textContent = `${platformName} · ${actor === 'customer' ? '主题交付' : '授权管理平台'}`;
+    });
+    document.title = `${actor === 'customer' ? '打包中心' : '运营管理后台'} · ${platformName}`;
+  }
+
   function setView(authenticated) {
     const login = $('login-view');
     const dashboard = $('dashboard-view');
@@ -56,6 +66,7 @@ export function createPortalShell(actor) {
     try {
       const data = await api.request(`/web/${actor}/overview`);
       state.data = data;
+      applyBranding(actor === 'admin' ? data.cms : data);
       controller.render(data);
     } catch (error) { notify(error.message, true); }
     finally { state.loading = false; }
@@ -136,11 +147,17 @@ export function createPortalShell(actor) {
     } catch { setView(false); }
   }
 
+  async function loadBranding() {
+    try { applyBranding(await api.request('/web/branding')); }
+    catch { applyBranding(); }
+  }
+
   function mount(pageController) {
     if (document.body.dataset.portal !== actor) throw new Error(`门户入口不匹配：${actor}`);
     controller = pageController;
     bindChrome();
     controller.bind();
+    loadBranding();
     restoreSession();
   }
 

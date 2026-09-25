@@ -18,6 +18,11 @@ export async function handlePublicHttp({
     return true;
   }
 
+  if (method === 'GET' && url.pathname === '/web/branding') {
+    respondJson(response, 200, portal.branding());
+    return true;
+  }
+
   if (method === 'GET' && url.pathname === '/api/v1/releases/latest') {
     const product = url.searchParams.get('product') ?? 'appgog';
     invariant(product === 'appgog', 'PRODUCT_NOT_FOUND', '产品不存在', 404);

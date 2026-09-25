@@ -9,7 +9,7 @@ import { transaction } from '../../database.js';
 import { addSeconds, startOfRollingDay } from '../shared/service-utils.js';
 
 export function createBuildAuthorizationService({
-  database, repository, licensingAccess, audit, config, packagePrivateKey, clock = () => new Date(),
+  database, repository, licensingAccess, entitlementAccess, audit, config, packagePrivateKey, clock = () => new Date(),
 }) {
   function packageManifestPayload({ buildId, packageId, product, version, domain, watermark }, nowDate) {
     return {
@@ -70,6 +70,7 @@ export function createBuildAuthorizationService({
         const source = repository.sourceVersionByProductVersion(license.product_code, version.trim());
         if (source) {
           invariant(source.status === 'active', 'SOURCE_VERSION_NOT_READY', '该主题版本不可构建', 409);
+          entitlementAccess.assertVersionAccess({ license, source });
           if (license.update_until) invariant(new Date(source.published_at ?? source.created_at) <= new Date(license.update_until),
             'UPDATE_WINDOW_EXPIRED', '该版本发布时间已超出更新服务期限', 403);
         } else if (license.update_until) {
@@ -110,6 +111,7 @@ export function createBuildAuthorizationService({
         invariant(license.bound_domain === normalizedDomain, 'LICENSE_DOMAIN_MISMATCH', '构建域名与固定 Key 绑定域名不一致', 403);
         const source = repository.sourceVersionByProductVersion(license.product_code, version.trim());
         invariant(source && source.status === 'active', 'SOURCE_VERSION_NOT_READY', '当前主题版本不可构建', 409);
+        entitlementAccess.assertVersionAccess({ license, source });
         if (license.update_until) invariant(new Date(source.published_at ?? source.created_at) <= new Date(license.update_until),
           'UPDATE_WINDOW_EXPIRED', '该版本发布时间已超出更新服务期限', 403);
         const recent = repository.recentBuildCount(license.id, startOfRollingDay(nowDate));

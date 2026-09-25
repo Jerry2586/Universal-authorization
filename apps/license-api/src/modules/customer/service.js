@@ -2,7 +2,7 @@ import { publicBuildJob } from '../../../../../packages/contracts/src/build-job.
 import { invariant } from '../../../../../packages/core/src/errors.js';
 
 export function createCustomerPortalService({
-  repository, licensing, support, clock = () => new Date(), packageVersion = 'development',
+  repository, licensing, entitlementAccess, support, clock = () => new Date(), packageVersion = 'development',
 }) {
   function customerLicense(session) {
     const license = repository.licenseById(session.actor_id);
@@ -17,6 +17,24 @@ export function createCustomerPortalService({
       const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
       const versions = repository.listActiveSourceVersions(license.product_code);
       const latestVersion = versions[0]?.version ?? null;
+      const projectedVersions = versions.map((version) => {
+        const entitlement = entitlementAccess.versionEligibility({ license, source: version });
+        const withinUpdateWindow = !license.update_until
+          || new Date(version.published_at ?? version.created_at) <= new Date(license.update_until);
+        const eligible = entitlement.eligible && withinUpdateWindow;
+        return {
+          version: version.version, display_name: version.display_name, source_kind: version.source_kind,
+          release_notes: version.release_notes, channel: version.channel, release_kind: version.release_kind,
+          access_tier: entitlement.accessTier,
+          min_xboard_version: version.min_xboard_version, min_upgrade_version: version.min_upgrade_version,
+          published_at: version.published_at ?? version.created_at, is_latest: version.version === latestVersion,
+          is_current: version.version === currentVersion,
+          eligible,
+          eligibility_code: eligible ? null : (entitlement.code ?? 'UPDATE_WINDOW_EXPIRED'),
+          eligibility_reason: eligible ? null : (entitlement.reason ?? '该版本发布时间已超出更新服务期限'),
+        };
+      });
+      const latestEligibleVersion = projectedVersions.find((version) => version.eligible)?.version ?? null;
       const migration = repository.latestApprovedDomainMigrationByLicense(license.id);
       const cooldownHours = Math.max(0, Number(repository.setting('domain_migration_cooldown_hours')) || 0);
       const nextAllowedAt = migration?.reviewed_at && cooldownHours > 0
@@ -31,9 +49,11 @@ export function createCustomerPortalService({
       );
       return {
         system_version: packageVersion,
+        platform_name: repository.setting('platform_name') ?? 'APPGOG打包授权系统',
         license: {
           product: license.product_code, key_prefix: license.key_prefix, status: license.status,
           bound_domain: license.bound_domain, update_until: license.update_until,
+          plan_code: license.plan_code ?? 'legacy', plan_name: license.plan_name ?? '历史兼容版',
           max_builds_per_day: license.max_builds_per_day, builds_used_last_24_hours: buildsUsed,
           builds_remaining: Math.max(0, license.max_builds_per_day - buildsUsed), generation: license.generation,
         },
@@ -52,17 +72,12 @@ export function createCustomerPortalService({
           title: announcementTitle, body: announcementBody,
           published_at: repository.setting('announcement_published_at'),
         } : null,
-        versions: versions.map((version) => ({
-          version: version.version, display_name: version.display_name, source_kind: version.source_kind,
-          release_notes: version.release_notes, channel: version.channel, release_kind: version.release_kind,
-          min_xboard_version: version.min_xboard_version, min_upgrade_version: version.min_upgrade_version,
-          published_at: version.published_at ?? version.created_at, is_latest: version.version === latestVersion,
-          is_current: version.version === currentVersion,
-          eligible: !license.update_until
-            || new Date(version.published_at ?? version.created_at) <= new Date(license.update_until),
+        versions: projectedVersions.map((version) => ({
+          ...version, is_latest_eligible: version.version === latestEligibleVersion,
         })),
         current_version: currentVersion,
         latest_version: latestVersion,
+        latest_eligible_version: latestEligibleVersion,
         builds: builds.map(publicBuildJob),
         tickets: support.listCustomerTickets(license.id),
       };

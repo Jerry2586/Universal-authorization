@@ -124,16 +124,21 @@ test('admin and customer sessions coexist; build center cannot access admin sess
   assert.equal((await app.send('/web/session?actor=admin', { cookie: bothCookies })).status, 200);
 });
 
-async function issue(app, admin, { customerRef = 'ORDER-SAAS', domain = 'customer.example.com', updateUntil } = {}) {
+async function issue(app, admin, {
+  customerRef = 'ORDER-SAAS', domain = 'customer.example.com', updateUntil, planCode,
+} = {}) {
   const result = await app.send('/web/admin/licenses', {
     method: 'POST', cookie: admin.cookie, csrf: admin.csrf,
-    body: { customer_ref: customerRef, domain, update_until: updateUntil, max_builds_per_day: 10 },
+    body: {
+      customer_ref: customerRef, domain, update_until: updateUntil,
+      ...(planCode ? { plan_code: planCode } : {}), max_builds_per_day: planCode === 'free' ? 1 : 10,
+    },
   });
   assert.equal(result.status, 201);
   return result.data;
 }
 
-function addPublishedVersion(app, { version, publishedAt, releaseNotes = '' }) {
+function addPublishedVersion(app, { version, publishedAt, releaseNotes = '', accessTier = 'free' }) {
   const product = app.repository.productByCode('appgog');
   const zip = writeZip(new Map([
     ['APPGOG/config.json', Buffer.from(JSON.stringify({ name: 'APPGOG', version }))],
@@ -144,11 +149,11 @@ function addPublishedVersion(app, { version, publishedAt, releaseNotes = '' }) {
   app.database.prepare(`
     INSERT INTO source_versions (
       id, product_id, version, display_name, source_kind, source_ref, status,
-      release_notes, channel, release_kind, min_xboard_version, min_upgrade_version,
+      release_notes, channel, release_kind, access_tier, min_xboard_version, min_upgrade_version,
       rollback_allowed, rollback_to, published_at, created_at
-    ) VALUES (?, ?, ?, ?, 'official', ?, 'active', ?, 'stable', 'feature', '1.9.0', '1.4.0', 1, '1.4.2', ?, ?)
+    ) VALUES (?, ?, ?, ?, 'official', ?, 'active', ?, 'stable', 'feature', ?, '1.9.0', '1.4.0', 1, '1.4.2', ?, ?)
   `).run(`src_saas_${version}`, product.id, version, `APPGOG ${version}`, ref,
-    releaseNotes, publishedAt, publishedAt);
+    releaseNotes, accessTier, publishedAt, publishedAt);
 }
 
 test('owner creates a release_manager who can log in but cannot issue a license', async (t) => {
@@ -340,6 +345,57 @@ test('安装解锁与正式激活必须分两次提交，禁止双 Key 一步激
   const correct = await activate(build, unlocked.data, licensed.licenseKey, 'installation_two_stage_2');
   assert.equal(correct.status, 201);
   assert.match(correct.data.activation_token, /^[^.]+\.[^.]+\.[^.]+$/);
+});
+
+test('版本发布权益决定客户最新可用版本，并在构建接口再次强制校验', async (t) => {
+  const app = await fixture(t, '2026-09-25T08:00:00.000Z');
+  addPublishedVersion(app, {
+    version: '2.0.0', publishedAt: '2026-09-24T08:00:00.000Z',
+    releaseNotes: '免费维护版本', accessTier: 'free',
+  });
+  addPublishedVersion(app, {
+    version: '2.1.0', publishedAt: '2026-09-25T07:00:00.000Z',
+    releaseNotes: '付费功能版本', accessTier: 'paid',
+  });
+  const owner = await app.owner();
+  const free = await issue(app, owner, {
+    customerRef: 'ORDER-FREE-VERSION', domain: 'free-tier.example.com', planCode: 'free',
+  });
+  const freeCustomer = await app.customer(free.license_key);
+  const freeOverview = await app.send('/web/customer/overview', { cookie: freeCustomer.cookie });
+  assert.equal(freeOverview.status, 200);
+  assert.equal(freeOverview.data.license.plan_code, 'free');
+  assert.equal(freeOverview.data.latest_version, '2.1.0');
+  assert.equal(freeOverview.data.latest_eligible_version, '2.0.0');
+  const locked = freeOverview.data.versions.find((item) => item.version === '2.1.0');
+  assert.equal(locked.access_tier, 'paid');
+  assert.equal(locked.eligible, false);
+  assert.equal(locked.eligibility_code, 'VERSION_PLAN_REQUIRED');
+  assert.equal(freeOverview.data.versions.find((item) => item.version === '2.0.0').is_latest_eligible, true);
+  const denied = await app.send('/web/customer/builds', {
+    method: 'POST', cookie: freeCustomer.cookie, csrf: freeCustomer.csrf,
+    body: { version: '2.1.0', domain: 'free-tier.example.com', intent: 'update' },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.data.error.code, 'VERSION_PLAN_REQUIRED');
+  const allowedFree = await app.send('/web/customer/builds', {
+    method: 'POST', cookie: freeCustomer.cookie, csrf: freeCustomer.csrf,
+    body: { version: '2.0.0', domain: 'free-tier.example.com', intent: 'update' },
+  });
+  assert.equal(allowedFree.status, 201);
+
+  const paid = await issue(app, owner, {
+    customerRef: 'ORDER-PAID-VERSION', domain: 'paid-tier.example.com', planCode: 'paid',
+  });
+  const paidCustomer = await app.customer(paid.license_key);
+  const paidOverview = await app.send('/web/customer/overview', { cookie: paidCustomer.cookie });
+  assert.equal(paidOverview.data.latest_eligible_version, '2.1.0');
+  assert.equal(paidOverview.data.versions.find((item) => item.version === '2.1.0').eligible, true);
+  const allowedPaid = await app.send('/web/customer/builds', {
+    method: 'POST', cookie: paidCustomer.cookie, csrf: paidCustomer.csrf,
+    body: { version: '2.1.0', domain: 'paid-tier.example.com', intent: 'update' },
+  });
+  assert.equal(allowedPaid.status, 201);
 });
 
 test('customer build API rejects rollback intent and does not enqueue a job', async (t) => {
@@ -938,6 +994,7 @@ test('已有 SQLite 数据库自动追加新字段并保留原管理员身份', 
       assert.equal(owner.role, 'owner');
       assert.equal(owner.is_owner, 1);
       assert.ok(upgraded.prepare('PRAGMA table_info(source_versions)').all().some((column) => column.name === 'release_notes'));
+      assert.ok(upgraded.prepare('PRAGMA table_info(source_versions)').all().some((column) => column.name === 'access_tier'));
       assert.ok(upgraded.prepare('PRAGMA table_info(build_jobs)').all().some((column) => column.name === 'intent'));
       assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'install_receipts'").get());
       assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'domain_migration_requests'").get());

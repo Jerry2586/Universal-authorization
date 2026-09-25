@@ -165,6 +165,33 @@ test('免费版能力写入签名激活凭证，SDK 在产品后端强制拒绝�
   app.database.close();
 });
 
+test('版本权益由服务端强制：免费授权拒绝付费版本，付费和历史授权保持兼容', () => {
+  const app = fixture();
+  const product = app.service.ensureProduct();
+  app.repository.createSourceVersion({
+    productId: product.id, version: '2.1.0', displayName: 'APPGOG 2.1.0', sourceKind: 'official',
+    sourceRef: 'sources/appgog/2.1.0/source.zip', status: 'active', releaseNotes: '付费版本',
+    channel: 'stable', releaseKind: 'feature', accessTier: 'paid', rollbackAllowed: false,
+    now: '2026-09-22T00:00:00.000Z',
+  });
+  const free = app.service.issueLicense({ customerRef: 'version-free', domain: 'free-version.example.com', planCode: 'free' });
+  assert.throws(
+    () => app.service.authorizeBuild({
+      licenseKey: free.licenseKey, version: '2.1.0', domain: 'free-version.example.com',
+    }),
+    (error) => error.code === 'VERSION_PLAN_REQUIRED',
+  );
+  const paid = app.service.issueLicense({ customerRef: 'version-paid', domain: 'paid-version.example.com', planCode: 'paid' });
+  assert.ok(app.service.authorizeBuild({
+    licenseKey: paid.licenseKey, version: '2.1.0', domain: 'paid-version.example.com',
+  }).buildTicket);
+  const legacy = app.service.issueLicense({ customerRef: 'version-legacy', domain: 'legacy-version.example.com' });
+  assert.ok(app.service.authorizeBuild({
+    licenseKey: legacy.licenseKey, version: '2.1.0', domain: 'legacy-version.example.com',
+  }).buildTicket);
+  app.database.close();
+});
+
 test('套餐切换原子更新能力与额度快照，并使旧激活立即失效', () => {
   const app = fixture();
   const issued = app.service.issueLicense({ customerRef: 'customer-plan-change', domain: 'plan.example.com', planCode: 'free' });

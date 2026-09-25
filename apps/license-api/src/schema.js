@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS source_versions (
   release_notes TEXT NOT NULL DEFAULT '',
   channel TEXT NOT NULL DEFAULT 'stable',
   release_kind TEXT NOT NULL DEFAULT 'feature',
+  access_tier TEXT NOT NULL DEFAULT 'free',
   min_xboard_version TEXT,
   min_upgrade_version TEXT,
   rollback_allowed INTEGER NOT NULL DEFAULT 1,

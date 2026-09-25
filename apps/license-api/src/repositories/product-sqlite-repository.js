@@ -13,7 +13,7 @@ export function createProductSqliteRepository(queries) {
       queries.insertSourceVersion.run(
         id, values.productId, values.version, values.displayName, values.sourceKind,
         values.sourceRef ?? null, values.status ?? 'active', values.releaseNotes ?? '', values.channel ?? 'stable',
-        values.releaseKind ?? 'feature', values.minXboardVersion ?? null, values.minUpgradeVersion ?? null,
+        values.releaseKind ?? 'feature', values.accessTier ?? 'free', values.minXboardVersion ?? null, values.minUpgradeVersion ?? null,
         values.rollbackAllowed === false ? 0 : 1, values.rollbackTo ?? null,
         (values.status ?? 'active') === 'active' ? values.now : null, values.now,
       );
@@ -24,7 +24,7 @@ export function createProductSqliteRepository(queries) {
     publishSourceVersion(values) {
       const changed = queries.publishSourceVersion.run(
         values.displayName, values.sourceKind, values.sourceRef, values.releaseNotes ?? '', values.channel ?? 'stable',
-        values.releaseKind ?? 'feature', values.minXboardVersion ?? null, values.minUpgradeVersion ?? null,
+        values.releaseKind ?? 'feature', values.accessTier ?? 'free', values.minXboardVersion ?? null, values.minUpgradeVersion ?? null,
         values.rollbackAllowed === false ? 0 : 1, values.rollbackTo ?? null, values.now, values.id,
       ).changes;
       return changed === 1 ? queries.sourceVersionById.get(values.id) : null;

@@ -31,6 +31,12 @@ export function createOperationsService({ repository, config, packageVersion = '
     return value === null ? fallback : value === 'true';
   };
   const service = {
+    branding() {
+      return {
+        platform_name: repository.listSettings().platform_name ?? 'APPGOG打包授权系统',
+        system_version: packageVersion,
+      };
+    },
     authenticateServiceNode(credential, role) {
       if (!credential) return null;
       let node = null;

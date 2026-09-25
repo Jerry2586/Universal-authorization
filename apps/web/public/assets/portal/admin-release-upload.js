@@ -92,6 +92,7 @@ export function createAdminReleaseUpload(shell) {
           version: String(fields.get('version')), display_name: String(fields.get('display_name') || ''),
           release_notes: String(fields.get('release_notes') || ''), channel: String(fields.get('channel') || 'stable'),
           release_kind: String(fields.get('release_kind') || 'feature'),
+          access_tier: String(fields.get('access_tier') || 'free'),
         });
         const progressWrap = $('source-upload-progress');
         const progressFill = $('source-upload-progress-fill');

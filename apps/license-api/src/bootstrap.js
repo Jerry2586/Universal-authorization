@@ -78,6 +78,10 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
   const packaging = createPackagingService({
     repository: createPackagingRepositoryPort(repository), queue,
     buildAuthorization: Object.freeze({ claimBuildForJob: service.claimBuildForJob }),
+    entitlementAccess: Object.freeze({
+      assertVersionAccess: service.assertVersionAccess,
+      versionEligibility: service.versionEligibility,
+    }),
     operations, artifactStore, buildEngine, config, clock,
   });
   const product = createProductService({
@@ -104,6 +108,7 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
       reviewDomainMigration: service.reviewDomainMigration,
       selfServiceDomainMigration: service.selfServiceDomainMigration,
     }),
+    entitlementAccess: Object.freeze({ versionEligibility: service.versionEligibility }),
     operations, support, artifactStore, clock,
     packageVersion: PACKAGE_VERSION,
   });

@@ -65,8 +65,22 @@ test('customer build UI keeps the version catalog in build tasks and removes mig
   assert.match(html, /id="customer-ticket-form"/);
   assert.doesNotMatch(html, /生成回滚包|回滚构建/);
   assert.match(script, /renderCustomerTickets/);
+  assert.match(script, /is_latest_eligible/);
+  assert.match(script, /eligibility_reason/);
   assert.doesNotMatch(script, /renderAdminTickets|\/web\/admin\//);
   const ticketModule = read('apps/web/public/assets/portal/tickets.js');
   assert.match(ticketModule, /\/web\/customer\/tickets\/\$\{encodeURIComponent\(ticket\.id\)\}\/close/);
   assert.match(ticketModule, /重新打开工单/);
+});
+
+test('release publisher requires an explicit free or paid version tier and shared branding is dynamic', () => {
+  const admin = read('apps/web/public/admin.html');
+  const upload = read('apps/web/public/assets/portal/admin-release-upload.js');
+  const shell = read('apps/web/public/assets/portal/shell.js');
+  assert.match(admin, /name="access_tier"/);
+  assert.match(admin, /免费授权可用/);
+  assert.match(admin, /仅付费授权可用/);
+  assert.match(upload, /access_tier/);
+  assert.match(shell, /\/web\/branding/);
+  assert.match(shell, /applyBranding/);
 });

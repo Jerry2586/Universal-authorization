@@ -27,7 +27,9 @@ export function createLicenseService({
     database, repository: repositories.entitlement, activationLifecycle, audit, clock,
   });
   const buildAuthorization = createBuildAuthorizationService({
-    database, repository: repositories.buildAuthorization, licensingAccess, audit, config, packagePrivateKey, clock,
+    database, repository: repositories.buildAuthorization, licensingAccess,
+    entitlementAccess: Object.freeze({ assertVersionAccess: entitlement.assertVersionAccess }),
+    audit, config, packagePrivateKey, clock,
   });
 
   return Object.freeze({

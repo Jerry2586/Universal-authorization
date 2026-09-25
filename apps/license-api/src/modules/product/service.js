@@ -3,6 +3,13 @@ import { newId } from '../../../../../packages/core/src/identifiers.js';
 import { SOURCE_KIND } from '../../../../../packages/contracts/src/build-job.js';
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const ACCESS_TIERS = new Set(['free', 'paid']);
+
+function normalizedAccessTier(value) {
+  const accessTier = String(value ?? 'free').trim().toLowerCase();
+  invariant(ACCESS_TIERS.has(accessTier), 'VERSION_ACCESS_TIER_INVALID', '发布权限必须是免费授权可用或仅付费授权可用');
+  return accessTier;
+}
 
 function versionFromName(value) {
   const text = String(value ?? '').replace(/\.zip$/i, '');
@@ -38,7 +45,7 @@ function sourceMetadata(files, sourceFilename) {
 
 export function createProductService({ repository, productCatalog, artifactStore, buildEngine, config, clock = () => new Date() }) {
   return Object.freeze({
-    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind }) {
+    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind, accessTier }) {
       invariant(version?.trim(), 'VERSION_REQUIRED', '必须填写版本号');
       const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       invariant(!repository.sourceVersionByProductVersion(product.code, version.trim()), 'VERSION_EXISTS', '该版本已经存在', 409);
@@ -49,12 +56,16 @@ export function createProductService({ repository, productCatalog, artifactStore
         sourceKind: SOURCE_KIND.OFFICIAL,
         sourceRef: null,
         status: 'draft',
-        releaseNotes, channel, releaseKind, rollbackAllowed: false, rollbackTo: null,
+        releaseNotes, channel, releaseKind, accessTier: normalizedAccessTier(accessTier),
+        rollbackAllowed: false, rollbackTo: null,
         now: clock().toISOString(),
       });
     },
 
-    publishSourceVersion({ productCode = 'appgog', version, displayName, sourceFilename, zipBuffer, releaseNotes, channel, releaseKind, actorId = null }) {
+    publishSourceVersion({
+      productCode = 'appgog', version, displayName, sourceFilename, zipBuffer,
+      releaseNotes, channel, releaseKind, accessTier, actorId = null,
+    }) {
       invariant(Buffer.isBuffer(zipBuffer) && zipBuffer.length > 0, 'SOURCE_REQUIRED', '必须上传主题 ZIP');
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
       const validation = buildEngine.validateSource(zipBuffer);
@@ -67,6 +78,7 @@ export function createProductService({ repository, productCatalog, artifactStore
       invariant(normalizedVersion, 'VERSION_REQUIRED', '无法自动识别版本号，请手动填写后重试');
       invariant(VERSION_PATTERN.test(normalizedVersion), 'VERSION_INVALID', '版本号格式无效，请使用例如 1.8.11 的格式');
       const normalizedDisplayName = displayName?.trim() || detected.displayName || `APPGOG ${normalizedVersion}`;
+      const normalizedTier = normalizedAccessTier(accessTier);
       const existing = repository.sourceVersionByProductVersion(product.code, normalizedVersion);
       invariant(!existing || existing.status === 'draft', 'VERSION_EXISTS', '该版本已经发布', 409);
       const versionId = existing?.id ?? newId('src');
@@ -76,7 +88,7 @@ export function createProductService({ repository, productCatalog, artifactStore
         const values = {
           id: versionId, productId: product.id, version: normalizedVersion,
           displayName: normalizedDisplayName, sourceKind: SOURCE_KIND.OFFICIAL, sourceRef,
-          status: 'active', releaseNotes, channel, releaseKind,
+          status: 'active', releaseNotes, channel, releaseKind, accessTier: normalizedTier,
           rollbackAllowed: false, rollbackTo: null, now: clock().toISOString(),
         };
         const source = existing ? repository.publishSourceVersion(values) : repository.createSourceVersion(values);
@@ -87,6 +99,7 @@ export function createProductService({ repository, productCatalog, artifactStore
           metadata: {
             version: source.version, display_name: source.display_name,
             source_filename: sourceFilename ?? null, source_ref: sourceRef, size: zipBuffer.length,
+            access_tier: source.access_tier,
           },
           now: clock().toISOString(),
         });

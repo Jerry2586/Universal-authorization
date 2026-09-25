@@ -7,7 +7,7 @@ import { secretMatches } from '../../../../../packages/core/src/security.js';
 import { publicBuildJob, SOURCE_KIND } from '../../../../../packages/contracts/src/build-job.js';
 
 export function createPackagingService({
-  repository, queue, buildAuthorization, operations, artifactStore, buildEngine, config, clock = () => new Date(),
+  repository, queue, buildAuthorization, entitlementAccess, operations, artifactStore, buildEngine, config, clock = () => new Date(),
 }) {
   function customerLicense(session) {
     const license = repository.licenseById(session.actor_id);
@@ -22,10 +22,12 @@ export function createPackagingService({
       invariant(license.bound_domain === normalizedDomain, 'LICENSE_DOMAIN_MISMATCH', '只能为固定 Key 当前绑定域名打包', 403);
       const sourceVersion = repository.sourceVersionByProductVersion(license.product_code, version);
       invariant(sourceVersion && sourceVersion.status === 'active', 'SOURCE_VERSION_NOT_READY', '该 APPGOG 版本尚未接入安全构建 Worker', 409);
+      entitlementAccess.assertVersionAccess({ license, source: sourceVersion });
       invariant(['install', 'update', 'reinstall'].includes(intent), 'BUILD_INTENT_INVALID', '构建类型无效');
       const versions = repository.listActiveSourceVersions(license.product_code);
       const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
-      invariant(sourceVersion.version === versions[0]?.version || sourceVersion.version === currentVersion,
+      const latestEligibleVersion = versions.find((item) => entitlementAccess.versionEligibility({ license, source: item }).eligible)?.version ?? null;
+      invariant(sourceVersion.version === latestEligibleVersion || sourceVersion.version === currentVersion,
         'HISTORICAL_BUILD_DISABLED', '历史版本不再提供客户构建；请选择最新版本或重新构建当前版本', 409);
       if (license.update_until) {
         invariant(new Date(sourceVersion.published_at ?? sourceVersion.created_at) <= new Date(license.update_until),
