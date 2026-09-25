@@ -122,6 +122,9 @@ test('management menu exposes safe lifecycle, logs, configuration, backup, resto
   assert.match(manager, /rm -rf "\$INSTALL_ROOT\/releases"/);
   assert.match(manager, /安全更新最新版本/);
   assert.doesNotMatch(manager, /appgog rollback|回滚最近一次更新/);
+  assert.match(manager, /migration-rollback-export/);
+  assert.match(manager, /migration-rollback-import/);
+  assert.doesNotMatch(manager, /rm -f "\$fence"/);
 });
 
 test('online update helper accepts signed lifecycle actions and bounded migration actions', () => {
@@ -142,6 +145,14 @@ test('online update helper accepts signed lifecycle actions and bounded migratio
 
   const migration = text(scripts.migration);
   assert.match(migration, /source-fenced\.json/);
+  assert.match(migration, /source_deployment_id/);
+  assert.match(migration, /rollback-export/);
+  assert.match(migration, /rollback-inbox/);
+  assert.match(migration, /prepare-rollback-export/);
+  assert.match(migration, /activate-source-rollback/);
+  assert.match(migration, /安全回滚输入只能来自固定 rollback-inbox 目录/);
+  assert.match(migration, /bundle_sha256/);
+  assert.match(migration, /APPGOG_RESTORE_NO_START=true/);
   assert.match(migration, /api\/v1\/control-migrations\/handshake/);
   assert.match(migration, /APPGOG_BACKUP_LEAVE_STOPPED=true/);
   assert.match(migration, /APPGOG_RESTORE_NO_START=true/);
@@ -150,6 +161,7 @@ test('online update helper accepts signed lifecycle actions and bounded migratio
   assert.match(migration, /bundle\/chunks\/\$chunk_number/);
   assert.match(migration, /bundle\/complete/);
   assert.doesNotMatch(migration, /eval |docker compose down -v/);
+  assert.doesNotMatch(migration, /down -v/);
 
   const installer = text(scripts.installer);
   assert.match(installer, /update-helper-startup-/);
@@ -213,6 +225,7 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /startup-failure-/);
   assert.match(docker, /新版本首次启动未通过健康检查，自动重试一次/);
   assert.match(docker, /APPGOG_COMPOSE_WAIT_TIMEOUT/);
+  assert.match(docker, /APPGOG_RESTORE_NO_START/);
   assert.match(docker, /mkdir -p \/app\/var\/update-control\/requests/);
   assert.match(docker, /chown -R 1000:1000[\s\S]*\/app\/var\/update-control/);
   assert.match(docker, /chmod 770 \/app\/var\/update-control \/app\/var\/update-control\/requests/);

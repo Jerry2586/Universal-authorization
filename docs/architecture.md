@@ -1,8 +1,8 @@
-# APPGOG打包授权系统架构（v1.2.15）
+# APPGOG打包授权系统架构（v1.2.16）
 
-日期：2026-09-24
+日期：2026-09-25
 
-v1.2.15 完成套餐能力与产品版本推送 Phase 5。License 在签发和切换套餐时保存不可漂移的能力与额度快照，套餐切换与 generation、旧激活撤销和安全审计在同一事务提交；授权中心额度、客户包运行时、SDK 与服务端 Guard 四层执行签名能力，版本提醒只对拥有 `updates:read` 的激活展示。v1.2.14 的统一授权事件、永久删除补偿和工单附件隔离继续保持。
+v1.2.16 完成服务器迁移 Phase 6。客户产品迁机拆成候选准备、唯一 Active 提交和有限窗口回滚，目标必须证明新 Ed25519 Installation Identity；控制中心切换后的人工回滚改为目标最终快照导出与旧源固定收件箱导入，所有权 generation 单调递增，失败时旧源保持 Fenced 和停止。v1.2.15 的套餐能力与版本推送边界继续保持。
 
 ## 一、用户看到的流程
 
@@ -142,7 +142,7 @@ Ed25519 签名
 
 服务端为安装、刷新和迁机签发短期一次性 Challenge。产品服务器必须签署包含用途、Challenge、Build/Package、域名、后台 Origin 和 Installation ID 的规范化载荷；Challenge 只能消费一次。复制数据库、复制 Installation ID 或重放旧签名均不能取得新凭证。
 
-客户产品迁机使用一次性 `PMG_` Grant：目标服务器生成新的安装密钥和 Installation ID，验证成功后取得新 Activation；旧 Installation Identity 与旧 Activation 同时进入 Fenced。相同业务域名不等于相同服务器，也不允许两台服务器长期 Active。
+客户产品迁机使用一次性 `PMG_` Grant：目标服务器生成新的安装密钥和 Installation ID，先取得不可刷新的 Candidate Activation；健康确认后在同一事务内 Fenced 旧实例并激活候选。有限回滚窗口内，旧实例必须使用原 Refresh Secret 和新的 `migration_rollback` Challenge Proof 才能重新取得唯一 Active。相同业务域名不等于相同服务器，也不允许两台服务器长期 Active。
 
 ## 九、套餐和能力执行
 
@@ -161,4 +161,4 @@ Ed25519 签名
 
 目标服务器必须先安装同版本程序，通过一次性配对建立上传会话。最终加密备份按 64 MiB 分块上传，每块 SHA-256 校验并允许固定序号重传；全部分块齐全后再次校验整包 SHA-256，才允许宿主机执行固定恢复请求。迁移接口不接受任意路径、SQL 或 Shell。
 
-源端最终快照前进入短暂只读。目标恢复并通过健康检查后提升所有权 generation，源端同时写入数据库状态和 `source-fenced.json`，普通 restart 不能恢复写入。目标失败则恢复目标迁移前备份，源端自动恢复 Active。当前 SQLite 架构保证数据一致性，但不承诺完全零停机。
+源端最终快照前进入短暂只读。目标恢复并通过健康检查后提升所有权 generation，源端同时写入数据库状态和含原部署身份的 `source-fenced.json`，普通 restart 不能恢复写入。目标失败则恢复目标迁移前备份，源端自动恢复 Active。切换后回滚必须先把当前目标变为 Fenced 并导出最终加密快照、独立密钥和 SHA-256 manifest，再由旧源固定 `rollback-inbox` 导入并取得更高 generation；导入失败恢复旧源 Fenced 数据且不启动服务。当前 SQLite 架构保证数据一致性，但不承诺完全零停机。

@@ -43,6 +43,8 @@ export async function handleActivationHttp({
       installReceiptSecret: body.install_receipt_secret, buildId: body.build_id,
       packageProof: body.package_proof, domain: body.domain,
       backendUrl: body.backend_url, installationId: body.installation_id,
+      installationPublicKey: body.installation_public_key,
+      challengeId: body.challenge_id, challengeSignature: body.challenge_signature,
     });
     respondJson(response, 201, {
       activation_id: result.activationId, activation_token: result.token,
@@ -96,6 +98,61 @@ export async function handleActivationHttp({
     respondJson(response, 201, {
       activation_id: result.activationId, activation_token: result.token,
       refresh_secret: result.refreshSecret, expires_at: result.expiresAt,
+      source_status: result.sourceStatus, target_status: result.targetStatus,
+    }, corsHeaders);
+    return true;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/v1/product-migrations/prepare') {
+    requireLicenseService();
+    rateLimit('product-migration-prepare', 20, 15 * 60 * 1000);
+    const body = await readJson(request);
+    const result = service.prepareProductMigration({
+      grantToken: body.migration_grant, buildId: body.build_id,
+      packageProof: body.package_proof, domain: body.domain, backendUrl: body.backend_url,
+      installationId: body.installation_id, installationPublicKey: body.installation_public_key,
+      challengeId: body.challenge_id, challengeSignature: body.challenge_signature,
+    });
+    respondJson(response, 201, {
+      migration_grant_id: result.grantId,
+      candidate_activation_id: result.activationId,
+      candidate_refresh_secret: result.refreshSecret,
+      rollback_until: result.rollbackUntil,
+      source_status: result.sourceStatus, target_status: result.targetStatus,
+    }, corsHeaders);
+    return true;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/v1/product-migrations/commit') {
+    requireLicenseService();
+    rateLimit('product-migration-commit', 20, 15 * 60 * 1000);
+    const body = await readJson(request);
+    const result = service.commitProductMigration({
+      grantToken: body.migration_grant,
+      installationId: body.installation_id, installationPublicKey: body.installation_public_key,
+      challengeId: body.challenge_id, challengeSignature: body.challenge_signature,
+    });
+    respondJson(response, 200, {
+      activation_id: result.activationId, activation_token: result.token,
+      expires_at: result.expiresAt, rollback_until: result.rollbackUntil,
+      source_status: result.sourceStatus, target_status: result.targetStatus,
+    }, corsHeaders);
+    return true;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/v1/product-migrations/rollback') {
+    requireLicenseService();
+    rateLimit('product-migration-rollback', 20, 15 * 60 * 1000);
+    const body = await readJson(request);
+    const result = service.rollbackProductMigration({
+      grantToken: body.migration_grant, refreshSecret: body.refresh_secret, reason: body.reason,
+      installationId: body.installation_id, installationPublicKey: body.installation_public_key,
+      challengeId: body.challenge_id, challengeSignature: body.challenge_signature,
+    });
+    respondJson(response, 200, {
+      rolled_back: result.rolledBack,
+      activation_id: result.activationId, activation_token: result.token,
+      expires_at: result.expiresAt,
       source_status: result.sourceStatus, target_status: result.targetStatus,
     }, corsHeaders);
     return true;

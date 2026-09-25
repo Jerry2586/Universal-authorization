@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -9,6 +10,8 @@ import { openDatabase } from '../apps/license-api/src/database.js';
 import { createRepository } from '../apps/license-api/src/repository.js';
 import { createMigrationControl } from '../apps/license-api/src/migration-control.js';
 import { createControlMigrationRepository } from '../apps/license-api/src/modules/migration/repository.js';
+
+const migrationStateScript = join(import.meta.dirname, '..', 'scripts', 'docker', 'migration-state.js');
 
 function fixture(t, label) {
   const root = mkdtempSync(join(tmpdir(), `appgog-migration-${label}-`));
@@ -36,6 +39,51 @@ function uploadStream(body) {
 
 function sha256(body) {
   return createHash('sha256').update(body).digest('hex');
+}
+
+function stateFixture(t, label) {
+  const root = mkdtempSync(join(tmpdir(), `appgog-migration-state-${label}-`));
+  const databasePath = join(root, 'appgog.sqlite');
+  const migrationId = `mig_${createHash('sha256').update(label).digest('hex').slice(0, 32)}`;
+  const sourceDeploymentId = `dep_${'1'.repeat(32)}`;
+  const targetDeploymentId = `dep_${'2'.repeat(32)}`;
+  const database = openDatabase(databasePath);
+  const repository = createControlMigrationRepository(database);
+  const now = '2026-09-25T08:00:00.000Z';
+  repository.ensureControlPlaneIdentity({ deploymentId: sourceDeploymentId, now });
+  repository.createControlMigration({
+    id: migrationId,
+    direction: 'source_to_target',
+    sourceDeploymentId,
+    targetDeploymentId,
+    ownershipGeneration: 2,
+    status: 'completed',
+    now,
+  });
+  database.prepare(`UPDATE control_plane_identity SET deployment_id = ?, ownership_generation = 2,
+    status = 'active', active_migration_id = NULL WHERE id = 'primary'`).run(targetDeploymentId);
+  database.close();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return { databasePath, migrationId, sourceDeploymentId, targetDeploymentId };
+}
+
+function runMigrationState(fixture, ...args) {
+  return spawnSync(process.execPath, [migrationStateScript, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, DATABASE_PATH: fixture.databasePath },
+  });
+}
+
+function readMigrationState(fixture) {
+  const database = openDatabase(fixture.databasePath);
+  try {
+    return {
+      identity: database.prepare("SELECT * FROM control_plane_identity WHERE id = 'primary'").get(),
+      migration: database.prepare('SELECT * FROM control_migrations WHERE id = ?').get(fixture.migrationId),
+    };
+  } finally {
+    database.close();
+  }
 }
 
 test('控制中心迁移使用一次性配对、固定收件箱和宿主机受控请求', async (t) => {
@@ -161,4 +209,69 @@ test('迁移分块逐块校验、支持固定序号重传，并在整包校验�
     .map((name) => JSON.parse(readFileSync(join(target.root, 'requests', name), 'utf8')));
   assert.equal(requests.filter((item) => item.action === 'import-target').length, 1);
   assert.equal(target.control.publicStatus(handshake.session_id, handshake.upload_token).state, 'import_queued');
+});
+
+test('控制中心安全回滚导出只允许当前 Active 目标并立即 Fenced', (t) => {
+  const fixture = stateFixture(t, 'rollback-export');
+  const prepared = runMigrationState(fixture, 'prepare-rollback-export', fixture.migrationId);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  let state = readMigrationState(fixture);
+  assert.equal(state.identity.status, 'fenced');
+  assert.equal(state.identity.active_migration_id, fixture.migrationId);
+  assert.equal(state.migration.status, 'rollback_exporting');
+
+  const metadata = runMigrationState(fixture, 'rollback-export-metadata', fixture.migrationId);
+  assert.equal(metadata.status, 0, metadata.stderr);
+  assert.deepEqual(JSON.parse(metadata.stdout), {
+    migration_id: fixture.migrationId,
+    target_deployment_id: fixture.targetDeploymentId,
+    ownership_generation: 2,
+    status: 'fenced',
+  });
+
+  const repeated = runMigrationState(fixture, 'prepare-rollback-export', fixture.migrationId);
+  assert.notEqual(repeated.status, 0);
+  assert.match(repeated.stderr, /只有已完成的迁移才能导出/);
+});
+
+test('控制中心回滚导出失败可恢复目标 Active', (t) => {
+  const fixture = stateFixture(t, 'rollback-cancel');
+  assert.equal(runMigrationState(fixture, 'prepare-rollback-export', fixture.migrationId).status, 0);
+  const cancelled = runMigrationState(fixture, 'cancel-rollback-export', fixture.migrationId);
+  assert.equal(cancelled.status, 0, cancelled.stderr);
+  const state = readMigrationState(fixture);
+  assert.equal(state.identity.status, 'active');
+  assert.equal(state.identity.deployment_id, fixture.targetDeploymentId);
+  assert.equal(state.identity.active_migration_id, null);
+  assert.equal(state.migration.status, 'completed');
+});
+
+test('旧源回滚必须导入 Fenced 目标快照并使用更高所有权代次', (t) => {
+  const digest = 'a'.repeat(64);
+  const fixture = stateFixture(t, 'rollback-activate-source');
+  assert.equal(runMigrationState(fixture, 'prepare-rollback-export', fixture.migrationId).status, 0);
+
+  const stale = runMigrationState(fixture, 'activate-source-rollback', fixture.migrationId, fixture.sourceDeploymentId, '2', digest);
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /回滚所有权代次必须高于目标服务器/);
+
+  const activated = runMigrationState(fixture, 'activate-source-rollback', fixture.migrationId, fixture.sourceDeploymentId, '3', digest);
+  assert.equal(activated.status, 0, activated.stderr);
+  const state = readMigrationState(fixture);
+  assert.equal(state.identity.status, 'active');
+  assert.equal(state.identity.deployment_id, fixture.sourceDeploymentId);
+  assert.equal(state.identity.ownership_generation, 3);
+  assert.equal(state.migration.status, 'rolled_back');
+  assert.equal(state.migration.bundle_sha256, digest);
+});
+
+test('非 Fenced 目标快照不能激活旧源', (t) => {
+  const fixture = stateFixture(t, 'rollback-reject-active');
+  const database = openDatabase(fixture.databasePath);
+  database.prepare("UPDATE control_migrations SET status = 'rollback_exporting' WHERE id = ?").run(fixture.migrationId);
+  database.close();
+  const result = runMigrationState(fixture, 'activate-source-rollback', fixture.migrationId, fixture.sourceDeploymentId, '3', 'b'.repeat(64));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /没有 Fenced/);
+  assert.equal(readMigrationState(fixture).identity.deployment_id, fixture.targetDeploymentId);
 });

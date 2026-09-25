@@ -163,13 +163,19 @@ CREATE TABLE IF NOT EXISTS installation_challenges (
 CREATE TABLE IF NOT EXISTS product_migration_grants (
   id TEXT PRIMARY KEY,
   license_id TEXT NOT NULL REFERENCES licenses(id),
+  source_activation_id TEXT REFERENCES activations(id),
   source_installation_id TEXT NOT NULL,
   target_public_key_fingerprint TEXT NOT NULL,
+  target_activation_id TEXT REFERENCES activations(id),
   token_hash TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL DEFAULT 'issued',
   expires_at TEXT NOT NULL,
   consumed_at TEXT,
   rollback_until TEXT,
+  prepared_at TEXT,
+  committed_at TEXT,
+  rolled_back_at TEXT,
+  rollback_reason TEXT,
   created_at TEXT NOT NULL
 );
 

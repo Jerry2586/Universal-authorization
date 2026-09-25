@@ -8,6 +8,8 @@ STATUS_FILE="$CONTROL_DIR/status.json"
 LOG_DIR="$INSTALL_ROOT/shared/logs"
 LOG_FILE="$LOG_DIR/migration.log"
 FENCE_FILE="$INSTALL_ROOT/shared/update-control/source-fenced.json"
+ROLLBACK_EXPORT_ROOT="$CONTROL_DIR/rollback-export"
+ROLLBACK_INBOX_ROOT="$CONTROL_DIR/rollback-inbox"
 DOCKER_SCRIPT="$ROOT_DIR/scripts/docker.sh"
 COMPOSE_FILE="$ROOT_DIR/compose.yaml"
 PROJECT=${APPGOG_PROJECT:-appgog}
@@ -64,6 +66,143 @@ rollback_source() {
   rm -f "$FENCE_FILE"
   update_database_state rollback-source "$migration_id" || true
   compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 || true
+}
+
+valid_migration_id() {
+  printf '%s' "$1" | grep -Eq '^mig_[0-9a-f]{32}$'
+}
+
+rollback_export_target() {
+  request=$1
+  operation_id=$(jq -r '.id // empty' "$request")
+  migration_id=$(jq -r '.migration_id // empty' "$request")
+  [ "$(id -u)" -eq 0 ] || fail '安全回滚导出需要 root 或 sudo'
+  valid_migration_id "$migration_id" || fail '迁移 ID 无效'
+  require_tools
+  export_dir="$ROLLBACK_EXPORT_ROOT/$migration_id"
+  bundle_name="control-rollback-$migration_id.tar.gz.enc"
+  key_name="control-rollback-$migration_id.backup-key"
+  manifest_name="control-rollback-$migration_id.manifest.json"
+  prepared=false
+  target_stopped=false
+  exported=false
+  rollback_export_cleanup() {
+    if [ "$exported" != true ]; then
+      [ "$prepared" != true ] || update_database_state cancel-rollback-export "$migration_id" >> "$LOG_FILE" 2>&1 || true
+      [ "$target_stopped" != true ] || compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 >> "$LOG_FILE" 2>&1 || true
+    fi
+  }
+  trap rollback_export_cleanup 0 1 2 15
+  write_status '' "$operation_id" rollback_export_preflight '正在停止目标写入并准备最终回滚快照' "$migration_id"
+  compose stop >> "$LOG_FILE" 2>&1
+  target_stopped=true
+  update_database_state prepare-rollback-export "$migration_id" >> "$LOG_FILE" 2>&1
+  prepared=true
+  metadata=$(update_database_state rollback-export-metadata "$migration_id")
+  target_deployment_id=$(printf '%s' "$metadata" | jq -r '.target_deployment_id // empty')
+  generation=$(printf '%s' "$metadata" | jq -r '.ownership_generation // empty')
+  [ -n "$target_deployment_id" ] && [ -n "$generation" ] || fail '无法读取目标所有权信息'
+  before=$(find "$ROOT_DIR/backups" -maxdepth 1 -type f -name 'appgog-*.tar.gz.enc' -print 2>/dev/null | sort | tail -n 1 || true)
+  APPGOG_BACKUP_LEAVE_STOPPED=true sh "$DOCKER_SCRIPT" backup >> "$LOG_FILE" 2>&1 || fail '目标最终回滚备份创建失败'
+  bundle=$(find "$ROOT_DIR/backups" -maxdepth 1 -type f -name 'appgog-*.tar.gz.enc' -print 2>/dev/null | sort | tail -n 1 || true)
+  [ -n "$bundle" ] && { [ "$bundle" != "$before" ] || [ -s "$bundle" ]; } || fail '未找到目标最终回滚备份'
+  [ -r "$ROOT_DIR/.backup-key" ] || fail '目标备份恢复密钥不存在'
+  mkdir -p "$export_dir"
+  chmod 700 "$export_dir" 2>/dev/null || true
+  cp "$bundle" "$export_dir/$bundle_name"
+  cp "$ROOT_DIR/.backup-key" "$export_dir/$key_name"
+  chmod 600 "$export_dir/$bundle_name" "$export_dir/$key_name" 2>/dev/null || true
+  bundle_sha256=$(sha256sum "$export_dir/$bundle_name" | awk '{print $1}')
+  jq -n --arg migration_id "$migration_id" --arg bundle_name "$bundle_name" --arg key_name "$key_name" \
+    --arg bundle_sha256 "$bundle_sha256" --arg target_deployment_id "$target_deployment_id" \
+    --argjson ownership_generation "$generation" --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{schema:1,migration_id:$migration_id,bundle_name:$bundle_name,key_name:$key_name,bundle_sha256:$bundle_sha256,
+      target_deployment_id:$target_deployment_id,ownership_generation:$ownership_generation,created_at:$created_at}' \
+    > "$export_dir/$manifest_name"
+  chmod 600 "$export_dir/$manifest_name" 2>/dev/null || true
+  write_status '' "$operation_id" rollback_exported '最终回滚数据已导出；目标服务器保持 Fenced 和停止' "$migration_id" "$bundle_sha256"
+  log "安全回滚导出完成：$migration_id generation=$generation"
+  exported=true
+  trap - 0 1 2 15
+  printf '安全回滚导出目录：%s\n' "$export_dir"
+  printf '请将备份、密钥和 manifest 一并安全传输到旧源服务器固定 rollback-inbox 目录。\n'
+}
+
+restore_fenced_source_backup() {
+  backup=$1; key_copy=$2
+  compose stop >/dev/null 2>&1 || true
+  clear_managed_volumes >> "$LOG_FILE" 2>&1 || true
+  cp "$key_copy" "$ROOT_DIR/.backup-key"
+  APPGOG_RESTORE_NO_START=true sh "$DOCKER_SCRIPT" restore "$backup" >> "$LOG_FILE" 2>&1 || true
+  compose stop >/dev/null 2>&1 || true
+}
+
+rollback_import_source() {
+  request=$1
+  operation_id=$(jq -r '.id // empty' "$request")
+  migration_id=$(jq -r '.migration_id // empty' "$request")
+  bundle=$(jq -r '.bundle_path // empty' "$request")
+  target_key=$(jq -r '.backup_key_path // empty' "$request")
+  manifest=$(jq -r '.manifest_path // empty' "$request")
+  [ "$(id -u)" -eq 0 ] || fail '安全回滚导入需要 root 或 sudo'
+  valid_migration_id "$migration_id" || fail '迁移 ID 无效'
+  [ -s "$FENCE_FILE" ] || fail '旧源服务器没有 Fenced 标记，拒绝导入'
+  fence_migration_id=$(jq -r '.migration_id // empty' "$FENCE_FILE")
+  source_deployment_id=$(jq -r '.source_deployment_id // empty' "$FENCE_FILE")
+  expected_target_deployment_id=$(jq -r '.target_deployment_id // empty' "$FENCE_FILE")
+  expected_target_generation=$(jq -r '.ownership_generation // empty' "$FENCE_FILE")
+  [ "$fence_migration_id" = "$migration_id" ] || fail 'Fenced 标记与迁移 ID 不匹配'
+  printf '%s' "$source_deployment_id" | grep -Eq '^dep_[0-9a-f]{32}$' || fail 'Fenced 标记缺少原源部署身份'
+  inbox="$ROLLBACK_INBOX_ROOT/$migration_id"
+  case "$bundle:$target_key:$manifest" in "$inbox"/*:"$inbox"/*:"$inbox"/*) ;; *) fail '安全回滚输入只能来自固定 rollback-inbox 目录' ;; esac
+  [ -d "$inbox" ] || fail '固定 rollback-inbox 目录不存在'
+  inbox_resolved=$(CDPATH= cd -- "$inbox" && pwd)
+  bundle_dir=$(CDPATH= cd -- "$(dirname -- "$bundle")" 2>/dev/null && pwd) || fail '回滚备份目录无效'
+  key_dir=$(CDPATH= cd -- "$(dirname -- "$target_key")" 2>/dev/null && pwd) || fail '回滚密钥目录无效'
+  manifest_dir=$(CDPATH= cd -- "$(dirname -- "$manifest")" 2>/dev/null && pwd) || fail '回滚 manifest 目录无效'
+  [ "$bundle_dir" = "$inbox_resolved" ] && [ "$key_dir" = "$inbox_resolved" ] && [ "$manifest_dir" = "$inbox_resolved" ] || fail '安全回滚文件目录越界'
+  [ -f "$bundle" ] && [ ! -L "$bundle" ] && [ -f "$target_key" ] && [ ! -L "$target_key" ] && [ -f "$manifest" ] && [ ! -L "$manifest" ] || fail '安全回滚输入文件不存在或包含符号链接'
+  manifest_migration_id=$(jq -r '.migration_id // empty' "$manifest")
+  manifest_target_deployment_id=$(jq -r '.target_deployment_id // empty' "$manifest")
+  expected_sha=$(jq -r '.bundle_sha256 // empty' "$manifest")
+  target_generation=$(jq -r '.ownership_generation // empty' "$manifest")
+  expected_bundle_name=$(jq -r '.bundle_name // empty' "$manifest")
+  expected_key_name=$(jq -r '.key_name // empty' "$manifest")
+  [ "$manifest_migration_id" = "$migration_id" ] || fail '回滚 manifest 的迁移 ID 不匹配'
+  [ "$manifest_target_deployment_id" = "$expected_target_deployment_id" ] || fail '回滚 manifest 的目标部署身份不匹配'
+  [ "$target_generation" = "$expected_target_generation" ] || fail '回滚 manifest 的目标所有权代次不匹配'
+  [ "$(basename -- "$bundle")" = "$expected_bundle_name" ] && [ "$(basename -- "$target_key")" = "$expected_key_name" ] || fail '回滚文件名与 manifest 不匹配'
+  printf '%s' "$expected_sha" | grep -Eq '^[0-9a-f]{64}$' || fail '回滚 manifest 的 SHA-256 无效'
+  actual_sha=$(sha256sum "$bundle" | awk '{print $1}')
+  [ "$actual_sha" = "$expected_sha" ] || fail '回滚包 SHA-256 校验失败'
+  case "$target_generation" in ''|*[!0-9]*) fail '目标所有权代次无效' ;; esac
+  rollback_generation=$((target_generation + 1))
+  require_tools
+  write_status '' "$operation_id" rollback_import_backup '正在保存旧源 Fenced 数据恢复点' "$migration_id" "$expected_sha"
+  before=$(find "$ROOT_DIR/backups" -maxdepth 1 -type f -name 'appgog-*.tar.gz.enc' -print 2>/dev/null | sort | tail -n 1 || true)
+  APPGOG_BACKUP_LEAVE_STOPPED=true sh "$DOCKER_SCRIPT" backup >> "$LOG_FILE" 2>&1 || fail '旧源 Fenced 数据备份失败'
+  source_backup=$(find "$ROOT_DIR/backups" -maxdepth 1 -type f -name 'appgog-*.tar.gz.enc' -print 2>/dev/null | sort | tail -n 1 || true)
+  [ -n "$source_backup" ] && { [ "$source_backup" != "$before" ] || [ -s "$source_backup" ]; } || fail '未找到旧源 Fenced 恢复备份'
+  source_key_copy="$CONTROL_DIR/source-fenced-key-$operation_id"
+  fence_hold="$CONTROL_DIR/source-fenced-$operation_id.json"
+  cp "$ROOT_DIR/.backup-key" "$source_key_copy"
+  chmod 600 "$source_key_copy" 2>/dev/null || true
+  write_status '' "$operation_id" rollback_importing '正在恢复目标最终数据并重新取得所有权' "$migration_id" "$expected_sha"
+  if ! compose stop >> "$LOG_FILE" 2>&1 \
+    || ! clear_managed_volumes >> "$LOG_FILE" 2>&1 \
+    || ! cp "$target_key" "$ROOT_DIR/.backup-key" \
+    || ! APPGOG_RESTORE_NO_START=true sh "$DOCKER_SCRIPT" restore "$bundle" >> "$LOG_FILE" 2>&1 \
+    || ! update_database_state activate-source-rollback "$migration_id" "$source_deployment_id" "$rollback_generation" "$expected_sha" >> "$LOG_FILE" 2>&1 \
+    || ! mv "$FENCE_FILE" "$fence_hold" \
+    || ! compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180 >> "$LOG_FILE" 2>&1; then
+    write_status '' "$operation_id" rollback_import_failed '回滚导入失败，正在恢复旧源 Fenced 数据；服务保持停止' "$migration_id" "$expected_sha"
+    restore_fenced_source_backup "$source_backup" "$source_key_copy"
+    [ ! -f "$fence_hold" ] || mv "$fence_hold" "$FENCE_FILE"
+    fail '安全回滚导入失败；旧源数据已恢复为 Fenced，服务保持停止'
+  fi
+  rm -f "$fence_hold"
+  write_status '' "$operation_id" rolled_back '旧源服务器已取得更高所有权代次并健康恢复；目标必须保持 Fenced' "$migration_id" "$expected_sha"
+  log "安全回滚导入完成：$migration_id generation=$rollback_generation"
 }
 
 transfer_source() {
@@ -153,9 +292,9 @@ transfer_source() {
     case "$state" in
       completed)
         jq -n --arg migration_id "$migration_id" --arg target_deployment_id "$target_deployment_id" \
-          --argjson ownership_generation "$generation" --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --arg source_deployment_id "$source_deployment_id" --argjson ownership_generation "$generation" --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           '{schema:1,migration_id:$migration_id,target_deployment_id:$target_deployment_id,
-            ownership_generation:$ownership_generation,completed_at:$completed_at}' > "$FENCE_FILE"
+            source_deployment_id:$source_deployment_id,ownership_generation:$ownership_generation,completed_at:$completed_at}' > "$FENCE_FILE"
         chmod 600 "$FENCE_FILE" 2>/dev/null || true
         write_status "$session_id" "$operation_id" completed '目标服务器已接管；源服务器已 Fenced，禁止双写' "$migration_id" "$bundle_sha256"
         log "迁移完成：$migration_id -> $target_deployment_id"
@@ -241,5 +380,7 @@ action=$(jq -r '.action // empty' "$request")
 case "$action" in
   transfer-source) transfer_source "$request" ;;
   import-target) import_target "$request" ;;
+  rollback-export-target) rollback_export_target "$request" ;;
+  rollback-import-source) rollback_import_source "$request" ;;
   *) fail '未知迁移动作' ;;
 esac

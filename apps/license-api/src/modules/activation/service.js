@@ -57,7 +57,10 @@ export function createActivationService({
   return Object.freeze({
     internal,
     createInstallationChallenge({ purpose, publicKey, context = {} }) {
-      invariant(['activation', 'refresh', 'migration_issue', 'migration_accept'].includes(purpose),
+      invariant([
+        'activation', 'refresh', 'migration_issue', 'migration_accept',
+        'migration_prepare', 'migration_commit', 'migration_rollback',
+      ].includes(purpose),
         'INSTALLATION_CHALLENGE_PURPOSE_INVALID', '安装身份挑战用途无效');
       invariant(publicKey && typeof publicKey === 'string' && publicKey.length <= 8192,
         'INSTALLATION_PUBLIC_KEY_INVALID', '安装身份公钥无效');
@@ -253,6 +256,8 @@ export function createActivationService({
         invariant(false, 'TARGET_INSTALLATION_PUBLIC_KEY_INVALID', '新服务器安装身份公钥无效');
       }
       invariant(targetInstallationId !== activation.installation_id, 'MIGRATION_TARGET_SAME_AS_SOURCE', '新旧服务器安装身份不能相同', 409);
+      invariant(!repository.installationIdentityById(targetInstallationId),
+        'MIGRATION_TARGET_IDENTITY_EXISTS', '新服务器安装身份已经登记，必须生成新的安装身份', 409);
       const context = { activation_id: activationId, target_public_key_fingerprint: targetFingerprint };
       const grantToken = newProductMigrationGrant();
       const grantId = newId('pmg');
@@ -262,7 +267,8 @@ export function createActivationService({
           publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
         });
         repository.createProductMigrationGrant({
-          id: grantId, licenseId: activation.license_id, sourceInstallationId: activation.installation_id,
+          id: grantId, licenseId: activation.license_id, sourceActivationId: activation.id,
+          sourceInstallationId: activation.installation_id,
           targetPublicKeyFingerprint: targetFingerprint, tokenHash: hashSecret(grantToken, config.pepper),
           expiresAt: addSeconds(nowDate, 600), rollbackUntil: addSeconds(nowDate, 86400), now,
         });
@@ -276,6 +282,176 @@ export function createActivationService({
         grantId, grantToken, targetInstallationId,
         expiresAt: addSeconds(nowDate, 600), rollbackUntil: addSeconds(nowDate, 86400),
       };
+    },
+
+    prepareProductMigration({
+      grantToken, buildId, packageProof, domain, backendUrl,
+      installationId, installationPublicKey, challengeId, challengeSignature,
+    }) {
+      const normalizedDomain = canonicalizeDomain(domain);
+      const backendOrigin = canonicalizeBackendOrigin(backendUrl);
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const grant = repository.productMigrationGrantByHash(hashSecret(grantToken, config.pepper));
+        invariant(grant, 'PRODUCT_MIGRATION_GRANT_INVALID', '迁机凭证无效', 404);
+        invariant(grant.status === 'issued', 'PRODUCT_MIGRATION_GRANT_USED', '迁机凭证已经使用', 409);
+        invariant(grant.expires_at >= now, 'PRODUCT_MIGRATION_GRANT_EXPIRED', '迁机凭证已过期', 401);
+        const sourceActivation = repository.activeActivationByInstallation(grant.license_id, grant.source_installation_id);
+        invariant(sourceActivation && (!grant.source_activation_id || sourceActivation.id === grant.source_activation_id),
+          'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器激活所有权已经变化', 409);
+        const build = repository.buildById(buildId);
+        invariant(build && build.license_id === grant.license_id, 'BUILD_MISMATCH', '迁机凭证与当前安装包不匹配', 403);
+        invariant(build.domain === normalizedDomain, 'DOMAIN_MISMATCH', '迁机域名与安装包不一致', 403);
+        invariant(secretMatches(packageProof, build.package_secret_hash, config.pepper),
+          'PACKAGE_PROOF_INVALID', '安装包身份校验失败', 403);
+        invariant(installationFingerprint(installationPublicKey) === grant.target_public_key_fingerprint,
+          'MIGRATION_TARGET_IDENTITY_MISMATCH', '新服务器安装身份与迁机凭证不一致', 403);
+        invariant(!repository.installationIdentityById(installationId),
+          'MIGRATION_TARGET_IDENTITY_EXISTS', '新服务器安装身份已经登记，必须生成新的安装身份', 409);
+        const proof = consumeInstallationProof({
+          purpose: 'migration_prepare',
+          context: { grant_id: grant.id, build_id: buildId, domain: normalizedDomain, backend_origin: backendOrigin },
+          installationId, publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
+        });
+        repository.registerInstallationIdentity({
+          installationId: proof.installationId, licenseId: grant.license_id,
+          publicKeyPem: proof.publicKey, publicKeyFingerprint: proof.fingerprint, status: 'candidate', now,
+        });
+        const refreshSecret = newRefreshSecret();
+        const license = repository.licenseById(grant.license_id);
+        const activation = repository.createActivation({
+          id: newId('act'), licenseId: grant.license_id, buildId, domain: normalizedDomain,
+          backendOrigin, installationId: proof.installationId, status: 'candidate', generation: license.generation,
+          refreshSecretHash: hashSecret(refreshSecret, config.pepper), identityMode: 'server_key',
+          installationPublicKeyFingerprint: proof.fingerprint, now,
+        });
+        invariant(repository.prepareProductMigrationGrant(grant.id, activation.id, now),
+          'PRODUCT_MIGRATION_GRANT_RACE', '迁机凭证正在被另一个请求使用', 409);
+        audit.recordLicenseEvent({
+          licenseId: grant.license_id, eventType: 'product_migration.prepared', buildId,
+          activationId: activation.id, installationId: proof.installationId,
+          actorType: 'installation', actorId: proof.installationId,
+          metadata: { grant_id: grant.id, source_installation_id: grant.source_installation_id }, now,
+        });
+        return {
+          grantId: grant.id, activationId: activation.id, refreshSecret,
+          rollbackUntil: grant.rollback_until, sourceStatus: 'active', targetStatus: 'candidate',
+        };
+      });
+    },
+
+    commitProductMigration({
+      grantToken, installationId, installationPublicKey, challengeId, challengeSignature,
+    }) {
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const grant = repository.productMigrationGrantByHash(hashSecret(grantToken, config.pepper));
+        invariant(grant, 'PRODUCT_MIGRATION_GRANT_INVALID', '迁机凭证无效', 404);
+        invariant(grant.status === 'prepared', 'PRODUCT_MIGRATION_NOT_PREPARED', '目标服务器尚未完成候选验证', 409);
+        invariant(grant.rollback_until >= now, 'PRODUCT_MIGRATION_ROLLBACK_EXPIRED', '迁机切换窗口已过期', 409);
+        const targetActivation = repository.activationById(grant.target_activation_id);
+        invariant(targetActivation?.status === 'candidate', 'PRODUCT_MIGRATION_TARGET_CHANGED', '目标候选激活状态已经变化', 409);
+        invariant(targetActivation.installation_id === installationId,
+          'MIGRATION_TARGET_IDENTITY_MISMATCH', '目标安装身份与候选激活不一致', 403);
+        invariant(installationFingerprint(installationPublicKey) === grant.target_public_key_fingerprint,
+          'MIGRATION_TARGET_IDENTITY_MISMATCH', '目标安装公钥与迁机凭证不一致', 403);
+        const sourceActivation = repository.activeActivationByInstallation(grant.license_id, grant.source_installation_id);
+        invariant(sourceActivation && (!grant.source_activation_id || sourceActivation.id === grant.source_activation_id),
+          'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器激活所有权已经变化', 409);
+        consumeInstallationProof({
+          purpose: 'migration_commit', context: { grant_id: grant.id, target_activation_id: targetActivation.id },
+          installationId, publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
+        });
+        invariant(repository.completeProductMigrationGrant(grant.id, now),
+          'PRODUCT_MIGRATION_COMMIT_RACE', '迁机正在被另一个请求切换', 409);
+        invariant(repository.fenceActivationsByInstallation(grant.license_id, grant.source_installation_id, now) > 0,
+          'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器激活所有权已经变化', 409);
+        invariant(repository.fenceInstallationIdentity(grant.source_installation_id, now),
+          'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器安装身份已经变化', 409);
+        invariant(repository.transitionActivationStatus(targetActivation.id, 'candidate', 'active', now),
+          'PRODUCT_MIGRATION_TARGET_CHANGED', '目标候选激活状态已经变化', 409);
+        invariant(repository.activateInstallationIdentity(installationId, now),
+          'PRODUCT_MIGRATION_TARGET_CHANGED', '目标安装身份状态已经变化', 409);
+        const activeTarget = repository.activationById(targetActivation.id);
+        audit.recordLicenseEvent({
+          licenseId: grant.license_id, eventType: 'product_migration.completed', buildId: activeTarget.build_id,
+          activationId: activeTarget.id, installationId,
+          actorType: 'installation', actorId: installationId,
+          metadata: { grant_id: grant.id, source_installation_id: grant.source_installation_id }, now,
+        });
+        return {
+          activationId: activeTarget.id,
+          token: signCompactToken(activationPayload(activeTarget, nowDate), activationPrivateKey),
+          expiresAt: addSeconds(nowDate, config.activationTokenTtlSeconds),
+          rollbackUntil: grant.rollback_until, sourceStatus: 'fenced', targetStatus: 'active',
+        };
+      });
+    },
+
+    rollbackProductMigration({
+      grantToken, refreshSecret = null, reason = 'health_check_failed',
+      installationId, installationPublicKey, challengeId, challengeSignature,
+    }) {
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const grant = repository.productMigrationGrantByHash(hashSecret(grantToken, config.pepper));
+        invariant(grant, 'PRODUCT_MIGRATION_GRANT_INVALID', '迁机凭证无效', 404);
+        invariant(['prepared', 'completed'].includes(grant.status),
+          'PRODUCT_MIGRATION_NOT_ROLLBACKABLE', '当前迁机状态不能回滚', 409);
+        invariant(grant.rollback_until >= now, 'PRODUCT_MIGRATION_ROLLBACK_EXPIRED', '迁机回滚窗口已过期', 409);
+        const targetActivation = repository.activationById(grant.target_activation_id);
+        invariant(targetActivation, 'PRODUCT_MIGRATION_TARGET_CHANGED', '目标迁机激活不存在', 409);
+        if (grant.status === 'prepared') {
+          invariant(targetActivation.status === 'candidate' && targetActivation.installation_id === installationId,
+            'PRODUCT_MIGRATION_TARGET_CHANGED', '目标候选激活状态已经变化', 409);
+          invariant(installationFingerprint(installationPublicKey) === grant.target_public_key_fingerprint,
+            'MIGRATION_TARGET_IDENTITY_MISMATCH', '目标安装公钥与迁机凭证不一致', 403);
+          consumeInstallationProof({
+            purpose: 'migration_rollback', context: { grant_id: grant.id, phase: 'prepared' },
+            installationId, publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
+          });
+          invariant(repository.transitionActivationStatus(targetActivation.id, 'candidate', 'revoked', now),
+            'PRODUCT_MIGRATION_TARGET_CHANGED', '目标候选激活状态已经变化', 409);
+          repository.revokeInstallationIdentity(installationId, now);
+        } else {
+          const sourceActivation = repository.activationById(grant.source_activation_id);
+          invariant(sourceActivation?.status === 'fenced' && sourceActivation.installation_id === installationId,
+            'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器已不具备回滚资格', 409);
+          invariant(secretMatches(refreshSecret, sourceActivation.refresh_secret_hash, config.pepper),
+            'REFRESH_SECRET_INVALID', '源服务器刷新凭证无效', 401);
+          const sourceIdentity = repository.installationIdentityById(installationId);
+          invariant(sourceIdentity?.status === 'fenced', 'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器安装身份状态已经变化', 409);
+          consumeInstallationProof({
+            purpose: 'migration_rollback', context: { grant_id: grant.id, phase: 'completed' },
+            installationId, publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
+          });
+          invariant(repository.transitionActivationStatus(targetActivation.id, 'active', 'fenced', now),
+            'PRODUCT_MIGRATION_TARGET_CHANGED', '目标服务器激活状态已经变化', 409);
+          repository.fenceInstallationIdentity(targetActivation.installation_id, now);
+          invariant(repository.transitionActivationStatus(sourceActivation.id, 'fenced', 'active', now),
+            'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器激活状态已经变化', 409);
+          invariant(repository.activateInstallationIdentity(installationId, now),
+            'PRODUCT_MIGRATION_SOURCE_CHANGED', '源服务器安装身份状态已经变化', 409);
+        }
+        invariant(repository.rollbackProductMigrationGrant(grant.id, String(reason ?? '').slice(0, 500), now),
+          'PRODUCT_MIGRATION_ROLLBACK_RACE', '迁机正在被另一个请求回滚', 409);
+        const restored = grant.status === 'completed' ? repository.activationById(grant.source_activation_id) : null;
+        audit.recordLicenseEvent({
+          licenseId: grant.license_id, eventType: 'product_migration.rolled_back',
+          activationId: restored?.id ?? targetActivation.id,
+          installationId, actorType: 'installation', actorId: installationId,
+          metadata: { grant_id: grant.id, previous_status: grant.status, reason }, now,
+        });
+        return {
+          rolledBack: true, sourceStatus: 'active', targetStatus: grant.status === 'prepared' ? 'revoked' : 'fenced',
+          activationId: restored?.id ?? null,
+          token: restored ? signCompactToken(activationPayload(restored, nowDate), activationPrivateKey) : null,
+          expiresAt: restored ? addSeconds(nowDate, config.activationTokenTtlSeconds) : null,
+        };
+      });
     },
 
     acceptProductMigration({

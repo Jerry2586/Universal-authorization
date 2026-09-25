@@ -19,10 +19,14 @@ export function createActivationSqliteRepository(queries) {
     createActivation(values) {
       queries.insertActivation.run(
         values.id, values.licenseId, values.buildId, values.domain, values.backendOrigin,
-        values.installationId, values.generation, values.refreshSecretHash, values.now, values.now,
+        values.installationId, values.status ?? 'active', values.generation,
+        values.refreshSecretHash, values.now, values.now,
         values.identityMode ?? 'legacy', values.installationPublicKeyFingerprint ?? null,
       );
       return queries.activationById.get(values.id);
+    },
+    transitionActivationStatus(id, fromStatus, toStatus, now) {
+      return queries.transitionActivationStatus.run(toStatus, toStatus, now, id, fromStatus).changes === 1;
     },
     activationById: (id) => queries.activationById.get(id),
     updateActivationSeen: (id, now) => queries.updateActivationSeen.run(now, id),
@@ -52,9 +56,10 @@ export function createActivationSqliteRepository(queries) {
     touchInstallationIdentity: (id, now) => queries.touchInstallationIdentity.run(now, id).changes === 1,
     fenceInstallationIdentity: (id, now) => queries.fenceInstallationIdentity.run(now, id).changes === 1,
     activateInstallationIdentity: (id, now) => queries.activateInstallationIdentity.run(now, id).changes === 1,
+    revokeInstallationIdentity: (id, now) => queries.revokeInstallationIdentity.run(now, now, id).changes === 1,
     createProductMigrationGrant(values) {
       queries.insertProductMigrationGrant.run(
-        values.id, values.licenseId, values.sourceInstallationId, values.targetPublicKeyFingerprint,
+        values.id, values.licenseId, values.sourceActivationId, values.sourceInstallationId, values.targetPublicKeyFingerprint,
         values.tokenHash, values.expiresAt, values.rollbackUntil, values.now,
       );
       return values.id;
@@ -62,6 +67,15 @@ export function createActivationSqliteRepository(queries) {
     productMigrationGrantByHash: (hash) => queries.productMigrationGrantByHash.get(hash),
     consumeProductMigrationGrant(id, now) {
       return queries.consumeProductMigrationGrant.run(now, id, now).changes === 1;
+    },
+    prepareProductMigrationGrant(id, targetActivationId, now) {
+      return queries.prepareProductMigrationGrant.run(targetActivationId, now, id, now).changes === 1;
+    },
+    completeProductMigrationGrant(id, now) {
+      return queries.completeProductMigrationGrant.run(now, id, now).changes === 1;
+    },
+    rollbackProductMigrationGrant(id, reason, now) {
+      return queries.rollbackProductMigrationGrant.run(now, reason ?? null, id, now).changes === 1;
     },
     revokeInstallReceiptsByLicense: (licenseId, now) => queries.revokeInstallReceiptsByLicense.run(now, licenseId).changes,
     revokeActivationsByLicense: (licenseId, now) => queries.revokeActivationsByLicense.run(now, licenseId).changes,

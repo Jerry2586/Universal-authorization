@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-09-24。
+日期：2026-09-25。
 
-APPGOG打包授权系统 v1.2.15 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.16 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -35,7 +35,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.15 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.16 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -140,11 +140,20 @@ sh scripts/docker.sh restore /绝对路径/appgog-备份.tar.gz.enc
 8. 成功后源服务器进入数据库和 `source-fenced.json` 双重 Fenced；把原 `AUTH_DOMAIN` 与 `BUILD_DOMAIN` 的 DNS A 记录指向新服务器。
 9. 确认两个公网 HTTPS、授权 API、后台和打包中心正常，再停止旧服务器。
 
-迁移日志位于 `/opt/appgog/shared/logs/migration.log`，页面同时展示当前操作状态。源端任何失败都会尝试恢复 Active；目标恢复失败会使用迁移前备份回滚。受控人工回滚命令为：
+迁移日志位于 `/opt/appgog/shared/logs/migration.log`，页面同时展示当前操作状态。源端任何失败都会尝试恢复 Active；目标恢复失败会使用迁移前备份回滚。目标已经接管后如需回滚，必须执行两阶段安全交接：
 
 ```sh
-appgog migration-rollback <迁移ID>
+# 1. 在当前 Active 目标服务器执行；成功后目标保持 Fenced 和停止
+appgog migration-rollback-export <迁移ID>
+
+# 2. 把导出目录中的备份、独立密钥和 manifest 安全传到旧源固定目录
+/opt/appgog/shared/update-control/migration/rollback-inbox/<迁移ID>/
+
+# 3. 在旧源服务器执行；默认读取上述固定目录中的三份文件
+appgog migration-rollback-import <迁移ID>
 ```
+
+导入会校验迁移 ID、文件名、固定目录和整包 SHA-256，恢复目标产生的最终数据，再把所有权 generation 提升一代。失败时自动恢复旧源导入前的 Fenced 数据并保持服务停止；禁止直接删除 `source-fenced.json`、复制旧数据库后强行启动或让两边同时写入。
 
 不要删除源数据、数据卷、`.env`、`.backup-key` 或旧服务器，直到新服务器完成公网验收。SQLite 最终切换需要短暂只读，不属于完全零停机迁移。
 
@@ -185,7 +194,7 @@ docker compose exec -T appgog node scripts/docker/health.js
 - 初始化失败：检查 `.env` 是否仍是示例域名、旧密钥是否缺失；不要删除数据卷重试；
 - 任务排队：检查 Worker 日志和授权中心节点凭证；
 - 控制中心迁移失败：查看 `/opt/appgog/shared/logs/migration.log` 和页面 operation 状态；保留源 `.env`、备份、同版本 Release 和全部密钥，不要删除数据卷或重新生成签名身份；
-- 源端显示 Fenced：先确认目标是否已经健康接管。只有明确执行受控迁移回滚时才能运行 `appgog migration-rollback <迁移ID>`，不能删除 `source-fenced.json` 强行双写。
+- 源端显示 Fenced：先确认目标是否已经健康接管。切换后回滚必须先在目标运行 `appgog migration-rollback-export <迁移ID>`，安全传输三份文件后再在旧源运行 `appgog migration-rollback-import <迁移ID>`；不能删除 `source-fenced.json` 强行双写。
 
 ## 10. 真实环境验收边界
 

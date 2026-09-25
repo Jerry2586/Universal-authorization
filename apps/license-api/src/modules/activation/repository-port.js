@@ -7,6 +7,8 @@ const METHODS = Object.freeze([
   'installationChallengeById', 'installationIdentityById', 'installKeyByHash',
   'installReceiptById', 'licenseByHash', 'licenseById', 'markBuildActivated',
   'markBuildUnlocked', 'productMigrationGrantByHash', 'registerInstallationIdentity',
+  'prepareProductMigrationGrant', 'completeProductMigrationGrant', 'rollbackProductMigrationGrant',
+  'transitionActivationStatus', 'activateInstallationIdentity', 'revokeInstallationIdentity',
   'revokeActivationsByLicense', 'revokeInstallReceiptsByLicense', 'supersedeActivations',
   'touchInstallationIdentity', 'updateActivationSeen',
 ]);

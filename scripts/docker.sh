@@ -433,7 +433,9 @@ case "${1:-help}" in
         compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$archive"
         ;;
     esac
-    compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
+    if [ "${APPGOG_RESTORE_NO_START:-false}" != true ]; then
+      compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
+    fi
     ;;
   credentials)
     require_docker

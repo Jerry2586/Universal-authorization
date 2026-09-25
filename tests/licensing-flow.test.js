@@ -317,6 +317,225 @@ test('受控产品迁机由旧服务器签发一次性 Grant，新服务器接�
   app.database.close();
 });
 
+test('产品迁机候选验证、唯一 Active 切换与窗口内回滚形成完整状态机', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({ customerRef: 'customer-move-state', domain: 'state-move.example.com' });
+  const authorization = app.service.authorizeBuild({
+    licenseKey: issued.licenseKey, version: '1.0.0', domain: 'state-move.example.com',
+  });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const sourceKeys = generateKeyPairSync('ed25519');
+  const sourcePublicKey = sourceKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const sourceInstallationId = installationIdFromPublicKey(sourcePublicKey);
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'state-move.example.com', backendUrl: 'https://panel.example.com', installationId: sourceInstallationId,
+  });
+  const activationContext = {
+    install_receipt_id: receipt.receiptId, build_id: build.buildId,
+    domain: 'state-move.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const activationChallenge = app.service.createInstallationChallenge({
+    purpose: 'activation', publicKey: sourcePublicKey, context: activationContext,
+  });
+  const sourceActivation = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'state-move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: sourceInstallationId, installationPublicKey: sourcePublicKey,
+    challengeId: activationChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: activationChallenge, privateKey: sourceKeys.privateKey }),
+  });
+  const reusedTargetKeys = generateKeyPairSync('ed25519');
+  const reusedTargetPublicKey = reusedTargetKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const reusedTargetInstallationId = installationIdFromPublicKey(reusedTargetPublicKey);
+  app.repository.registerInstallationIdentity({
+    installationId: reusedTargetInstallationId, licenseId: issued.license.id,
+    publicKeyPem: reusedTargetPublicKey, publicKeyFingerprint: installationFingerprint(reusedTargetPublicKey),
+    status: 'fenced', now: '2026-09-22T00:00:00.000Z',
+  });
+  const reusedIssueContext = {
+    activation_id: sourceActivation.activationId,
+    target_public_key_fingerprint: installationFingerprint(reusedTargetPublicKey),
+  };
+  const reusedIssueChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_issue', publicKey: sourcePublicKey, context: reusedIssueContext,
+  });
+  assert.throws(() => app.service.issueProductMigrationGrant({
+    activationId: sourceActivation.activationId, refreshSecret: sourceActivation.refreshSecret,
+    targetInstallationPublicKey: reusedTargetPublicKey, installationPublicKey: sourcePublicKey,
+    challengeId: reusedIssueChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: reusedIssueChallenge, privateKey: sourceKeys.privateKey }),
+  }), (error) => error.code === 'MIGRATION_TARGET_IDENTITY_EXISTS');
+  const targetKeys = generateKeyPairSync('ed25519');
+  const targetPublicKey = targetKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const issueContext = {
+    activation_id: sourceActivation.activationId,
+    target_public_key_fingerprint: installationFingerprint(targetPublicKey),
+  };
+  const issueChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_issue', publicKey: sourcePublicKey, context: issueContext,
+  });
+  const grant = app.service.issueProductMigrationGrant({
+    activationId: sourceActivation.activationId, refreshSecret: sourceActivation.refreshSecret,
+    targetInstallationPublicKey: targetPublicKey, installationPublicKey: sourcePublicKey,
+    challengeId: issueChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: issueChallenge, privateKey: sourceKeys.privateKey }),
+  });
+
+  const prepareContext = {
+    grant_id: grant.grantId, build_id: build.buildId,
+    domain: 'state-move.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const prepareChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_prepare', publicKey: targetPublicKey, context: prepareContext,
+  });
+  const prepared = app.service.prepareProductMigration({
+    grantToken: grant.grantToken, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'state-move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: grant.targetInstallationId, installationPublicKey: targetPublicKey,
+    challengeId: prepareChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: prepareChallenge, privateKey: targetKeys.privateKey }),
+  });
+  assert.equal(prepared.sourceStatus, 'active');
+  assert.equal(prepared.targetStatus, 'candidate');
+  assert.equal(app.repository.activationById(sourceActivation.activationId).status, 'active');
+  assert.equal(app.repository.activationById(prepared.activationId).status, 'candidate');
+  assert.equal(app.repository.installationIdentityById(grant.targetInstallationId).status, 'candidate');
+  assert.equal(app.database.prepare("SELECT COUNT(*) AS count FROM activations WHERE license_id = ? AND status = 'active'").get(issued.license.id).count, 1);
+  assert.throws(() => app.service.refresh({
+    activationId: prepared.activationId, refreshSecret: prepared.refreshSecret,
+    domain: 'state-move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: grant.targetInstallationId,
+  }), (error) => error.code === 'ACTIVATION_INACTIVE');
+
+  const commitContext = { grant_id: grant.grantId, target_activation_id: prepared.activationId };
+  const commitChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_commit', publicKey: targetPublicKey, context: commitContext,
+  });
+  const committed = app.service.commitProductMigration({
+    grantToken: grant.grantToken, installationId: grant.targetInstallationId,
+    installationPublicKey: targetPublicKey, challengeId: commitChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: commitChallenge, privateKey: targetKeys.privateKey }),
+  });
+  assert.equal(committed.sourceStatus, 'fenced');
+  assert.equal(committed.targetStatus, 'active');
+  assert.equal(app.repository.activationById(sourceActivation.activationId).status, 'fenced');
+  assert.equal(app.repository.activationById(prepared.activationId).status, 'active');
+  assert.equal(app.database.prepare("SELECT COUNT(*) AS count FROM activations WHERE license_id = ? AND status = 'active'").get(issued.license.id).count, 1);
+
+  const rollbackContext = { grant_id: grant.grantId, phase: 'completed' };
+  const rollbackChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_rollback', publicKey: sourcePublicKey, context: rollbackContext,
+  });
+  app.database.prepare('UPDATE product_migration_grants SET rollback_until = ? WHERE id = ?')
+    .run('2020-01-01T00:00:00.000Z', grant.grantId);
+  assert.throws(() => app.service.rollbackProductMigration({
+    grantToken: grant.grantToken, refreshSecret: sourceActivation.refreshSecret,
+    reason: 'expired_window_must_fail', installationId: sourceInstallationId,
+    installationPublicKey: sourcePublicKey, challengeId: rollbackChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: rollbackChallenge, privateKey: sourceKeys.privateKey }),
+  }), (error) => error.code === 'PRODUCT_MIGRATION_ROLLBACK_EXPIRED');
+  app.database.prepare('UPDATE product_migration_grants SET rollback_until = ? WHERE id = ?')
+    .run(committed.rollbackUntil, grant.grantId);
+  const rolledBack = app.service.rollbackProductMigration({
+    grantToken: grant.grantToken, refreshSecret: sourceActivation.refreshSecret,
+    reason: 'target_health_check_failed', installationId: sourceInstallationId,
+    installationPublicKey: sourcePublicKey, challengeId: rollbackChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: rollbackChallenge, privateKey: sourceKeys.privateKey }),
+  });
+  assert.equal(rolledBack.sourceStatus, 'active');
+  assert.equal(rolledBack.targetStatus, 'fenced');
+  assert.equal(app.repository.activationById(sourceActivation.activationId).status, 'active');
+  assert.equal(app.repository.activationById(prepared.activationId).status, 'fenced');
+  assert.equal(app.repository.installationIdentityById(sourceInstallationId).status, 'active');
+  assert.equal(app.repository.installationIdentityById(grant.targetInstallationId).status, 'fenced');
+  assert.equal(app.database.prepare("SELECT COUNT(*) AS count FROM activations WHERE license_id = ? AND status = 'active'").get(issued.license.id).count, 1);
+  assert.throws(() => app.service.rollbackProductMigration({
+    grantToken: grant.grantToken, refreshSecret: sourceActivation.refreshSecret,
+    installationId: sourceInstallationId, installationPublicKey: sourcePublicKey,
+    challengeId: rollbackChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: rollbackChallenge, privateKey: sourceKeys.privateKey }),
+  }), (error) => error.code === 'PRODUCT_MIGRATION_NOT_ROLLBACKABLE');
+  app.database.close();
+});
+
+test('产品迁机候选可在切换前撤销，源实例持续 Active', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({ customerRef: 'customer-move-cancel', domain: 'cancel-move.example.com' });
+  const authorization = app.service.authorizeBuild({
+    licenseKey: issued.licenseKey, version: '1.0.0', domain: 'cancel-move.example.com',
+  });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const sourceKeys = generateKeyPairSync('ed25519');
+  const sourcePublicKey = sourceKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const sourceInstallationId = installationIdFromPublicKey(sourcePublicKey);
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'cancel-move.example.com', backendUrl: 'https://panel.example.com', installationId: sourceInstallationId,
+  });
+  const activationContext = {
+    install_receipt_id: receipt.receiptId, build_id: build.buildId,
+    domain: 'cancel-move.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const activationChallenge = app.service.createInstallationChallenge({
+    purpose: 'activation', publicKey: sourcePublicKey, context: activationContext,
+  });
+  const sourceActivation = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'cancel-move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: sourceInstallationId, installationPublicKey: sourcePublicKey,
+    challengeId: activationChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: activationChallenge, privateKey: sourceKeys.privateKey }),
+  });
+  const targetKeys = generateKeyPairSync('ed25519');
+  const targetPublicKey = targetKeys.publicKey.export({ type: 'spki', format: 'pem' });
+  const issueContext = {
+    activation_id: sourceActivation.activationId,
+    target_public_key_fingerprint: installationFingerprint(targetPublicKey),
+  };
+  const issueChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_issue', publicKey: sourcePublicKey, context: issueContext,
+  });
+  const grant = app.service.issueProductMigrationGrant({
+    activationId: sourceActivation.activationId, refreshSecret: sourceActivation.refreshSecret,
+    targetInstallationPublicKey: targetPublicKey, installationPublicKey: sourcePublicKey,
+    challengeId: issueChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: issueChallenge, privateKey: sourceKeys.privateKey }),
+  });
+  const prepareContext = {
+    grant_id: grant.grantId, build_id: build.buildId,
+    domain: 'cancel-move.example.com', backend_origin: 'https://panel.example.com',
+  };
+  const prepareChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_prepare', publicKey: targetPublicKey, context: prepareContext,
+  });
+  const prepared = app.service.prepareProductMigration({
+    grantToken: grant.grantToken, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'cancel-move.example.com', backendUrl: 'https://panel.example.com',
+    installationId: grant.targetInstallationId, installationPublicKey: targetPublicKey,
+    challengeId: prepareChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: prepareChallenge, privateKey: targetKeys.privateKey }),
+  });
+  const rollbackContext = { grant_id: grant.grantId, phase: 'prepared' };
+  const rollbackChallenge = app.service.createInstallationChallenge({
+    purpose: 'migration_rollback', publicKey: targetPublicKey, context: rollbackContext,
+  });
+  const result = app.service.rollbackProductMigration({
+    grantToken: grant.grantToken, reason: 'candidate_health_check_failed',
+    installationId: grant.targetInstallationId, installationPublicKey: targetPublicKey,
+    challengeId: rollbackChallenge.id,
+    challengeSignature: signInstallationChallenge({ challenge: rollbackChallenge, privateKey: targetKeys.privateKey }),
+  });
+  assert.equal(result.sourceStatus, 'active');
+  assert.equal(result.targetStatus, 'revoked');
+  assert.equal(app.repository.activationById(sourceActivation.activationId).status, 'active');
+  assert.equal(app.repository.activationById(prepared.activationId).status, 'revoked');
+  assert.equal(app.repository.installationIdentityById(grant.targetInstallationId).status, 'revoked');
+  app.database.close();
+});
+
 test('一次性安装 Key 只能解锁一次，解锁后仍未正式激活', () => {
   const app = fixture();
   const issued = app.service.issueLicense({ customerRef: 'customer-002', domain: 'a.example.com' });

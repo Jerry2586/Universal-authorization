@@ -1091,3 +1091,49 @@ test('旧授权数据库升级会生成不可漂移的能力与额度快照并�
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('旧产品迁机记录升级会追加候选与回滚状态字段并保留原记录', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-v1216-product-migration-test-'));
+  const path = join(root, 'legacy-product-migration.sqlite');
+  try {
+    const old = openDatabase(path);
+    old.exec(`
+      DELETE FROM schema_migrations WHERE version = '2026-09-25-v1.2.16-product-migration-state';
+      ALTER TABLE product_migration_grants RENAME TO product_migration_grants_current;
+      CREATE TABLE product_migration_grants (
+        id TEXT PRIMARY KEY,
+        license_id TEXT NOT NULL,
+        source_installation_id TEXT NOT NULL,
+        target_public_key_fingerprint TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'issued',
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        rollback_until TEXT,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO product_migration_grants VALUES (
+        'pmg_legacy', 'lic_legacy', 'ins_source', 'fingerprint', 'token-hash',
+        'issued', '2026-10-01T00:00:00.000Z', NULL, '2026-10-01T00:30:00.000Z', '2026-09-25T00:00:00.000Z'
+      );
+      DROP TABLE product_migration_grants_current;
+    `);
+    old.close();
+
+    const upgraded = openDatabase(path);
+    try {
+      const grant = upgraded.prepare("SELECT * FROM product_migration_grants WHERE id = 'pmg_legacy'").get();
+      assert.equal(grant.source_installation_id, 'ins_source');
+      assert.equal(grant.status, 'issued');
+      assert.equal(grant.source_activation_id, null);
+      assert.equal(grant.target_activation_id, null);
+      assert.equal(grant.prepared_at, null);
+      assert.equal(grant.committed_at, null);
+      assert.equal(grant.rolled_back_at, null);
+      assert.equal(grant.rollback_reason, null);
+      assert.ok(upgraded.prepare(
+        "SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.16-product-migration-state'",
+      ).get());
+    } finally { upgraded.close(); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

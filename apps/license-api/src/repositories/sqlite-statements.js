@@ -104,7 +104,12 @@ export function createSqliteStatements(database) {
       INSERT INTO activations (
         id, license_id, build_id, domain, backend_origin, installation_id, status, generation,
         refresh_secret_hash, last_seen_at, created_at, identity_mode, installation_public_key_fingerprint
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    transitionActivationStatus: database.prepare(`
+      UPDATE activations
+      SET status = ?, revoked_at = CASE WHEN ? = 'active' THEN NULL ELSE ? END
+      WHERE id = ? AND status = ?
     `),
     supersedeActivations: database.prepare(`
       UPDATE activations SET status = 'superseded', revoked_at = ?
@@ -175,18 +180,37 @@ export function createSqliteStatements(database) {
     activateInstallationIdentity: database.prepare(`
       UPDATE installation_identities SET status = 'active', fenced_at = NULL, revoked_at = NULL,
         ownership_generation = ownership_generation + 1, last_seen_at = ?
-      WHERE installation_id = ?
+      WHERE installation_id = ? AND status IN ('candidate', 'fenced')
+    `),
+    revokeInstallationIdentity: database.prepare(`
+      UPDATE installation_identities
+      SET status = 'revoked', revoked_at = ?, fenced_at = COALESCE(fenced_at, ?),
+        ownership_generation = ownership_generation + 1
+      WHERE installation_id = ? AND status IN ('candidate', 'active')
     `),
     insertProductMigrationGrant: database.prepare(`
       INSERT INTO product_migration_grants (
-        id, license_id, source_installation_id, target_public_key_fingerprint, token_hash,
+        id, license_id, source_activation_id, source_installation_id, target_public_key_fingerprint, token_hash,
         status, expires_at, rollback_until, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?)
     `),
     productMigrationGrantByHash: database.prepare(`SELECT * FROM product_migration_grants WHERE token_hash = ?`),
     consumeProductMigrationGrant: database.prepare(`
       UPDATE product_migration_grants SET status = 'consumed', consumed_at = ?
       WHERE id = ? AND status = 'issued' AND expires_at >= ?
+    `),
+    prepareProductMigrationGrant: database.prepare(`
+      UPDATE product_migration_grants
+      SET status = 'prepared', target_activation_id = ?, prepared_at = ?
+      WHERE id = ? AND status = 'issued' AND expires_at >= ?
+    `),
+    completeProductMigrationGrant: database.prepare(`
+      UPDATE product_migration_grants SET status = 'completed', committed_at = ?
+      WHERE id = ? AND status = 'prepared' AND rollback_until >= ?
+    `),
+    rollbackProductMigrationGrant: database.prepare(`
+      UPDATE product_migration_grants SET status = 'rolled_back', rolled_back_at = ?, rollback_reason = ?
+      WHERE id = ? AND status IN ('prepared', 'completed') AND rollback_until >= ?
     `),
     revokeInstallReceiptsByLicense: database.prepare(`
       UPDATE install_receipts SET status = 'revoked', revoked_at = ? WHERE license_id = ? AND status = 'unlocked'

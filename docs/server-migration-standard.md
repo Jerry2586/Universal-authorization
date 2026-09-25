@@ -1,7 +1,7 @@
 # APPGOG 服务器迁移标准
 
-日期：2026-09-24  
-状态：v1.2.10 已实现并纳入发布验证
+日期：2026-09-25
+状态：v1.2.16 已完成控制中心安全回滚交接与客户产品迁机状态机
 
 ## 1. 必须区分的两类迁移
 
@@ -79,6 +79,7 @@ waiting_pair → paired → uploading → import_queued
 任意上传前状态 → cancelled / expired
 源端失败 → source_active → rolled_back
 目标恢复失败 → rollback_required → target_restored → failed
+切换后回滚 → rollback_exporting → source_importing → rolled_back
 ```
 
 规则：
@@ -134,10 +135,11 @@ waiting_pair → paired → uploading → import_queued
   → 新服务器安装同一或兼容版本
   → 新服务器生成新的 Installation ID
   → 新实例提交 Grant、Build/Package、域名、Origin 和新 Installation ID
-  → 控制中心签发候选激活
+  → 控制中心签发不可刷新的候选激活
   → 数据校验和业务健康检查
+  → 提交所有权切换：新实例 Active，旧实例 Fenced
   → 切换业务域名/DNS
-  → 新实例 Active，旧实例 Fenced/Revoked
+  → 有限窗口内可由旧实例凭原 Refresh Secret 和新 Challenge Proof 回滚
 ```
 
 自动校准的含义是：
@@ -186,6 +188,8 @@ waiting_pair → paired → uploading → import_queued
 - 切换前失败：目标清理未激活快照，源继续 Active。
 - 切换期间失败：目标保持不可写，源退出只读并恢复 Active。
 - 切换后回滚：先冻结目标，回传目标产生的最终增量，校验后提升源所有权代次，再把目标 Fenced。
+- 当前实现以目标的最终加密完整快照承载全部增量。目标执行 `migration-rollback-export` 后数据库和服务保持 Fenced/停止；旧源只接受固定 `rollback-inbox/<migration-id>` 中的备份、独立密钥和 manifest。
+- 旧源导入必须核对 `source_deployment_id`、目标 generation、SHA-256 和文件路径，成功后使用 `target generation + 1` 恢复 Active；失败恢复导入前旧源快照并保持 Fenced/停止。
 - 不允许通过同时启动两台服务器“观察哪台可用”。
 - 回滚日志必须注明差异、所有权代次、数据哈希和 DNS 待处理状态。
 

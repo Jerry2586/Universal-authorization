@@ -55,6 +55,14 @@ const MIGRATIONS = Object.freeze({
     ['identity_mode', "TEXT NOT NULL DEFAULT 'legacy'"],
     ['installation_public_key_fingerprint', 'TEXT'],
   ],
+  product_migration_grants: [
+    ['source_activation_id', 'TEXT REFERENCES activations(id)'],
+    ['target_activation_id', 'TEXT REFERENCES activations(id)'],
+    ['prepared_at', 'TEXT'],
+    ['committed_at', 'TEXT'],
+    ['rolled_back_at', 'TEXT'],
+    ['rollback_reason', 'TEXT'],
+  ],
 });
 
 function addMissingColumns(database, migrations = MIGRATIONS) {
@@ -210,6 +218,11 @@ function migrate(database) {
     // makes production upgrade state and rollback diagnostics explicit.
     database.prepare('SELECT 1 FROM control_plane_identity LIMIT 1').get();
   });
+
+  const productMigrationStateVersion = '2026-09-25-v1.2.16-product-migration-state';
+  runMigration(database, productMigrationStateVersion, () => addMissingColumns(database, {
+    product_migration_grants: MIGRATIONS.product_migration_grants,
+  }));
 }
 
 export function openDatabase(path) {

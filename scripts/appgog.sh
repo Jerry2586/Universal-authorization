@@ -113,23 +113,51 @@ uninstall_keep_data() {
   say_ok "程序已卸载；数据库、Key、上传、构建成品、配置和备份仍保留。日志：$uninstall_log"
 }
 
-migration_rollback() {
-  fence=$(appgog_source_fence_path "$INSTALL_ROOT")
-  [ -s "$fence" ] || { say_error '当前服务器没有控制中心迁移 Fenced 标记。'; return 1; }
-  migration_id=$(jq -r '.migration_id // empty' "$fence" 2>/dev/null || true)
-  [ -n "$migration_id" ] || { say_error 'Fenced 标记损坏，拒绝自动解除。'; return 1; }
-  requested=${1:-}
-  if [ -z "$requested" ]; then
-    printf '%b%s%b\n' "$RED" '只有确认目标服务器未继续提供写服务时才能回滚，否则会形成双写。' "$RESET"
-    tty_read "请输入迁移 ID $migration_id 确认回滚："
-    requested=$REPLY_VALUE
+migration_request() {
+  action=$1; migration_id=$2; bundle=${3:-}; key=${4:-}; manifest=${5:-}
+  printf '%s' "$migration_id" | grep -Eq '^mig_[0-9a-f]{32}$' || { say_error '迁移 ID 无效。'; return 1; }
+  command -v jq >/dev/null 2>&1 || { say_error '缺少 jq，无法创建安全迁移请求。'; return 1; }
+  command -v openssl >/dev/null 2>&1 || { say_error '缺少 OpenSSL，无法创建操作编号。'; return 1; }
+  request_dir="$SHARED_DIR/update-control/migration/requests"
+  mkdir -p "$request_dir"
+  operation_id="op_$(openssl rand -hex 16)"
+  request="$request_dir/$operation_id.json"
+  jq -n --arg id "$operation_id" --arg action "$action" --arg migration_id "$migration_id" \
+    --arg bundle_path "$bundle" --arg backup_key_path "$key" --arg manifest_path "$manifest" \
+    '{id:$id,action:$action,migration_id:$migration_id,bundle_path:(if $bundle_path == "" then null else $bundle_path end),
+      backup_key_path:(if $backup_key_path == "" then null else $backup_key_path end),
+      manifest_path:(if $manifest_path == "" then null else $manifest_path end)}' > "$request"
+  chmod 600 "$request" 2>/dev/null || true
+  APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/migration.sh" "$request"
+  result=$?
+  rm -f "$request"
+  return "$result"
+}
+
+migration_rollback_export() {
+  [ "$(id -u)" -eq 0 ] || { say_error '安全回滚导出需要 root 或 sudo。'; return 1; }
+  migration_id=${1:-}
+  if [ -z "$migration_id" ]; then
+    tty_read '请输入需要回滚的迁移 ID：'
+    migration_id=$REPLY_VALUE
   fi
-  [ "$requested" = "$migration_id" ] || { say_error '迁移 ID 不匹配，已取消。'; return 1; }
-  rm -f "$fence"
-  (cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml run --rm --no-deps -T appgog \
-    node scripts/docker/migration-state.js rollback-source "$migration_id")
-  run_docker start
-  say_ok '源服务器已解除 Fenced 并恢复运行；请立即确认目标服务器已经停止。'
+  printf '%b%s%b\n' "$RED" '此操作会停止当前 Active 目标服务器，并在最终数据导出后保持 Fenced。' "$RESET"
+  confirm '确认开始安全回滚导出？' || return 0
+  migration_request rollback-export-target "$migration_id"
+}
+
+migration_rollback_import() {
+  [ "$(id -u)" -eq 0 ] || { say_error '安全回滚导入需要 root 或 sudo。'; return 1; }
+  migration_id=${1:-}
+  [ -n "$migration_id" ] || { say_error '必须提供迁移 ID。'; return 1; }
+  inbox="$SHARED_DIR/update-control/migration/rollback-inbox/$migration_id"
+  bundle=${2:-$inbox/control-rollback-$migration_id.tar.gz.enc}
+  key=${3:-$inbox/control-rollback-$migration_id.backup-key}
+  manifest=${4:-$inbox/control-rollback-$migration_id.manifest.json}
+  case "$bundle:$key:$manifest" in "$inbox"/*:"$inbox"/*:"$inbox"/*) ;; *) say_error '文件必须位于该迁移的固定 rollback-inbox 目录。'; return 1 ;; esac
+  printf '%b%s%b\n' "$RED" '此操作会用目标服务器最终快照覆盖旧源业务数据；失败时旧源保持 Fenced 和停止。' "$RESET"
+  confirm '确认开始安全回滚导入？' || return 0
+  migration_request rollback-import-source "$migration_id" "$bundle" "$key" "$manifest"
 }
 
 env_value() {
@@ -391,7 +419,8 @@ main_menu() {
       ' 12. 系统诊断与高级工具' \
       ' 13. 修复系统源码' \
       ' 14. 卸载系统（保留数据）' \
-      ' 15. 迁移失败后恢复源服务器' \
+      ' 15. 导出控制中心安全回滚包（当前 Active 目标）' \
+      ' 16. 导入控制中心安全回滚包（旧源服务器）' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -410,7 +439,8 @@ main_menu() {
       12) advanced_menu ;;
       13) confirm '确认重新下载当前签名版本、备份并深度重建源码？' && repair_source; pause_menu ;;
       14) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
-      15) migration_rollback; pause_menu ;;
+      15) migration_rollback_export; pause_menu ;;
+      16) say_warn '请使用命令 appgog migration-rollback-import <迁移ID> 执行，避免输错文件。'; pause_menu ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -436,7 +466,10 @@ APPGOG 管理命令
   appgog uninstall       卸载程序并保留业务数据与备份
   appgog backup          创建 AES-256 加密完整备份
   appgog restore <文件>  从备份恢复到空部署
-  appgog migration-rollback <迁移ID>  目标已停止后解除源服务器 Fenced
+  appgog migration-rollback-export <迁移ID>
+                           在当前 Active 目标停止写入并导出最终加密快照
+  appgog migration-rollback-import <迁移ID> [备份] [密钥] [manifest]
+                           在旧源固定 rollback-inbox 中校验并导入最终快照
   appgog doctor          系统诊断
   appgog diagnostics     导出不含凭证的诊断报告
   appgog repair          修复配置与密钥权限
@@ -457,7 +490,8 @@ case "${1:-menu}" in
   config) configure_domains ;;
   services) configure_services ;;
   restore) [ -n "${2:-}" ] || { usage >&2; exit 1; }; run_docker restore "$2" ;;
-  migration-rollback) migration_rollback "${2:-}" ;;
+  migration-rollback-export) migration_rollback_export "${2:-}" ;;
+  migration-rollback-import) migration_rollback_import "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;
   help|-h|--help) usage ;;
   *) usage >&2; exit 1 ;;
 esac

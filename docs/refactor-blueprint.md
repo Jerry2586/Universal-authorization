@@ -1,7 +1,7 @@
 # APPGOG 公司级重构蓝图
 
 日期：2026-09-24  
-状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2，v1.2.13 已完成 Phase 3，v1.2.14 已完成 Phase 4，v1.2.15 已完成 Phase 5
+状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2，v1.2.13 已完成 Phase 3，v1.2.14 已完成 Phase 4，v1.2.15 已完成 Phase 5，v1.2.16 已完成 Phase 6
 适用范围：授权中心、客户打包中心、构建 Worker、产品 SDK、Docker 安装器、在线更新助手和服务器迁移能力。
 
 ## 1. 目标与非目标
@@ -219,6 +219,8 @@ action result reason_code duration_ms
 - 再接入真实产品的受控迁机；
 - 产品安装身份改为本地 Ed25519 密钥对和 Challenge Proof，不能继续只信任调用方提交的 Installation ID 字符串；
 - 完成配对、预同步、短暂只读、所有权切换、校准和回滚。
+
+完成状态（v1.2.16）：控制中心继续使用一次性配对、固定收件箱、64 MiB 分块和双层 SHA-256，切换后回滚不再允许直接解除源 Fenced，而是由当前 Active 目标停止写入、标记 `rollback_exporting`、导出最终加密快照/独立密钥/manifest，旧源只从固定 `rollback-inbox` 校验导入并以更高所有权 generation 恢复；失败时旧源恢复导入前 Fenced 数据且保持停止。客户产品迁机新增 `issued → prepared → completed → rolled_back` 状态机，目标先用新 Ed25519 Installation Identity 和一次性 Challenge Proof 创建 Candidate，提交时同事务完成旧实例 Fenced 与候选 Active，窗口内回滚继续要求源私钥、Refresh Secret 和新 Challenge Proof。控制中心迁移与客户产品迁机仍是两套独立协议。
 
 ### Phase 7：运维脚本模块化与完整 E2E
 
