@@ -1,10 +1,12 @@
-# APPGOG打包授权系统架构（v1.2.24）
+# APPGOG打包授权系统架构（v1.2.25）
 
 日期：2026-09-25
 
 ## 版本权益边界
 
-v1.2.24 在既有 Product、Entitlement、Packaging 和 Customer 边界内增加版本权益，不建立第二套授权系统。Product 只保存发布者选择的 `free` 或 `paid`；Entitlement 是套餐与版本权益的唯一判定者；Packaging 在客户排队和 Worker 领取时重复执行服务端校验；Customer 只输出可读投影。免费授权不能构建 `paid` 版本，付费版和历史兼容版可构建两类版本。授权暂停、撤销、删除、过期、域名、Installation ID 与更新期限仍优先于版本权益。
+v1.2.25 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。Packaging 负责对 `index.html`、`editor.html` 与 `dashboard.blade.php` 注入同一授权运行时，并对业务 JavaScript 执行确定的语法级压缩、按包种子标识符混淆和字符串数组编码；Activation 仍是固定 Key、域名、Installation ID 和签名 Token 的唯一最终判断边界。版本权益规则继续由 Entitlement 统一判定。
+
+源码保护与授权安全分层：Terser 压缩、JavaScript Obfuscator 按包混淆、CSS 压缩、水印和随机路径只提高静态复制成本；包身份使用 AES-256-GCM，Build/Package 使用 Ed25519 签名和 HMAC；敏感凭证、安装私钥、撤销状态和套餐能力仍由 Xboard 服务端桥与授权中心控制，禁止以前端混淆替代服务端授权。
 
 旧数据库升级后所有既有版本默认标记为 `free`，不会因升级突然失去访问权。客户目录同时区分全局最新版本与当前授权的最新可用版本，前端按钮只负责展示，不能替代服务端判断。
 

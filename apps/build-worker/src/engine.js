@@ -1,5 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { posix } from 'node:path';
+import JavaScriptObfuscator from 'javascript-obfuscator';
+import { minify } from 'terser';
 import { BuildEngine } from '../../../packages/ports/src/build-engine.js';
 import { invariant } from '../../../packages/core/src/errors.js';
 import { verifyCompactToken } from '../../../packages/core/src/signing.js';
@@ -84,8 +86,9 @@ function openProtectedIdentity(buffer, packageSecret) {
   }
 }
 
-function applyPerPackageSourceProtection(files, watermark) {
+async function applyPerPackageSourceProtection(files, watermark) {
   const marker = `/* APPGOG-WM:${watermark} */\n`;
+  const seed = Number.parseInt(createHash('sha256').update(watermark, 'utf8').digest('hex').slice(0, 8), 16);
   for (const [name, content] of [...files.entries()]) {
     const ext = extension(name);
     if (ext === '.map') {
@@ -96,7 +99,56 @@ function applyPerPackageSourceProtection(files, watermark) {
     const cleaned = content.toString('utf8')
       .replace(/\/\/[#@]\s*sourceMappingURL=.*?(?:\r?\n|$)/g, '')
       .replace(/\/\*[#@]\s*sourceMappingURL=.*?\*\//gs, '');
-    files.set(name, Buffer.from(`${marker}${cleaned}`, 'utf8'));
+    if (ext === '.css') {
+      const compact = cleaned.replace(/\/\*(?!\!)[\s\S]*?\*\//g, '').replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+      files.set(name, Buffer.from(`${marker}${compact}`, 'utf8'));
+      continue;
+    }
+    let protectedSource;
+    try {
+      const module = /(^|[;}]\s*)(?:import|export)\s/m.test(cleaned);
+      protectedSource = await minify(cleaned, {
+        compress: { passes: 2, drop_debugger: true },
+        mangle: { toplevel: module, keep_classnames: true, keep_fnames: true },
+        module,
+        sourceMap: false,
+        format: { comments: false, ascii_only: true, semicolons: true },
+      });
+    } catch (error) {
+      invariant(false, 'SOURCE_JAVASCRIPT_PROTECTION_FAILED', `JavaScript 保护失败：${name}（${error?.message || '无法解析'}）`, 400);
+    }
+    invariant(typeof protectedSource?.code === 'string' && protectedSource.code.length > 0,
+      'SOURCE_JAVASCRIPT_PROTECTION_FAILED', `JavaScript 保护失败：${name}`, 400);
+    let obfuscated;
+    try {
+      obfuscated = JavaScriptObfuscator.obfuscate(protectedSource.code, {
+        compact: true,
+        controlFlowFlattening: false,
+        deadCodeInjection: false,
+        debugProtection: false,
+        disableConsoleOutput: false,
+        identifierNamesGenerator: 'hexadecimal',
+        identifiersPrefix: `_appgog_${seed.toString(16)}_`,
+        numbersToExpressions: true,
+        renameGlobals: false,
+        seed,
+        selfDefending: false,
+        simplify: true,
+        splitStrings: true,
+        splitStringsChunkLength: 8,
+        stringArray: true,
+        stringArrayEncoding: ['base64'],
+        stringArrayIndexShift: true,
+        stringArrayRotate: true,
+        stringArrayShuffle: true,
+        stringArrayThreshold: 1,
+        transformObjectKeys: false,
+        unicodeEscapeSequence: true,
+      }).getObfuscatedCode();
+    } catch (error) {
+      invariant(false, 'SOURCE_JAVASCRIPT_PROTECTION_FAILED', `JavaScript 混淆失败：${name}（${error?.message || '未知错误'}）`, 400);
+    }
+    files.set(name, Buffer.from(`${marker}${obfuscated}`, 'utf8'));
   }
 }
 
@@ -110,7 +162,7 @@ function rootCandidates(files) {
   const candidates = [];
   for (const name of files.keys()) {
     const base = posix.basename(name).toLowerCase();
-    if (base === 'index.html' || base === 'dashboard.blade.php') candidates.push(name);
+    if (base === 'index.html' || base === 'editor.html' || base === 'dashboard.blade.php') candidates.push(name);
   }
   return candidates;
 }
@@ -165,7 +217,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       if (ext === '.php') invariant(name.toLowerCase().endsWith('.blade.php'), 'SOURCE_PHP_REJECTED', `只允许 Xboard Blade 模板，不允许普通 PHP：${name}`, 400);
     }
     const entries = rootCandidates(files);
-    invariant(entries.length > 0, 'SOURCE_ENTRY_NOT_FOUND', '主题 ZIP 必须包含 index.html 或 dashboard.blade.php', 400);
+    invariant(entries.length > 0, 'SOURCE_ENTRY_NOT_FOUND', '主题 ZIP 必须包含 index.html、editor.html 或 dashboard.blade.php', 400);
     const hasConfig = [...files.keys()].some((name) => posix.basename(name).toLowerCase() === 'config.json');
     invariant(hasConfig, 'SOURCE_CONFIG_NOT_FOUND', '主题 ZIP 必须包含 Xboard 主题 config.json', 400);
     return { files, entries };
@@ -174,7 +226,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
   async build({ sourceRef, sourceBuffer: providedSourceBuffer, product, version, buildId, packageId, packageSecret, packageManifestToken, watermark, domain }) {
     const sourceBuffer = providedSourceBuffer ?? this.artifactStore.read(sourceRef);
     const { files, entries } = this.validateSource(sourceBuffer);
-    applyPerPackageSourceProtection(files, watermark);
+    await applyPerPackageSourceProtection(files, watermark);
     const injection = createBuildInjection({
       product,
       version,
@@ -298,6 +350,8 @@ export class HardenedThemeBuildEngine extends BuildEngine {
         bridge_plugin_code: bridgeDescriptor.code,
         bridge_plugin_version: bridgeDescriptor.version,
         source_maps_removed: true,
+        javascript_protection: 'terser-obfuscator-v1',
+        stylesheet_protection: 'comment-strip-compact-v1',
         source_watermark: watermark,
       },
       lifecycle: {

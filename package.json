@@ -1,8 +1,9 @@
 {
   "name": "appgog-packaging-licensing-system",
-  "version": "1.2.24",
+  "version": "1.2.25",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.19.0",
   "engines": {
     "node": ">=24"
   },
@@ -21,5 +22,9 @@
     "keygen": "node apps/license-api/src/keygen.js",
     "demo-theme": "node scripts/create-demo-theme.js",
     "start:combined": "node scripts/start-combined.js"
+  },
+  "dependencies": {
+    "javascript-obfuscator": "5.8.0",
+    "terser": "5.51.2"
   }
 }

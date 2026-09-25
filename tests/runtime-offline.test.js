@@ -22,11 +22,16 @@ function activation(privateKey, overrides = {}) {
   }, privateKey);
 }
 
-function packageManifest(privateKey) {
+function packageManifest(privateKey, overrides = {}) {
   return signCompactToken({
     typ: 'package-manifest', product: 'appgog', build_id: 'bld_runtime', package_id: 'pkg_runtime',
     version: '1.17.1', domain: 'demo.example.com', iat: Math.floor(FIXED_NOW / 1000) - 3600,
+    ...overrides,
   }, privateKey);
+}
+
+function elementText(element) {
+  return [element?.textContent || '', ...(element?.children || []).map(elementText)].join(' ');
 }
 
 function fakeElement(tagName) {
@@ -110,6 +115,22 @@ test('SDK 仅在显式开启时接受服务端签名的 offline_until', () => {
     () => verifyActivation({ ...input, token: activation(privateKey, { offline_until: Math.floor(FIXED_NOW / 1000) - 1 }), allowOffline: true }),
     (error) => error.code === 'TOKEN_EXPIRED',
   );
+});
+
+test('安装域名与签名包域名不一致时显示明确换绑提示', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const browser = installBrowser({
+    token: activation(privateKey),
+    publicKey,
+    manifestToken: packageManifest(privateKey, { domain: 'baidu.com' }),
+    fetchImpl: async () => { throw new Error('domain mismatch must fail before network requests'); },
+  });
+  try {
+    await browser.settle();
+    const gate = browser.elements.find((element) => element.id === '__appgog_gate');
+    assert.match(elementText(gate), /APPGOG 授权域名不匹配/);
+    assert.match(elementText(gate), /当前安装域名 demo\.example\.com 与打包绑定域名 baidu\.com 不一致/);
+  } finally { browser.restore(); }
 });
 
 test('网络失败时在签名离线期限内放行并显示离线提示', async () => {

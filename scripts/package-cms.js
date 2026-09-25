@@ -13,7 +13,7 @@ const releaseName = `APPGOG-Packaging-Licensing-System-${manifest.version}`;
 const output = join(outputDirectory, `${releaseName}.zip`);
 const checksumOutput = `${output}.sha256`;
 const files = new Map();
-const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'AGENTS.md', 'Caddyfile', 'compose.yaml', 'Dockerfile', 'package.json', 'README.md', 'release-contract.json', 'install-docker.sh'];
+const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'AGENTS.md', 'Caddyfile', 'compose.yaml', 'Dockerfile', 'package.json', 'pnpm-lock.yaml', 'README.md', 'release-contract.json', 'install-docker.sh'];
 const sourceDirectories = ['apps', 'packages', 'scripts', 'docs'];
 
 function addFile(path) {

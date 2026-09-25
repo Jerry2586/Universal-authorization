@@ -15,6 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Install locked production dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
       - name: Release contract source validation
         run: node scripts/verify-release-contract.js --source
       - name: Unit and integration tests
@@ -77,6 +79,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Install locked production dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
       - name: Require production signing key
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.APPGOG_RELEASE_SIGNING_PRIVATE_KEY }}

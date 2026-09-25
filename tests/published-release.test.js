@@ -31,6 +31,7 @@ function buildReleaseFixture() {
     'docs/refactor-blueprint.md',
     'docs/server-migration-standard.md',
     'package.json',
+    'pnpm-lock.yaml',
     'Dockerfile',
     'compose.yaml',
     'scripts/install-linux.sh',

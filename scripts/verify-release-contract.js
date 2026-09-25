@@ -39,6 +39,7 @@ export function verifySourceContract() {
   requireCondition(/^\d+\.\d+\.\d+$/.test(version), `package.json 版本 ${version} 不是正式语义版本`);
   requireCondition(contract.schema === 1 && contract.product === 'appgog', 'release-contract.json schema/product 无效');
   requireCondition(packageManifest.engines?.node === contract.node_engine, 'package.json Node 引擎与 release-contract.json 不一致');
+  requireCondition(packageManifest.packageManager === contract.package_manager, 'package.json 包管理器与 release-contract.json 不一致');
   requireCondition(Number(capture(contract.node_engine, /^>=([0-9]+)$/, 'release-contract.json node_engine')) === contract.node_major, 'Node 引擎与 node_major 不一致');
   requireCondition(/^\d+\.\d+$/.test(contract.docker_compose_min), '最低 Docker Compose 版本格式无效');
   requireCondition(JSON.stringify(contract.architectures) === JSON.stringify(['amd64', 'arm64']), '正式安装包必须同时支持 amd64 与 arm64');
@@ -46,6 +47,8 @@ export function verifySourceContract() {
   const dockerfile = read('Dockerfile');
   requireCondition(capture(dockerfile, /^ARG NODE_IMAGE=(.+)$/m, 'Dockerfile NODE_IMAGE') === contract.node_image, 'Dockerfile Node 镜像不匹配');
   requireCondition(capture(dockerfile, /^ARG CADDY_IMAGE=(.+)$/m, 'Dockerfile CADDY_IMAGE') === contract.caddy_image, 'Dockerfile Caddy 镜像不匹配');
+  requireCondition(dockerfile.includes('pnpm install --prod --frozen-lockfile'), 'Dockerfile 必须按锁文件安装生产依赖');
+  requireCondition(existsSync(join(root, 'pnpm-lock.yaml')), '缺少 pnpm-lock.yaml');
 
   const compose = read('compose.yaml');
   requireCondition(compose.includes(`APPGOG_NODE_IMAGE:-${contract.node_image}`), 'compose.yaml Node 镜像不匹配');
@@ -165,7 +168,7 @@ export function verifyPackagedArtifacts({
 
   const files = readZip(readFileSync(zipPath), { maxEntries: 1000, maxSingleFileBytes: 32 * 1024 * 1024, maxUncompressedBytes: 256 * 1024 * 1024 });
   const packaged = (path) => files.get(`${releaseName}/${path}`);
-  for (const path of ['AGENTS.md', 'release-contract.json', 'docs/release-policy.md', 'docs/refactor-blueprint.md', 'docs/server-migration-standard.md', 'package.json', 'Dockerfile', 'compose.yaml', 'scripts/install-linux.sh']) {
+  for (const path of ['AGENTS.md', 'release-contract.json', 'docs/release-policy.md', 'docs/refactor-blueprint.md', 'docs/server-migration-standard.md', 'package.json', 'pnpm-lock.yaml', 'Dockerfile', 'compose.yaml', 'scripts/install-linux.sh']) {
     requireCondition(packaged(path), `正式 ZIP 缺少 ${path}`);
   }
   requireCondition(JSON.parse(packaged('package.json').toString('utf8')).version === version, '正式 ZIP 内 package.json 版本不匹配');

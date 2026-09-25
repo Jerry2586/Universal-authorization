@@ -53,11 +53,12 @@ APPGOG 主题 → Activation API → Ed25519 凭证 → 本地验签 SDK
 `HardenedThemeBuildEngine` 接收一个已经可安装的 Xboard 主题 ZIP，并完成：
 
 1. 安全解析和结构验证。
-2. 注入每包独立的激活运行时、Package Secret、Build/Package 身份和公钥。
-3. 写入 `appgog-license/build.json` 与 `APPGOG-ACTIVATION.txt`。
-4. 写入签名 Package Manifest、构建水印、逐文件 SHA-256 清单和 Package Secret HMAC。
-5. 生成普通可安装 ZIP 和 SHA-256。
-6. Portal 再读取真实成品，复核签名身份、清单、HMAC、整包哈希和结构后才标记成功。
+2. 对业务 JavaScript 执行语法级压缩、按包种子标识符混淆和字符串数组编码，对 CSS 清理注释并压缩；任一 JavaScript 无法安全解析时整个构建失败，不回退到明文。
+3. 向 `index.html`、`editor.html` 与 `dashboard.blade.php` 注入同一个每包激活运行时、Package Secret、Build/Package 身份和公钥。
+4. 写入 `appgog-license/build.json` 与 `APPGOG-ACTIVATION.txt`。
+5. 写入签名 Package Manifest、构建水印、逐文件 SHA-256 清单和 Package Secret HMAC。
+6. 生成普通可安装 ZIP 和 SHA-256。
+7. Portal 再读取真实成品，复核签名身份、清单、HMAC、整包哈希和结构后才标记成功。
 
 它不会执行 ZIP 中的脚本、PHP、npm 生命周期或任意源码构建命令。真实 Vue 源码编译将作为新的 `BuildEngine` 适配器运行在隔离容器中。
 
@@ -84,6 +85,6 @@ APPGOG 主题 → Activation API → Ed25519 凭证 → 本地验签 SDK
 - 通用服务端授权守卫已位于 `packages/appgog-sdk/src/guard.js`；真实 APPGOG/Xboard 源码不在本仓库中，因此关键设置 API 的逐路由接入仍需目标项目。
 - Entitlement 只在签发或套餐切换时写 License 能力/额度快照；Product、Packaging、Activation 和 UI 只能读取快照或签名 Token，不得动态依赖可变套餐模板作为既有授权的最终边界。
 - Migration 只编排身份证明、快照、传输与所有权状态机；控制中心回滚输入固定在受管目录，产品迁机只能通过 Activation 公开 Port 切换 Candidate/Active/Fenced，禁止直接改写其他领域表。
-- `dashboard.blade.php` 的相对静态资源 URL 需要在真实 Xboard 路由上验收；如果路由解析不同，应改为内联运行时或主题的固定资源前缀。
+- `editor.html` 与 `dashboard.blade.php` 的相对静态资源 URL 必须在真实 Xboard 路由上验收；如果路由解析不同，应改为主题的固定资源前缀，不能删除授权门。
 - SQLite、共享本机成品卷和独立 Worker 适合单机、小规模部署；正式多机商用需完成上面的基础设施迁移。
 - 混淆和随机布局不能代替 Ed25519 签名、服务端状态、域名绑定和审计。

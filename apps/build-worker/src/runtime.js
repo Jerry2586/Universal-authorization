@@ -12,7 +12,7 @@ export function browserLicenseRuntime(config) {
   const storageKey = `appgog_license_${config.i}`;
   const legacyInstallKey = `appgog_install_${config.p}`;
   let saved;
-  let integrityFailure = false;
+  let integrityFailure = null;
   let bridgeFailure = null;
   let activePayload = null;
   let installationId = null;
@@ -185,10 +185,16 @@ export function browserLicenseRuntime(config) {
 
   async function packageIdentityValid() {
     const payload = await signedPayload(config.m, packagePublicKey);
-    return Boolean(payload && payload.typ === 'package-manifest' && payload.product === config.p
-      && payload.build_id === config.b && payload.package_id === config.i
-      && payload.version === config.v && payload.domain === domain()
-      && await protectedIdentityValid());
+    if (!payload || payload.typ !== 'package-manifest' || payload.product !== config.p
+      || payload.build_id !== config.b || payload.package_id !== config.i || payload.version !== config.v) {
+      return { ok: false, reason: 'signed-package' };
+    }
+    const currentDomain = domain();
+    if (payload.domain !== currentDomain) {
+      return { ok: false, reason: 'domain', expected: payload.domain, actual: currentDomain };
+    }
+    if (!await protectedIdentityValid()) return { ok: false, reason: 'protected-identity' };
+    return { ok: true };
   }
 
   async function bridgeHealth() {
@@ -445,12 +451,16 @@ export function browserLicenseRuntime(config) {
     const hasInstallWindow = Boolean(saved?.install_window_id && saved?.install_window_token && saved?.install_window_expires_at);
     const installWindowExpired = hasInstallWindow && Math.floor(new Date(saved.install_window_expires_at).getTime() / 1000) <= now();
     const title = document.createElement('h1');
-    title.textContent = integrityFailure ? 'APPGOG 安装包完整性验证失败'
+    const domainMismatch = integrityFailure?.reason === 'domain';
+    title.textContent = domainMismatch ? 'APPGOG 授权域名不匹配'
+      : (integrityFailure ? 'APPGOG 安装包完整性验证失败'
       : (bridgeFailure ? 'APPGOG 授权组件未就绪'
       : (activationAdminRequired ? '请登录 Xboard 管理后台'
-      : (hasInstallReceipt ? '在线激活 APPGOG' : (hasInstallWindow ? '输入一次性安装 Key' : '激活 APPGOG'))));
+      : (hasInstallReceipt ? '在线激活 APPGOG' : (hasInstallWindow ? '输入一次性安装 Key' : '激活 APPGOG')))));
     const description = document.createElement('p');
-    description.textContent = integrityFailure
+    description.textContent = domainMismatch
+      ? `当前安装域名 ${integrityFailure.actual} 与打包绑定域名 ${integrityFailure.expected} 不一致。请先在打包中心完成域名换绑，再重新构建并安装客户专属 ZIP。`
+      : integrityFailure
       ? '当前文件不属于授权服务器签发的同一 Build/Package，或已被跨包替换。请重新下载并安装完整 ZIP。'
       : bridgeFailure
       ? bridgeFailure
@@ -581,8 +591,8 @@ export function browserLicenseRuntime(config) {
     product: config.p, version: config.v, buildId: config.b, packageId: config.i,
     installationId, status: 'checking', checkUpdates, hasCapability, requireCapability,
   };
-  const start = () => { void packageIdentityValid().then(async (valid) => {
-    if (!valid) { integrityFailure = true; showGate(); return; }
+  const start = () => { void packageIdentityValid().then(async (result) => {
+    if (!result.ok) { integrityFailure = result; showGate(); return; }
     try {
       await ensureBridge();
       globalThis.APPGOGLicense.installationId = installationId;
@@ -599,7 +609,7 @@ export function browserLicenseRuntime(config) {
     }
     const state = await checkStoredActivation();
     if (state === 'locked') showGate(); else unlock(state);
-  }).catch(() => { integrityFailure = true; showGate(); }); };
+  }).catch(() => { integrityFailure = { reason: 'runtime' }; showGate(); }); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 }

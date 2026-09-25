@@ -10,7 +10,8 @@ COPY --from=caddy /usr/bin/caddy /tmp/caddy
 RUN cat /tmp/caddy > /usr/bin/caddy && chmod 0755 /usr/bin/caddy && rm /tmp/caddy
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY package.json Caddyfile ./
+COPY package.json pnpm-lock.yaml Caddyfile ./
+RUN corepack enable && pnpm install --prod --frozen-lockfile
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts

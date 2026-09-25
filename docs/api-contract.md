@@ -28,7 +28,7 @@
 
 ## Xboard APPGOG License Bridge
 
-客户 ZIP 内置 `appgog-license/appgog-license-bridge.zip`。首次只能从已登录的 Xboard 管理员浏览器打开主题，运行时从 `XBOARD_ACCESS_TOKEN` 读取管理令牌，并仅向同源官方接口调用 `plugin/upload`、`plugin/install`、`plugin/enable` 与 `plugin/getPlugins`；令牌不得发送到 APPGOG 授权中心。插件健康检查通过前，浏览器不得调用 `install-windows/start`。
+客户 ZIP 内置 `appgog-license/appgog-license-bridge.zip`。`index.html`、`editor.html` 与 `dashboard.blade.php` 必须注入同一授权运行时，主题管理后台不得绕过授权门。首次只能从已登录的 Xboard 管理员浏览器打开主题，运行时从 `XBOARD_ACCESS_TOKEN` 读取管理令牌，并仅向同源官方接口调用 `plugin/upload`、`plugin/install`、`plugin/enable` 与 `plugin/getPlugins`；令牌不得发送到 APPGOG 授权中心。插件健康检查通过前，浏览器不得调用 `install-windows/start`。
 
 插件公开接口固定为：
 

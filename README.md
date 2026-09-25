@@ -1,8 +1,8 @@
-# APPGOG打包授权系统 v1.2.24
+# APPGOG打包授权系统 v1.2.25
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.24 在原授权体系上增加版本权益：每个主题版本发布时由管理员明确选择“免费授权可用”或“仅付费授权可用”，服务端在客户版本目录、构建排队和 Worker 领取三个阶段共同校验。固定 Key、激活、域名、Installation ID、撤销和迁移逻辑保持不变；历史授权继续兼容。运营平台名称通过公共只读品牌配置同步到登录页、授权中心和打包中心，换绑冷却仍由服务端执行并持久保存。
+v1.2.25 修复真实 Xboard 主题后台保护链路：`editor.html` 与首页、Blade 面板一同注入授权门；安装域名与打包域名不一致时明确显示两端域名和换绑指引；客户业务 JavaScript 在每次打包时执行压缩、按包种子标识符混淆和字符串数组编码，再叠加每包水印、签名清单和加密身份。固定 Key、两阶段激活、域名、Installation ID、撤销和迁移逻辑保持不变。
 
 ## Linux 安装 + 专业管理菜单
 
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 仓库为公开仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.24` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.25` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -123,7 +123,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.24 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.25 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
@@ -138,7 +138,7 @@ npm run cms:package
 2. 卖家给客户签发长期固定 License Key；可预先绑定域名，也可由客户首次登录后永久绑定。
 3. 客户在 `/build` 使用固定 Key 登录，选择版本并提交打包。
 4. 每次打包生成独立的 Build ID、Package ID、Package Secret 和一次性 Install Key。
-5. 独立 Worker 检查 ZIP 安全性、移除 Source Map、注入每包水印、AES-256-GCM 加密身份载荷、随机运行时路径和构建清单，并生成客户专属 ZIP。
+5. 独立 Worker 检查 ZIP 安全性，对客户业务 JavaScript 执行 Terser 压缩、按包种子十六进制标识符混淆和字符串数组编码，压缩 CSS、移除 Source Map、注入每包水印、AES-256-GCM 加密身份载荷、随机运行时路径和构建清单，并生成客户专属 ZIP。
 6. 客户把 ZIP 安装到 Xboard，并从已登录的管理员后台第一次打开主题；客户包自动校验、上传、安装并启用 `APPGOG License Bridge`，健康检查失败时不开始倒计时。
 7. 点击“开始激活”创建不可重置的 60 分钟窗口，再输入本次一次性 Install Key；成功后 Key 立即作废，但正式功能仍锁定。
 8. 输入长期固定 License Key 完成正式激活；授权服务器校验 Install Receipt、包身份、域名和安装环境，签发 Ed25519 激活凭证。
@@ -251,7 +251,7 @@ npm test
 
 ## 准确的产品边界
 
-当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、删除 Source Map、为 JS/CSS 注入每包水印、对授权运行时执行每包标识符随机化，并生成随机保护目录与 AES-256-GCM 加密包身份载荷。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令；通用第三方业务 JS/CSS 也不会被激进改写，以避免破坏真实主题兼容性。独立 Worker 已支持通过授权中心 HTTP 接口传输源码和成品，可部署在另一台服务器；授权中心仍是单机 SQLite，不提供多授权中心并行写入或自动数据库高可用。
+当前版本会对“已经能安装的 Xboard 主题 ZIP”进行安全检查、删除 Source Map、对业务 JavaScript 执行语法级压缩、按包种子标识符混淆和字符串数组编码、压缩 CSS、为 JS/CSS 注入每包水印、对授权运行时执行每包标识符随机化，并生成随机保护目录与 AES-256-GCM 加密包身份载荷。HTML、Blade 和浏览器必须读取的静态资源不会伪装成不可执行的密码文件；构建保护用于提高静态阅读和复制成本，不会虚假承诺客户端源码绝对不可提取。它不会执行用户上传的源码，也不会自动运行任意 Vue/npm 构建命令。独立 Worker 已支持通过授权中心 HTTP 接口传输源码和成品，可部署在另一台服务器；授权中心仍是单机 SQLite，不提供多授权中心并行写入或自动数据库高可用。
 
 如果要直接上传 APPGOG 的原始 Vue 工程并自动编译，需要提供真实源码、依赖版本、构建命令和最终 Xboard 安装目录结构，再在现有 `BuildEngine` 接口后接入隔离容器构建适配器。网站、授权、Key、队列和激活流程无需推倒重做。
 

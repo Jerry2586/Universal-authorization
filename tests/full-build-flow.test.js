@@ -80,8 +80,9 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   const source = writeZip(new Map([
     ['APPGOG/config.json', Buffer.from('{"name":"APPGOG","version":"1.17.0"}')],
     ['APPGOG/index.html', Buffer.from('<!doctype html><html><head><title>APPGOG</title></head><body><main>Theme</main></body></html>')],
+    ['APPGOG/editor.html', Buffer.from('<!doctype html><html><head><title>Theme Studio</title></head><body><main>Editor</main></body></html>')],
     ['APPGOG/dashboard.blade.php', Buffer.from('<!doctype html><html><head></head><body>Dashboard</body></html>')],
-    ['APPGOG/assets/app.js', Buffer.from('console.log("appgog")\n//# sourceMappingURL=app.js.map')],
+    ['APPGOG/assets/app.js', Buffer.from('function calculateProtectedValue(input) { const originalLongVariableName = input + 1; console.log("APPGOG_VISIBLE_SOURCE_STRING"); return originalLongVariableName; } console.log(calculateProtectedValue(1));\n//# sourceMappingURL=app.js.map')],
     ['APPGOG/assets/app.js.map', Buffer.from('{"version":3,"sources":["src/app.js"]}')],
   ]));
   const version = app.portal.publishSourceVersion({
@@ -118,8 +119,10 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
 
   const output = readZip(app.artifactStore.read(artifactRef));
   const index = output.get('APPGOG/index.html').toString('utf8');
+  const editor = output.get('APPGOG/editor.html').toString('utf8');
   const dashboard = output.get('APPGOG/dashboard.blade.php').toString('utf8');
   assert.match(index, /data-appgog-license-runtime/);
+  assert.match(editor, /data-appgog-license-runtime/);
   assert.match(dashboard, /data-appgog-license-runtime/);
   const runtimeName = [...output.keys()].find((name) => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(name));
   assert.ok(runtimeName);
@@ -145,6 +148,7 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   assert.ok(manifest.integrity.files.some((file) => file.path === runtimeName));
   assert.equal(manifest.protection.identity_algorithm, 'AES-256-GCM');
   assert.equal(manifest.protection.runtime_path, runtimeName);
+  assert.equal(manifest.protection.javascript_protection, 'terser-obfuscator-v1');
   assert.equal(manifest.lifecycle.install_window_seconds, 3600);
   assert.equal(manifest.lifecycle.server_migration, 'new_installation_identity_and_controlled_handoff');
   assert.ok(output.has(manifest.protection.bridge_contract_path));
@@ -180,6 +184,8 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   const protectedSource = output.get('APPGOG/assets/app.js').toString('utf8');
   assert.match(protectedSource, new RegExp(`APPGOG-WM:${leased.build.watermark}`));
   assert.doesNotMatch(protectedSource, /sourceMappingURL/);
+  assert.doesNotMatch(protectedSource, /originalLongVariableName/);
+  assert.doesNotMatch(protectedSource, /APPGOG_VISIBLE_SOURCE_STRING/);
 
   const receipt = app.service.unlockInstall({
     installKey: leased.build.installKey,
