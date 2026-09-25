@@ -21,6 +21,8 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
   assert.match(html, /id="check-update"/);
   assert.match(html, /id="install-update"/);
   assert.match(html, /id="repair-current"/);
+  assert.match(html, /id="update-checked-at"/);
+  assert.match(html, /id="update-source"/);
   assert.match(html, /安全更新最新版本/);
   assert.match(html, /data-view="tickets"/);
   assert.match(html, /id="admin-ticket-list"/);
@@ -37,6 +39,9 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
   assert.match(announcements, /\/web\/admin\/announcement/);
   assert.match(announcements, /function preview/);
   assert.match(operations, /install-version/);
+  assert.match(operations, /update\.installable/);
+  assert.match(operations, /检查结果已过期/);
+  assert.match(operations, /发布源落后/);
 });
 
 test('customer build UI keeps the version catalog in build tasks and removes migration notes', () => {

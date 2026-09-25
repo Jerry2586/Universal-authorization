@@ -1,6 +1,24 @@
 import { $ } from './core.js';
 
 export function createOperationsUi({ request, notify, can }) {
+  function latestLabel(update) {
+    if (update.check_status === 'failed') return '发布源不可用';
+    if (update.freshness === 'stale') return '检查结果已过期';
+    if (update.freshness === 'unchecked') return '尚未检查';
+    if (update.relation === 'source_behind') return update.latest_version ? `v${update.latest_version}（发布源落后）` : '发布源落后';
+    return update.latest_version ? `v${update.latest_version}` : '尚未检查';
+  }
+
+  function statusMessage(update) {
+    if (!update.available) return update.message || '宿主机更新助手离线';
+    if (update.check_status === 'failed') return update.last_error || '发布源不可用或签名校验失败';
+    if (update.freshness === 'stale') return '最近一次检查结果已超过 1 小时，请重新检查';
+    if (update.relation === 'source_behind') return '签名发布源版本低于当前运行版本，已禁止更新';
+    if (update.relation === 'up_to_date') return '当前已经是最新版本';
+    if (update.relation === 'update_available') return `发现签名新版本 v${update.latest_version}`;
+    return update.message || '等待操作';
+  }
+
   async function refresh() {
     if (!$('update-state') || !can('system.manage')) return;
     try {
@@ -10,13 +28,16 @@ export function createOperationsUi({ request, notify, can }) {
         : '助手离线';
       $('update-state').classList.toggle('status-success', update.available && ['idle', 'succeeded'].includes(update.state));
       $('update-current-version').textContent = update.current_version ? `v${update.current_version}` : '—';
-      $('update-latest-version').textContent = update.latest_version ? `v${update.latest_version}` : '尚未检查';
-      $('update-message').textContent = update.message || '等待操作';
+      $('update-latest-version').textContent = latestLabel(update);
+      $('update-message').textContent = statusMessage(update);
+      if ($('update-checked-at')) $('update-checked-at').textContent = update.checked_at ? new Date(update.checked_at).toLocaleString('zh-CN') : '尚未检查';
+      if ($('update-source')) $('update-source').textContent = update.source === 'signed-release' ? '签名 Latest Release' : '—';
       $('update-log').textContent = Array.isArray(update.log) ? update.log.slice(-12).join('\n') : update.last_log || '暂无更新日志';
       if ($('update-fallback')) $('update-fallback').hidden = update.available;
-      for (const id of ['check-update', 'install-update', 'repair-current']) {
-        $(id).disabled = !update.available || ['queued', 'running'].includes(update.state);
-      }
+      const busy = ['queued', 'running'].includes(update.state);
+      $('check-update').disabled = !update.available || busy;
+      $('repair-current').disabled = !update.available || busy;
+      $('install-update').disabled = !update.installable;
     } catch (error) {
       $('update-state').textContent = '读取失败';
       $('update-message').textContent = error.message;

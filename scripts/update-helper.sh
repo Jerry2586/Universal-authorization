@@ -19,19 +19,38 @@ current_version() {
   sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$CURRENT_LINK/package.json" 2>/dev/null | head -n 1
 }
 
-latest_version() {
-  jq -r '.latest_version // empty' "$STATUS_FILE" 2>/dev/null || true
-}
-
 write_status() {
-  state=$1; message=$2; latest=${3:-$(latest_version)}
+  state=$1; message=$2
+  latest=${3:-__preserve__}
+  check_status=${4:-__preserve__}
+  checked_at=${5:-__preserve__}
+  source=${6:-__preserve__}
+  last_error=${7:-__preserve__}
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   tail_text=$(tail -n 12 "$LOG_FILE" 2>/dev/null || true)
+  previous=$(jq -c . "$STATUS_FILE" 2>/dev/null || printf '{}')
   temporary="$STATUS_FILE.$$"
-  jq -n --arg state "$state" --arg message "$message" --arg heartbeat "$now" \
+  jq -n --argjson previous "$previous" --arg state "$state" --arg message "$message" --arg heartbeat "$now" \
     --arg current "$(current_version)" --arg latest "$latest" --arg log "$tail_text" \
+    --arg check_status "$check_status" --arg checked_at "$checked_at" --arg source "$source" --arg last_error "$last_error" \
     --arg install_root "$INSTALL_ROOT" --arg helper_pid "$$" \
-    '{schema:1,state:$state,message:$message,heartbeat_at:$heartbeat,updated_at:$heartbeat,current_version:$current,latest_version:(if $latest == "" then null else $latest end),last_log:$log,install_root:$install_root,helper_pid:$helper_pid}' > "$temporary"
+    '$previous + {
+      schema:2,
+      state:$state,
+      message:$message,
+      heartbeat_at:$heartbeat,
+      updated_at:$heartbeat,
+      current_version:$current,
+      latest_version:(if $latest == "__preserve__" then ($previous.latest_version // null) elif $latest == "" then null else $latest end),
+      last_successful_latest_version:(if $check_status == "succeeded" and $latest != "" and $latest != "__preserve__" then $latest else ($previous.last_successful_latest_version // null) end),
+      check_status:(if $check_status == "__preserve__" then ($previous.check_status // "unchecked") else $check_status end),
+      checked_at:(if $checked_at == "__preserve__" then ($previous.checked_at // null) elif $checked_at == "" then null else $checked_at end),
+      source:(if $source == "__preserve__" then ($previous.source // null) elif $source == "" then null else $source end),
+      last_error:(if $last_error == "__preserve__" then ($previous.last_error // null) elif $last_error == "" then null else $last_error end),
+      last_log:$log,
+      install_root:$install_root,
+      helper_pid:$helper_pid
+    }' > "$temporary"
   chown 1000:1000 "$temporary" 2>/dev/null || true
   chmod 660 "$temporary" 2>/dev/null || true
   mv "$temporary" "$STATUS_FILE"
@@ -40,7 +59,7 @@ write_status() {
 healthcheck() {
   [ -s "$STATUS_FILE" ] || { printf '状态文件不存在或为空：%s\n' "$STATUS_FILE" >&2; return 1; }
   jq -e --arg install_root "$INSTALL_ROOT" '
-    .schema == 1
+    .schema == 2
     and (.state | type == "string" and length > 0)
     and (.heartbeat_at | type == "string" and length > 0)
     and (.current_version | type == "string" and length > 0)
@@ -92,9 +111,16 @@ process_request() {
   version=$(jq -r '.version // empty' "$request")
   case "$action" in
     check-update)
-      write_status running '正在校验最新签名发布清单'
-      if latest=$(check_update); then log "检查更新完成：v$latest"; write_status succeeded "最新签名版本为 v$latest" "$latest"
-      else log '检查更新失败：所有发布源不可用或签名校验失败'; write_status failed '发布源不可用或签名校验失败'; fi
+      write_status running '正在校验最新签名发布清单' '' checking '' signed-release ''
+      checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      if latest=$(check_update); then
+        log "检查更新完成：v$latest"
+        write_status succeeded "最新签名版本为 v$latest" "$latest" succeeded "$checked_at" signed-release ''
+      else
+        error_message='所有发布源不可用或签名校验失败'
+        log "检查更新失败：$error_message"
+        write_status failed '发布源不可用或签名校验失败' '' failed "$checked_at" signed-release "$error_message"
+      fi
       ;;
     install-version)
       write_status running '正在备份、下载、构建并切换新版本'
@@ -125,12 +151,16 @@ case "${1:-}" in
   *) echo '此脚本由 appgog-update-helper.service 管理。' >&2; exit 1 ;;
 esac
 
+initial_schema=$(jq -r '.schema // 1' "$STATUS_FILE" 2>/dev/null || echo 1)
 initial_state=$(jq -r '.state // "idle"' "$STATUS_FILE" 2>/dev/null || echo idle)
 case "$initial_state" in
   succeeded|failed) write_status "$initial_state" "$(jq -r '.message' "$STATUS_FILE")" ;;
   running) write_status failed '助手在执行中重启，请检查日志与运行版本后重试' ;;
   *) write_status idle '在线更新助手已就绪' ;;
 esac
+if [ "$initial_schema" -lt 2 ]; then
+  write_status idle '在线更新助手已升级，请重新检查最新签名版本' '' unchecked '' '' ''
+fi
 while :; do
   request=$(find "$REQUEST_DIR" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort | head -n 1 || true)
   if [ -n "$request" ]; then

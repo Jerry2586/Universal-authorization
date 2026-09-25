@@ -28,6 +28,14 @@
 
 详细检查表见 `docs/release-policy.md`。这些规则不得为了赶版本而跳过。
 
+## main 分支自动发布不得失效
+
+- 任何会改变程序、页面、环境、安装器或正式行为的 main 提交，都必须由 GitHub Actions 在 `verify` 成功后自动执行签名打包、版本标签、Latest Release、七附件上传和回下载验证；禁止只推源码后等待人工补发 Release。
+- 正式发布必须使用仓库 Secret `APPGOG_RELEASE_SIGNING_PRIVATE_KEY`，密钥只允许写入 Actions 临时目录并在结束时删除。Secret 缺失、标签冲突、附件不全、签名错误或 Latest 不一致时，发布必须失败并保持可见红灯。
+- `package.json` 版本对应的标签如果已经存在，只允许它指向当前提交；指向其他提交时必须增加版本号，禁止覆盖标签或强推。
+- `.github/workflows/release-drift.yml` 必须每日及手工检查 main、标签、签名清单、ZIP 内版本和 Latest Release；不得删除、绕过或降级为只检查 CI Artifact。
+- 在线更新助手的心跳与 Release 检查结果必须分离。旧 schema、检查失败、结果过期或发布源落后时，禁止把历史 `latest_version` 显示成最新版本，也禁止执行“安全更新最新版本”。
+
 ## 强制模块边界
 
 - 依赖方向固定为 `UI → HTTP/BFF → Application Use Case → Domain → Port → Adapter`，禁止反向依赖。

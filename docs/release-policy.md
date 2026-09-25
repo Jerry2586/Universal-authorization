@@ -43,11 +43,13 @@
 3. 使用发布私钥生成并签名全部发布附件。
 4. 本地验证签名、ZIP/RUN 哈希和包内版本/环境合同。
 5. 提交并推送 `main`，等待 GitHub Ubuntu/Docker CI 完成真实首装、构建、升级和恢复。
-6. CI 成功后创建版本标签和 Latest Release。
-7. 执行 `node scripts/verify-published-release.js --tag v<版本>`，从 GitHub Release API 返回的地址回下载七个附件，重新验证签名、ZIP/RUN 哈希、版本、精确附件数量与 Latest 状态。
+6. CI 成功后由同一工作流自动创建不可变版本标签和 Latest Release，并上传固定七附件；不得把这一步留给人工提醒或后续补发。
+7. 工作流自动执行 `node scripts/verify-published-release.js --tag v<版本>`，从 GitHub Release API 返回的地址回下载七个附件，重新验证签名、ZIP/RUN 哈希、版本、精确附件数量与 Latest 状态。
 
 任意一步失败都必须停止发布。升级失败时保留数据与备份、保存独立诊断日志，并恢复原健康版本。
 
-`node scripts/verify-release-contract.js --artifacts` 默认要求并验证 `release-manifest.json.sig`。GitHub PR/CI 由于不保存正式私钥，只能显式设置 `APPGOG_ALLOW_UNSIGNED_ARTIFACTS=1` 做非正式制品结构与 Docker 流程验证；该 CI 产物不得直接作为正式 Release。发布操作员本地不得设置此开关。
+`node scripts/verify-release-contract.js --artifacts` 默认要求并验证 `release-manifest.json.sig`。GitHub PR/verify job 可显式设置 `APPGOG_ALLOW_UNSIGNED_ARTIFACTS=1` 做非正式制品结构与 Docker 流程验证；该 CI Artifact 不得直接作为正式 Release。main 的 release job 必须使用 `APPGOG_RELEASE_SIGNING_PRIVATE_KEY` 重新生成正式签名制品，禁止使用无签名开关。
 
 `scripts/verify-published-release.js` 默认仓库为 `Jerry2586/Universal-authorization`，可用 `--repo owner/name`、`--api-base URL` 和 `--output DIR` 指定企业 GitHub 或保留下载目录。除历史审计显式使用 `--allow-not-latest` 外，正式发布验收必须要求目标标签就是 GitHub Latest Release。
+
+`.github/workflows/release-drift.yml` 每日检查当前 main 版本对应的正式 Release。源码版本、标签、清单、ZIP、附件、签名或 Latest 任意漂移都必须失败；在线更新页面不得使用失败或超过一小时的历史检查结果继续开放安装按钮。

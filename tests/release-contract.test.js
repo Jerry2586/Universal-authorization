@@ -30,3 +30,17 @@ test('正式打包流程必须在生成前后执行发布合同校验', () => {
   assert.match(policy, /CI 成功后才能创建版本标签/);
   assert.match(policy, /数据库.*管理员账号和密码.*授权 Key.*公告.*设置/s);
 });
+
+test('main 更新必须自动生成签名 Latest Release 并持续检查漂移', () => {
+  const workflow = readFileSync(resolve(root, '.github/workflows/docker.yml'), 'utf8');
+  assert.match(workflow, /needs: verify/);
+  assert.match(workflow, /APPGOG_RELEASE_SIGNING_PRIVATE_KEY/);
+  assert.match(workflow, /npm run cms:package/);
+  assert.match(workflow, /gh release create/);
+  assert.match(workflow, /gh release upload/);
+  assert.match(workflow, /verify-published-release\.js --tag/);
+  assert.doesNotMatch(workflow.match(/release:[\s\S]*$/)?.[0] ?? '', /APPGOG_ALLOW_UNSIGNED_ARTIFACTS/);
+  const drift = readFileSync(resolve(root, '.github/workflows/release-drift.yml'), 'utf8');
+  assert.match(drift, /schedule:/);
+  assert.match(drift, /verify-published-release\.js --tag "v\$version"/);
+});

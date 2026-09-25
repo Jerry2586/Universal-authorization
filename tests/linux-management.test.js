@@ -145,7 +145,12 @@ test('online update helper accepts signed lifecycle actions and bounded migratio
   assert.match(helper, /install-docker\.sh/);
   assert.match(helper, /chmod 770 "\$CONTROL_DIR" "\$REQUEST_DIR"/);
   assert.match(helper, /--healthcheck/);
-  assert.match(helper, /latest_version:\(if \$latest == "" then null else \$latest end\)/);
+  assert.match(helper, /schema:2/);
+  assert.match(helper, /last_successful_latest_version/);
+  assert.match(helper, /check_status/);
+  assert.match(helper, /checked_at/);
+  assert.match(helper, /signed-release/);
+  assert.match(helper, /latest_version:\(if \$latest == "__preserve__"[\s\S]*elif \$latest == "" then null else \$latest end\)/);
   assert.doesNotMatch(helper, /latest_version:\(\$latest\|select\(length>0\)\)/);
   assert.match(helper, /exec "\$CURRENT_LINK\/scripts\/update-helper\.sh" --daemon/);
   assert.ok(!helper.includes('eval '));
@@ -206,10 +211,12 @@ test('online update helper writes valid readiness JSON before a latest version e
   }
 
   assert.ok(status, '更新助手必须在启动后生成非空、有效的 JSON 状态文件');
-  assert.equal(status.schema, 1);
+  assert.equal(status.schema, 2);
   assert.equal(status.state, 'idle');
   assert.equal(status.current_version, projectVersion);
   assert.equal(status.latest_version, null);
+  assert.equal(status.check_status, 'unchecked');
+  assert.equal(status.checked_at, null);
   assert.equal(status.install_root, installRoot);
 
   const health = spawnSync('/bin/sh', [scripts.updateHelper, '--healthcheck', installRoot], { encoding: 'utf8' });
