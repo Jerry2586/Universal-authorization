@@ -101,6 +101,20 @@ CREATE TABLE IF NOT EXISTS install_keys (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS install_activation_windows (
+  id TEXT PRIMARY KEY,
+  build_id TEXT NOT NULL REFERENCES builds(id),
+  installation_id TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  started_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  expired_at TEXT,
+  UNIQUE(build_id, installation_id)
+);
+
 CREATE TABLE IF NOT EXISTS install_receipts (
   id TEXT PRIMARY KEY,
   license_id TEXT NOT NULL REFERENCES licenses(id),
@@ -131,7 +145,19 @@ CREATE TABLE IF NOT EXISTS activations (
   revoked_at TEXT,
   identity_mode TEXT NOT NULL DEFAULT 'legacy',
   installation_public_key_fingerprint TEXT,
+  recovered_at TEXT,
+  recovery_generation INTEGER NOT NULL DEFAULT 0,
   UNIQUE(build_id, domain, installation_id)
+);
+
+CREATE TABLE IF NOT EXISTS offline_license_files (
+  id TEXT PRIMARY KEY,
+  activation_id TEXT NOT NULL REFERENCES activations(id),
+  token_hash TEXT NOT NULL UNIQUE,
+  format_version TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS installation_identities (

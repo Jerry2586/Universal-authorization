@@ -111,7 +111,7 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   }
   if (!identity.adminUsername || typeof identity.adminPassword !== 'string' || identity.adminPassword.length < 6) throw new Error('管理员初始配置无效');
   identity.options ??= {};
-  for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'DOWNLOAD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
+  for (const name of ['ACTIVATION_TOKEN_TTL_SECONDS', 'OFFLINE_GRACE_SECONDS', 'INSTALL_ACTIVATION_WINDOW_SECONDS', 'BUILD_TICKET_TTL_SECONDS', 'DOWNLOAD_TICKET_TTL_SECONDS', 'WEB_SESSION_TTL_SECONDS', 'MAX_SOURCE_UPLOAD_BYTES']) {
     if (env[name] !== undefined && env[name] !== '') {
       if (!/^[1-9][0-9]*$/.test(env[name]) || !Number.isSafeInteger(Number(env[name]))) throw new Error(name + ' 必须为正整数');
       identity.options[name] = env[name];

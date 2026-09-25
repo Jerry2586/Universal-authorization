@@ -591,6 +591,32 @@ test('只有平台所有者二次验证并输入确认文本后可永久删除 K
     ticketId: ticket.id, messageId: message.id, originalName: 'proof.txt', storageRef: attachmentRef,
     contentType: 'text/plain', sizeBytes: 5, sha256: '0'.repeat(64), now,
   });
+  app.database.prepare(`
+    INSERT INTO build_tickets (
+      id, license_id, token_hash, requested_version, requested_domain, status, expires_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'consumed', ?, ?)
+  `).run('btk_delete_contract', issued.license_id, 'hash_delete_ticket', '1.0.0', 'delete.example.com', now, now);
+  app.database.prepare(`
+    INSERT INTO builds (
+      id, license_id, ticket_id, version, domain, package_id, package_secret_hash, status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'activated', ?)
+  `).run('bld_delete_contract', issued.license_id, 'btk_delete_contract', '1.0.0', 'delete.example.com', 'pkg_delete_contract', 'hash_delete_package', now);
+  app.database.prepare(`
+    INSERT INTO install_activation_windows (
+      id, build_id, installation_id, domain, token_hash, status, started_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, 'expired', ?, ?)
+  `).run('iaw_delete_contract', 'bld_delete_contract', 'ins_delete_contract', 'delete.example.com', 'hash_delete_window', now, now);
+  app.database.prepare(`
+    INSERT INTO activations (
+      id, license_id, build_id, domain, backend_origin, installation_id, status, generation,
+      refresh_secret_hash, last_seen_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?)
+  `).run('act_delete_contract', issued.license_id, 'bld_delete_contract', 'delete.example.com',
+    'https://panel.delete.example.com', 'ins_delete_contract', 'hash_delete_refresh', now, now);
+  app.database.prepare(`
+    INSERT INTO offline_license_files (id, activation_id, token_hash, format_version, issued_at, expires_at)
+    VALUES (?, ?, ?, 'offline-license-v1', ?, ?)
+  `).run('olf_delete_contract', 'act_delete_contract', 'hash_delete_offline', now, now);
 
   const wrongPassword = await app.send(`/web/admin/licenses/${issued.license_id}`, {
     method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
@@ -611,6 +637,9 @@ test('只有平台所有者二次验证并输入确认文本后可永久删除 K
   assert.equal(deleted.data.deleted, true);
   assert.equal(deleted.data.cleanup_pending, 0);
   assert.equal(app.repository.licenseById(issued.license_id), undefined);
+  for (const table of ['install_activation_windows', 'offline_license_files', 'activations', 'builds', 'build_tickets']) {
+    assert.equal(app.database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, `${table} 应清空`);
+  }
   for (const table of ['build_jobs', 'support_tickets', 'support_messages', 'support_attachments', 'license_events']) {
     const row = app.database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${table === 'support_messages' || table === 'support_attachments' ? "ticket_id = 'tkt_delete_contract'" : 'license_id = ?'}`);
     const result = table === 'support_messages' || table === 'support_attachments' ? row.get() : row.get(issued.license_id);
@@ -970,6 +999,65 @@ test('旧工单附件与补偿清理表会追加 Phase 4 字段并保留记录',
       assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.14-events-erasure-support'").get());
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+});
+
+test('旧激活数据库升级会追加安装窗口、离线文件与恢复代次并保留激活记录', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-v122-lifecycle-migrate-test-'));
+  const path = join(root, 'legacy-lifecycle.sqlite');
+  let upgraded = null;
+  try {
+    const initialized = openDatabase(path);
+    initialized.close();
+    const old = new DatabaseSync(path);
+    old.exec(`
+      PRAGMA foreign_keys = OFF;
+      DROP TABLE offline_license_files;
+      DROP TABLE install_activation_windows;
+      DROP TABLE activations;
+      CREATE TABLE activations (
+        id TEXT PRIMARY KEY,
+        license_id TEXT NOT NULL,
+        build_id TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        backend_origin TEXT NOT NULL,
+        installation_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        refresh_secret_hash TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT,
+        identity_mode TEXT NOT NULL DEFAULT 'legacy',
+        installation_public_key_fingerprint TEXT,
+        UNIQUE(build_id, domain, installation_id)
+      );
+      INSERT INTO activations VALUES (
+        'act_legacy_lifecycle', 'lic_legacy', 'bld_legacy', 'legacy.example.com',
+        'https://panel.example.com', 'ins_legacy_lifecycle_001', 'active', 1,
+        'legacy-refresh-hash', '2026-09-24T00:00:00.000Z', '2026-09-24T00:00:00.000Z',
+        NULL, 'server_key', 'legacy-fingerprint'
+      );
+      DELETE FROM schema_migrations WHERE version = '2026-09-25-v1.2.22-product-lifecycle';
+    `);
+    old.close();
+
+    upgraded = openDatabase(path);
+    try {
+      const columns = new Set(upgraded.prepare('PRAGMA table_info(activations)').all().map((column) => column.name));
+      assert.ok(columns.has('recovered_at'));
+      assert.ok(columns.has('recovery_generation'));
+      const activation = upgraded.prepare("SELECT * FROM activations WHERE id = 'act_legacy_lifecycle'").get();
+      assert.equal(activation.status, 'active');
+      assert.equal(activation.refresh_secret_hash, 'legacy-refresh-hash');
+      assert.equal(activation.recovery_generation, 0);
+      assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'install_activation_windows'").get());
+      assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'offline_license_files'").get());
+      assert.ok(upgraded.prepare("SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.22-product-lifecycle'").get());
+    } finally { upgraded.close(); upgraded = null; }
+  } finally {
+    upgraded?.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
 });
 
 test('已经记录旧基线迁移的生产数据库仍会追加完整 Key 加密字段', () => {

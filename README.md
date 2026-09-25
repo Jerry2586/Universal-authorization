@@ -1,6 +1,8 @@
-# APPGOG打包授权系统 v1.2.20
+# APPGOG打包授权系统 v1.2.22
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
+
+v1.2.22 将客户产品生命周期固定为两阶段激活、60 分钟安装窗口、同机身份恢复、签名离线授权、域名换绑后重新构建，以及新 Installation ID 的受控服务器迁移。每个客户包同时携带 Xboard 服务端桥合同和插件 ZIP；管理员第一次打开主题时，运行时使用当前浏览器内的 Xboard 管理令牌调用官方插件接口，自动完成上传、安装、启用与健康检查，成功后才允许开始 60 分钟窗口。管理令牌只发往同源 Xboard 官方接口，不会上传到 APPGOG 授权中心。
 
 ## Linux 安装 + 专业管理菜单
 
@@ -24,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 仓库为公开仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.20` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.22` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -121,7 +123,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.20 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.22 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
@@ -137,10 +139,11 @@ npm run cms:package
 3. 客户在 `/build` 使用固定 Key 登录，选择版本并提交打包。
 4. 每次打包生成独立的 Build ID、Package ID、Package Secret 和一次性 Install Key。
 5. 独立 Worker 检查 ZIP 安全性、移除 Source Map、注入每包水印、AES-256-GCM 加密身份载荷、随机运行时路径和构建清单，并生成客户专属 ZIP。
-6. 客户下载安装包，在安装解锁页只输入本次一次性 Install Key；成功后 Key 立即作废，但正式功能仍锁定。
-7. 客户首次进入 APPGOG 后台，只输入长期固定 License Key 完成正式激活。
-8. 授权服务器校验 Install Receipt、包身份、域名和安装环境，签发 Ed25519 激活凭证。
-9. 更新或重装时，客户继续使用长期固定 Key 重新打包，得到新的 ZIP 和新的 Install Key。
+6. 客户把 ZIP 安装到 Xboard，并从已登录的管理员后台第一次打开主题；客户包自动校验、上传、安装并启用 `APPGOG License Bridge`，健康检查失败时不开始倒计时。
+7. 点击“开始激活”创建不可重置的 60 分钟窗口，再输入本次一次性 Install Key；成功后 Key 立即作废，但正式功能仍锁定。
+8. 输入长期固定 License Key 完成正式激活；授权服务器校验 Install Receipt、包身份、域名和安装环境，签发 Ed25519 激活凭证。
+9. Refresh Secret、Install Receipt Secret、窗口 Token 与安装私钥由 Xboard 服务端插件加密保存；普通访问者只取得裁剪后的运行状态和签名 Activation Token。
+10. 更新或重装时，客户继续使用长期固定 Key 重新打包，得到新的 ZIP 和新的 Install Key。
 
 ## 当前能力
 
@@ -153,6 +156,7 @@ npm run cms:package
 - 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；首次管理员密码和新建管理员密码均为六位数字，管理员可在用户中心自行改密；普通管理员可软删除，所有者和当前账号受保护。
 - 客户打包站只接收固定 Key，不暴露内部客户编号、订单号或授权记录 ID；授权中心可审计成员操作。
 - 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。
+- 客户主题内置确定性的 Xboard 插件 ZIP；首次激活自动调用官方 `plugin/upload`、`plugin/install`、`plugin/enable`。插件状态保存在 `storage/app/private/appgog-license-bridge/`，服务器迁移必须连同 Laravel `APP_KEY` 一起迁移，否则无法解密原安装身份和授权状态。
 - 运营公告可在后台编辑、启停并在客户打包页展示；版本公告由服务端签名，客户可在有效更新期内构建最新版本或重新构建当前版本。
 - 客户打包中心与运营后台包含完整工单系统：分类、优先级、关联构建、连续对话、附件、指派、内部备注、双方关闭、管理员重开、状态流转和审计记录。
 - 管理后台支持点击或拖拽真实上传主题 ZIP，显示进度，并从 `config.json`、文件名和根目录自动识别版本号与版本名称；冲突时拒绝发布。
@@ -251,6 +255,6 @@ npm test
 
 如果要直接上传 APPGOG 的原始 Vue 工程并自动编译，需要提供真实源码、依赖版本、构建命令和最终 Xboard 安装目录结构，再在现有 `BuildEngine` 接口后接入隔离容器构建适配器。网站、授权、Key、队列和激活流程无需推倒重做。
 
-浏览器端保护可以增加普通复制和批量滥用的成本，但客户控制自己的服务器，不能承诺“绝对无法破解”或在同域名环境迁移时可靠识别服务器变化。高价值设置接口、主题启用按钮和服务端环境指纹仍需取得真实 APPGOG/Xboard 项目后对接服务端授权守卫。客户构建不提供历史版本降级；服务器升级失败恢复属于安装器内部的数据保护流程。
+浏览器端保护可以增加普通复制和批量滥用的成本，但客户控制自己的服务器，不能承诺“绝对无法破解”。服务器身份、敏感凭证刷新、超时切回与删除已经下沉到 APPGOG Xboard 服务端插件；仍应在真实产品的高价值设置接口继续接入服务端授权 Guard。客户构建不提供历史版本降级；服务器升级失败恢复属于安装器内部的数据保护流程。
 
 详细规则见 [系统架构](docs/architecture.md)、[API 契约](docs/api-contract.md)、[拆分边界](docs/modular-boundaries.md) 和 [开发计划](docs/development-plan.md)。

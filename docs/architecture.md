@@ -1,6 +1,27 @@
-# APPGOG打包授权系统架构（v1.2.20）
+# APPGOG打包授权系统架构（v1.2.22）
 
 日期：2026-09-25
+
+## 客户产品生命周期边界
+
+客户主题正式运行链路固定为：
+
+```text
+客户专属 ZIP
+  → 已登录的 Xboard 管理员第一次打开主题
+  → 自动调用官方插件 API：upload → install → enable
+  → APPGOG License Bridge 健康检查并登记客户包
+  → 点击开始激活（服务端固定 60 分钟窗口）
+  → 一次性 Install Key 解锁指定 Build/Package
+  → 长期 License Key 绑定域名、后台 Origin 与 Installation ID
+  → 签名 Activation Token + 套餐能力
+```
+
+同机重装必须保留原 Ed25519 安装私钥，通过 `recovery` Challenge 恢复并轮换刷新凭证；迁移服务器必须生成新的 Installation ID，通过 `issued → prepared → completed` 状态机接管，旧实例进入 Fenced。域名换绑撤销旧激活并要求新域名重新构建，不允许旧域名包直接跨域运行。
+
+自动删除、服务器身份、离线文件和迁移签名属于 Xboard 服务端桥职责。主题浏览器运行时只展示状态并发起受控请求；没有服务端桥时只能锁定和报警，不能声称已安全删除服务器文件。Xboard 管理令牌只用于同源官方插件 API，不进入 APPGOG 授权中心。插件以 Laravel `Crypt` 加密保存安装私钥、Refresh Secret、Install Receipt Secret 和安装窗口 Token；普通运行状态只暴露 Activation Token、Activation ID、Backend Origin 与拒绝标志。
+
+插件持久边界固定为 `storage/app/private/appgog-license-bridge/`。同机修复必须保留该目录与 Laravel `APP_KEY`；服务器迁移必须同时迁移二者。丢失 `APP_KEY` 后禁止生成新身份冒充原安装，必须走受控恢复或迁机流程。
 
 v1.2.20 统一两个入口的登录前后版本显示、响应头与就绪版本校验，版本只取 package.json。
 

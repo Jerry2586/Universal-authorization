@@ -35,6 +35,10 @@ export function newInstallReceiptSecret() {
   return `IRC_${randomBytes(32).toString('base64url')}`;
 }
 
+export function newInstallWindowToken() {
+  return `IWT_${randomBytes(32).toString('base64url')}`;
+}
+
 export function newRefreshSecret() {
   return `RFS_${randomBytes(32).toString('base64url')}`;
 }

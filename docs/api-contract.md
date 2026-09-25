@@ -8,6 +8,39 @@
 
 所有响应返回 `X-Request-Id`。调用方可发送 8–128 位的 `X-Request-Id` 作为关联 ID；不合法或缺失时服务端生成 UUID。所有写请求都可用该 ID 关联运行日志、诊断日志和安全审计。支持跨域的公共接口允许 `X-Request-Id` 与 `Idempotency-Key` 请求头；真正的幂等操作仍由各自资源身份、状态机和固定分块序号保证，不能仅把请求 ID 当作幂等键。
 
+## 客户产品安装与授权接口
+
+| 方法和路径 | 身份 | 用途 |
+|---|---|---|
+| `POST /api/v1/install-windows/start` | 官方包证明 | 第一次点击“开始激活”时创建或读取不可重置的 60 分钟安装窗口 |
+| `POST /api/v1/install-windows/expire` | 窗口 ID + 窗口 Token | 到期后读取服务端状态并取得 `deactivate_and_remove_theme` 安全清理指令 |
+| `POST /api/v2/install-unlocks` | 窗口 + 一次性 Install Key + 官方包证明 | 新版安装包第一阶段解锁；窗口、Build、Package、域名和 Installation ID 必须完全一致 |
+| `POST /api/v1/install-unlocks` | 历史安装包 | 保留旧客户端兼容；新包禁止调用此入口 |
+| `POST /api/v1/activations` | Install Receipt + 固定 License Key | 第二阶段正式激活并签发能力快照 |
+| `POST /api/v1/activations/recover` | 固定 Key + 原安装私钥 Challenge + 官方包证明 | 同服务器重装或凭证损坏后恢复，成功后轮换 Refresh Secret |
+| `POST /api/v1/offline-licenses` | Active 激活 + Refresh Secret + 安装私钥 Challenge | 签发 `offline-license-v1` 文件，绑定服务器、域名、Build、Package 与套餐 |
+| `POST /api/v1/product-migrations` | 源服务器安装私钥 | 为目标服务器新公钥签发短期迁机 Grant |
+| `POST /api/v1/product-migrations/prepare` | 目标服务器安装私钥 | 创建候选激活，不影响源服务器 Active 状态 |
+| `POST /api/v1/product-migrations/commit` | 目标服务器安装私钥 | 唯一 Active 切换并 Fenced 旧服务器 |
+| `POST /api/v1/product-migrations/rollback` | 当前所有者安装私钥 | 在受控窗口内撤销候选或恢复源服务器 |
+
+安装窗口 Token 必须由安装端在首次点击前生成并先持久化，再提交服务端。相同 Build 与 Installation ID 重试只能返回原窗口，不能生成新截止时间。超时清理由 Xboard 服务端桥执行；浏览器不得直接操作主题目录。
+
+## Xboard APPGOG License Bridge
+
+客户 ZIP 内置 `appgog-license/appgog-license-bridge.zip`。首次只能从已登录的 Xboard 管理员浏览器打开主题，运行时从 `XBOARD_ACCESS_TOKEN` 读取管理令牌，并仅向同源官方接口调用 `plugin/upload`、`plugin/install`、`plugin/enable` 与 `plugin/getPlugins`；令牌不得发送到 APPGOG 授权中心。插件健康检查通过前，浏览器不得调用 `install-windows/start`。
+
+插件公开接口固定为：
+
+| 方法和路径 | 返回边界 |
+|---|---|
+| `GET /api/v1/appgog-license-bridge/health` | 插件版本与公开 Installation ID/公钥 |
+| `POST /api/v1/appgog-license-bridge/state/runtime` | 只返回 Activation ID、签名 Activation Token、Backend Origin、拒绝状态和非敏感窗口元数据 |
+| `POST /api/v1/appgog-license-bridge/refresh` | 插件在服务端使用加密保存的 Refresh Secret 和安装私钥刷新，只向浏览器返回新签名 Token |
+| `POST /api/v1/appgog-license-bridge/deactivate-theme` | 从插件加密状态读取窗口凭证，向授权中心确认固定清理指令后先切回原主题，再删除当前 APPGOG 主题 |
+
+插件管理员接口为 `register`、`sign-challenge`、`state/read`、`state/write`，必须通过 Xboard `admin` 中间件。`state/runtime` 永远不得返回 `refresh_secret`、`install_receipt_secret` 或 `install_window_token`。
+
 ## 网页内部接口 `/web/*`
 
 客户打包中心和卖家后台分别部署在两个入口；打包中心只代理客户路径，授权中心持有数据与管理员接口。本机同一主机不同端口时也使用不同的管理员/客户 HttpOnly、SameSite=Strict Cookie。登录后每个写操作还须带登录结果中的 `X-CSRF-Token`。这些接口供对应站点页面使用，不供安装后的主题调用。

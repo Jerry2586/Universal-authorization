@@ -1,5 +1,18 @@
 export function createActivationSqliteRepository(queries) {
   return Object.freeze({
+    createInstallWindow(values) {
+      queries.insertInstallWindow.run(
+        values.id, values.buildId, values.installationId, values.domain,
+        values.tokenHash, values.startedAt, values.expiresAt,
+      );
+      return queries.installWindowById.get(values.id);
+    },
+    installWindowByBuildInstallation: (buildId, installationId) => (
+      queries.installWindowByBuildInstallation.get(buildId, installationId)
+    ),
+    installWindowById: (id) => queries.installWindowById.get(id),
+    consumeInstallWindow: (id, now) => queries.consumeInstallWindow.run(now, id, now).changes === 1,
+    expireInstallWindow: (id, now) => queries.expireInstallWindow.run(now, id, now).changes === 1,
     createInstallReceipt(values) {
       queries.insertInstallReceipt.run(
         values.id, values.licenseId, values.buildId, values.receiptSecretHash,
@@ -30,6 +43,13 @@ export function createActivationSqliteRepository(queries) {
     },
     activationById: (id) => queries.activationById.get(id),
     updateActivationSeen: (id, now) => queries.updateActivationSeen.run(now, id),
+    recoverActivationCredentials(id, refreshSecretHash, now) {
+      return queries.recoverActivationCredentials.run(refreshSecretHash, now, now, id).changes === 1;
+    },
+    createOfflineLicenseFile(values) {
+      queries.insertOfflineLicenseFile.run(values.id, values.activationId, values.tokenHash, values.issuedAt, values.expiresAt);
+      return values.id;
+    },
     activeActivationForEnvironment: (licenseId, domain, backendOrigin, installationId) => (
       queries.activeActivationForEnvironment.get(licenseId, domain, backendOrigin, installationId)
     ),

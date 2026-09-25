@@ -54,6 +54,8 @@ const MIGRATIONS = Object.freeze({
   activations: [
     ['identity_mode', "TEXT NOT NULL DEFAULT 'legacy'"],
     ['installation_public_key_fingerprint', 'TEXT'],
+    ['recovered_at', 'TEXT'],
+    ['recovery_generation', 'INTEGER NOT NULL DEFAULT 0'],
   ],
   product_migration_grants: [
     ['source_activation_id', 'TEXT REFERENCES activations(id)'],
@@ -223,6 +225,13 @@ function migrate(database) {
   runMigration(database, productMigrationStateVersion, () => addMissingColumns(database, {
     product_migration_grants: MIGRATIONS.product_migration_grants,
   }));
+
+  const productLifecycleVersion = '2026-09-25-v1.2.22-product-lifecycle';
+  runMigration(database, productLifecycleVersion, () => {
+    addMissingColumns(database, { activations: MIGRATIONS.activations });
+    database.prepare('SELECT 1 FROM install_activation_windows LIMIT 1').get();
+    database.prepare('SELECT 1 FROM offline_license_files LIMIT 1').get();
+  });
 }
 
 export function openDatabase(path) {

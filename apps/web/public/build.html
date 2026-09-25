@@ -51,6 +51,7 @@
       <nav class="app-nav" aria-label="客户中心导航">
         <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon">⌂</span><span>工作台</span></button>
         <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon">▤</span><span>构建任务</span></button>
+        <button class="nav-item" type="button" data-view="lifecycle" data-title="安装与迁移"><span class="nav-icon">⇄</span><span>安装与迁移</span></button>
         <button class="nav-item" type="button" data-view="tickets" data-title="工单反馈"><span class="nav-icon">✦</span><span>工单反馈</span></button>
         <button class="nav-item" type="button" data-view="license" data-title="授权信息"><span class="nav-icon">◇</span><span>我的授权</span></button>
       </nav>
@@ -109,6 +110,19 @@
             <div class="toolbar"><label class="search-box"><span>⌕</span><input id="customer-build-search" placeholder="搜索版本或域名"></label><span class="toolbar-note">自动每 5 秒刷新进行中的任务</span></div>
             <div class="table-scroll"><table><thead><tr><th>版本</th><th>授权域名</th><th>状态</th><th>构建进度</th><th>创建时间</th><th>交付</th></tr></thead><tbody id="build-list"><tr><td colspan="6" class="empty-cell">暂无构建记录</td></tr></tbody></table></div>
           </section>
+        </section>
+
+        <section class="page-view" data-page="lifecycle">
+          <div class="page-heading"><div><span class="overline">PRODUCT LIFECYCLE</span><h2>安装、恢复与迁移</h2><p>所有操作共用同一固定 License Key，但安装身份和一次性凭证严格分离。</p></div><span class="status-pill status-success">安全状态机</span></div>
+          <div class="lifecycle-grid">
+            <section class="surface lifecycle-card"><span class="surface-number">01</span><div><span class="overline">FIRST INSTALL</span><h3>首次安装激活</h3><p>安装 ZIP 后点击“开始激活”才启动 60 分钟窗口。先使用一次性 Install Key 解锁，再使用固定 License Key 完成正式激活。</p></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number">02</span><div><span class="overline">REINSTALL & REPAIR</span><h3>同服务器重装 / 修复</h3><p>保留 Installation ID 与安装私钥时，可验证官方包后恢复授权并轮换刷新凭证；修复只覆盖同版本程序文件，不改变用户数据。</p></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number">03</span><div><span class="overline">DOMAIN REBIND</span><h3>更换授权域名</h3><p>在“我的授权”自助换绑。旧激活立即撤销，固定 Key 不变；随后为新域名重新构建并激活，避免旧包跨域复制。</p></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number">04</span><div><span class="overline">SERVER MIGRATION</span><h3>迁移到新服务器</h3><p>新服务器必须生成新的 Installation ID。迁移采用短期配对、候选验证、唯一 Active 切换与回滚窗口，旧服务器切换后进入 Fenced。</p></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number">05</span><div><span class="overline">OFFLINE LICENSE</span><h3>离线授权文件</h3><p>由已激活服务器使用安装私钥申请签名文件；文件绑定域名、Build、Package、套餐和离线截止时间，不能复制到另一台服务器。</p></div></section>
+            <section class="surface lifecycle-card lifecycle-card-warning"><span class="surface-number">60</span><div><span class="overline">MINUTE WINDOW</span><h3>超时安全清理</h3><p>倒计时不因刷新或输错 Key 重置。超时后主题保持锁定，并由 Xboard 服务端桥先切回原主题再删除未激活主题，绝不删除业务数据。</p></div></section>
+          </div>
+          <div class="notice-card"><span>i</span><div><strong>服务端桥是安全边界</strong><p>自动删除、服务器身份恢复、离线文件和迁移签名必须由 Xboard 服务端桥执行；浏览器 JS 只负责展示与发起受控请求。</p></div></div>
         </section>
 
         <section class="page-view" data-page="tickets">

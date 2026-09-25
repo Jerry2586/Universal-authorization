@@ -23,6 +23,7 @@ if (Test-Path -LiteralPath $envPath) {
     INTERNAL_SERVICE_TOKEN = (New-RandomSecret 48)
     BUILD_CENTER_PUBLIC_URL = 'http://127.0.0.1:8788/build'
     OFFLINE_GRACE_SECONDS = '2592000'
+    INSTALL_ACTIVATION_WINDOW_SECONDS = '3600'
   }
   foreach ($entry in $defaults.GetEnumerator()) {
     if ($existing -notmatch "(?m)^$([regex]::Escape($entry.Key))=") {
@@ -71,6 +72,7 @@ ARTIFACT_ROOT=./var/artifacts
 UPLOAD_ROOT=./var/uploads
 ACTIVATION_TOKEN_TTL_SECONDS=604800
 OFFLINE_GRACE_SECONDS=2592000
+INSTALL_ACTIVATION_WINDOW_SECONDS=3600
 BUILD_TICKET_TTL_SECONDS=900
 DOWNLOAD_TICKET_TTL_SECONDS=300
 WEB_SESSION_TTL_SECONDS=28800

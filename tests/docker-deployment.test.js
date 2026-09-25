@@ -99,12 +99,14 @@ test('Restore rejects traversal, foreign paths, links and incomplete backups', (
 
 test('Docker preserves custom policy settings and rejects invalid replacements', t => {
   const root = fixture(t);
-  initialize({ root, env: { ...env, OFFLINE_GRACE_SECONDS: '86400', MAX_SOURCE_UPLOAD_BYTES: '1048576' } });
+  initialize({ root, env: { ...env, OFFLINE_GRACE_SECONDS: '86400', INSTALL_ACTIVATION_WINDOW_SECONDS: '1800', MAX_SOURCE_UPLOAD_BYTES: '1048576' } });
   initialize({ root, env });
   const runtime = readFileSync(join(root, 'runtime/license/runtime.env'), 'utf8');
   assert.match(runtime, /OFFLINE_GRACE_SECONDS=86400/);
+  assert.match(runtime, /INSTALL_ACTIVATION_WINDOW_SECONDS=1800/);
   assert.match(runtime, /MAX_SOURCE_UPLOAD_BYTES=1048576/);
   assert.throws(() => initialize({ root, env: { ...env, OFFLINE_GRACE_SECONDS: '-1' } }), /正整数/);
+  assert.throws(() => initialize({ root, env: { ...env, INSTALL_ACTIVATION_WINDOW_SECONDS: '0' } }), /正整数/);
 });
 
 test('Compose runs exactly one service with persistent HTTPS and loopback upstreams', () => {

@@ -60,6 +60,7 @@ export function createActivationService({
       invariant([
         'activation', 'refresh', 'migration_issue', 'migration_accept',
         'migration_prepare', 'migration_commit', 'migration_rollback',
+        'recovery', 'offline_issue',
       ].includes(purpose),
         'INSTALLATION_CHALLENGE_PURPOSE_INVALID', '安装身份挑战用途无效');
       invariant(publicKey && typeof publicKey === 'string' && publicKey.length <= 8192,
@@ -85,13 +86,91 @@ export function createActivationService({
       };
     },
 
-    unlockInstall({ installKey, buildId, packageProof, domain, backendUrl, installationId }) {
+    startInstallWindow({ buildId, packageProof, domain, installationId, windowToken }) {
+      invariant(installationId?.trim().length >= 12, 'INSTALLATION_ID_INVALID', '安装环境 ID 无效');
+      invariant(typeof windowToken === 'string' && windowToken.length >= 32,
+        'INSTALL_WINDOW_TOKEN_INVALID', '安装激活窗口凭证无效');
+      const normalizedDomain = canonicalizeDomain(domain);
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const build = repository.buildById(buildId);
+        invariant(build, 'BUILD_NOT_FOUND', '安装包不存在', 404);
+        invariant(['ready', 'package_unlocked', 'activated'].includes(build.status),
+          'BUILD_NOT_UNLOCKABLE', '当前安装包状态不允许开始激活', 409);
+        invariant(build.license_status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+        invariant(build.domain === normalizedDomain && build.bound_domain === normalizedDomain,
+          'DOMAIN_MISMATCH', '当前域名与打包授权域名不一致', 403);
+        invariant(secretMatches(packageProof, build.package_secret_hash, config.pepper),
+          'PACKAGE_PROOF_INVALID', '安装包身份校验失败', 403);
+        const tokenHash = hashSecret(windowToken, config.pepper);
+        const existing = repository.installWindowByBuildInstallation(buildId, installationId.trim());
+        if (existing) {
+          invariant(secretMatches(windowToken, existing.token_hash, config.pepper),
+            'INSTALL_WINDOW_OWNERSHIP_INVALID', '安装激活窗口不属于当前安装环境', 403);
+          if (existing.status === 'active' && existing.expires_at < now) repository.expireInstallWindow(existing.id, now);
+          const current = repository.installWindowById(existing.id);
+          return {
+            windowId: current.id, startedAt: current.started_at, expiresAt: current.expires_at,
+            status: current.status, cleanupRequired: current.status === 'expired',
+          };
+        }
+        const expiresAt = addSeconds(nowDate, config.installActivationWindowSeconds ?? 3600);
+        const window = repository.createInstallWindow({
+          id: newId('iaw'), buildId, installationId: installationId.trim(), domain: normalizedDomain,
+          tokenHash, startedAt: now, expiresAt,
+        });
+        audit.record({
+          actorType: 'installation', actorId: installationId.trim(), action: 'installation.window_started',
+          subjectType: 'install_activation_window', subjectId: window.id,
+          metadata: { build_id: buildId, domain: normalizedDomain, expires_at: expiresAt }, now,
+        });
+        audit.recordLicenseEvent({
+          licenseId: build.license_id, eventType: 'installation.window_started', buildId,
+          installationId: installationId.trim(), actorType: 'installation', actorId: installationId.trim(), now,
+        });
+        return { windowId: window.id, startedAt: window.started_at, expiresAt: window.expires_at, status: window.status, cleanupRequired: false };
+      });
+    },
+
+    expireInstallWindow({ windowId, windowToken }) {
+      const now = clock().toISOString();
+      return transaction(database, () => {
+        const window = repository.installWindowById(windowId);
+        invariant(window, 'INSTALL_WINDOW_NOT_FOUND', '安装激活窗口不存在', 404);
+        invariant(secretMatches(windowToken, window.token_hash, config.pepper),
+          'INSTALL_WINDOW_OWNERSHIP_INVALID', '安装激活窗口凭证无效', 403);
+        if (window.status === 'active' && window.expires_at < now) repository.expireInstallWindow(window.id, now);
+        const current = repository.installWindowById(window.id);
+        return {
+          status: current.status, expiresAt: current.expires_at,
+          cleanupRequired: current.status === 'expired',
+          cleanupAction: current.status === 'expired' ? 'deactivate_and_remove_theme' : null,
+        };
+      });
+    },
+
+    unlockInstall({ installKey, buildId, packageProof, domain, backendUrl, installationId, installWindowId = null, installWindowToken = null }) {
       invariant(installationId?.trim().length >= 12, 'INSTALLATION_ID_INVALID', '安装环境 ID 无效');
       const normalizedDomain = canonicalizeDomain(domain);
       const backendOrigin = canonicalizeBackendOrigin(backendUrl);
       const nowDate = clock();
       const now = nowDate.toISOString();
       return transaction(database, () => {
+        if (installWindowId || installWindowToken) {
+          invariant(installWindowId && installWindowToken, 'INSTALL_WINDOW_REQUIRED', '必须提供完整的安装激活窗口凭证', 401);
+          const window = repository.installWindowById(installWindowId);
+          invariant(window, 'INSTALL_WINDOW_NOT_FOUND', '安装激活窗口不存在', 404);
+          invariant(window.build_id === buildId && window.installation_id === installationId.trim()
+            && window.domain === normalizedDomain, 'INSTALL_WINDOW_ENVIRONMENT_MISMATCH', '安装激活窗口与当前环境不一致', 403);
+          invariant(secretMatches(installWindowToken, window.token_hash, config.pepper),
+            'INSTALL_WINDOW_OWNERSHIP_INVALID', '安装激活窗口凭证无效', 403);
+          invariant(window.status === 'active', 'INSTALL_WINDOW_CLOSED', '安装激活窗口已经关闭', 410);
+          if (window.expires_at < now) {
+            repository.expireInstallWindow(window.id, now);
+            invariant(false, 'INSTALL_WINDOW_EXPIRED', '60 分钟安装激活窗口已经结束，必须安全移除未激活主题', 410);
+          }
+        }
         const keyRecord = repository.installKeyByHash(hashSecret(installKey, config.pepper));
         invariant(keyRecord, 'INSTALL_KEY_NOT_FOUND', '本次安装 Key 无效', 404);
         invariant(keyRecord.status === 'available', 'INSTALL_KEY_USED', '本次安装 Key 已经使用', 409);
@@ -104,6 +183,8 @@ export function createActivationService({
         invariant(secretMatches(packageProof, repository.buildById(buildId).package_secret_hash, config.pepper),
           'PACKAGE_PROOF_INVALID', '安装包身份校验失败', 403);
         invariant(repository.consumeInstallKey(keyRecord.id, now), 'INSTALL_KEY_RACE', '安装 Key 正在被另一个环境使用', 409);
+        if (installWindowId) invariant(repository.consumeInstallWindow(installWindowId, now),
+          'INSTALL_WINDOW_RACE', '安装激活窗口正在被另一个请求使用', 409);
         invariant(repository.markBuildUnlocked(buildId), 'BUILD_UNLOCK_RACE', '当前安装包正在被另一个环境解锁', 409);
         const receiptSecret = newInstallReceiptSecret();
         const receipt = repository.createInstallReceipt({
@@ -232,6 +313,99 @@ export function createActivationService({
         token: signCompactToken(activationPayload(activation, nowDate), activationPrivateKey),
         expiresAt: addSeconds(nowDate, config.activationTokenTtlSeconds),
       };
+    },
+
+    recoverActivation({
+      licenseKey, buildId, packageProof, domain, backendUrl,
+      installationId, installationPublicKey, challengeId, challengeSignature,
+    }) {
+      const normalizedDomain = canonicalizeDomain(domain);
+      const backendOrigin = canonicalizeBackendOrigin(backendUrl);
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const license = repository.licenseByHash(hashSecret(licenseKey, config.pepper));
+        invariant(license && license.status === LICENSE_STATUS.ACTIVE, 'LICENSE_NOT_FOUND', '授权 Key 无效或已停用', 404);
+        invariant(license.bound_domain === normalizedDomain, 'LICENSE_DOMAIN_MISMATCH', '固定 Key 已绑定其他域名', 403);
+        const build = repository.buildById(buildId);
+        invariant(build && build.license_id === license.id, 'BUILD_MISMATCH', '官方安装包不属于当前授权', 403);
+        invariant(build.domain === normalizedDomain, 'DOMAIN_MISMATCH', '官方安装包与当前域名不一致', 403);
+        invariant(secretMatches(packageProof, build.package_secret_hash, config.pepper),
+          'PACKAGE_PROOF_INVALID', '官方安装包身份校验失败', 403);
+        const identity = repository.installationIdentityById(installationId);
+        invariant(identity && identity.license_id === license.id && identity.status === 'active',
+          'INSTALLATION_IDENTITY_FENCED', '当前服务器安装身份不存在或已被隔离', 403);
+        invariant(identity.public_key_fingerprint === installationFingerprint(installationPublicKey),
+          'INSTALLATION_IDENTITY_MISMATCH', '当前服务器安装私钥与原安装身份不匹配', 403);
+        consumeInstallationProof({
+          purpose: 'recovery',
+          context: { license_id: license.id, build_id: buildId, domain: normalizedDomain, backend_origin: backendOrigin },
+          installationId, publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
+        });
+        const current = repository.activeActivationByInstallation(license.id, installationId);
+        invariant(current && current.build_id === buildId, 'ACTIVATION_RECOVERY_NOT_FOUND', '没有可恢复的同服务器激活记录', 404);
+        invariant(current.domain === normalizedDomain && current.backend_origin === backendOrigin,
+          'ENVIRONMENT_MISMATCH', '当前域名或后台地址与原激活环境不一致', 403);
+        const refreshSecret = newRefreshSecret();
+        invariant(repository.recoverActivationCredentials(
+          current.id, hashSecret(refreshSecret, config.pepper), now,
+        ), 'ACTIVATION_RECOVERY_RACE', '当前激活正在被另一个恢复请求处理', 409);
+        repository.touchInstallationIdentity(installationId, now);
+        const activation = repository.activationById(current.id);
+        audit.recordLicenseEvent({
+          licenseId: license.id, eventType: 'activation.recovered', buildId,
+          activationId: activation.id, installationId,
+          actorType: 'installation', actorId: installationId,
+          metadata: { recovery_generation: activation.recovery_generation }, now,
+        });
+        return {
+          activationId: activation.id, refreshSecret,
+          token: signCompactToken(activationPayload(activation, nowDate), activationPrivateKey),
+          expiresAt: addSeconds(nowDate, config.activationTokenTtlSeconds),
+          recoveryGeneration: activation.recovery_generation,
+        };
+      });
+    },
+
+    issueOfflineLicenseFile({
+      activationId, refreshSecret, installationId, installationPublicKey,
+      challengeId, challengeSignature,
+    }) {
+      const nowDate = clock();
+      const now = nowDate.toISOString();
+      return transaction(database, () => {
+        const activation = repository.activationById(activationId);
+        invariant(activation, 'ACTIVATION_NOT_FOUND', '激活记录不存在', 404);
+        invariant(activation.status === 'active' && activation.license_status === LICENSE_STATUS.ACTIVE,
+          'ACTIVATION_INACTIVE', '激活记录已失效', 403);
+        invariant(activation.installation_id === installationId, 'INSTALLATION_IDENTITY_MISMATCH', '安装身份与激活记录不一致', 403);
+        invariant(secretMatches(refreshSecret, activation.refresh_secret_hash, config.pepper),
+          'REFRESH_SECRET_INVALID', '刷新凭证无效', 401);
+        invariant(activation.identity_mode === 'server_key', 'OFFLINE_LICENSE_REQUIRES_SERVER_IDENTITY',
+          '离线授权文件必须由服务器安装身份签发', 409);
+        const identity = repository.installationIdentityById(installationId);
+        invariant(identity && identity.status === 'active', 'INSTALLATION_IDENTITY_FENCED', '服务器安装身份已被隔离', 403);
+        consumeInstallationProof({
+          purpose: 'offline_issue', context: { activation_id: activationId, domain: activation.domain },
+          installationId, publicKey: installationPublicKey, challengeId, signature: challengeSignature, now,
+        });
+        const payload = activationPayload(activation, nowDate);
+        const token = signCompactToken(payload, activationPrivateKey);
+        const fileId = newId('olf');
+        repository.createOfflineLicenseFile({
+          id: fileId, activationId, tokenHash: hashSecret(token, config.pepper),
+          issuedAt: now, expiresAt: new Date(payload.offline_until * 1000).toISOString(),
+        });
+        audit.recordLicenseEvent({
+          licenseId: activation.license_id, eventType: 'offline_license.issued', buildId: activation.build_id,
+          activationId, installationId, actorType: 'installation', actorId: installationId,
+          metadata: { offline_file_id: fileId, expires_at: new Date(payload.offline_until * 1000).toISOString() }, now,
+        });
+        return {
+          format: 'offline-license-v1', fileId, activationId, activationToken: token,
+          issuedAt: now, expiresAt: new Date(payload.offline_until * 1000).toISOString(),
+        };
+      });
     },
 
     issueProductMigrationGrant({

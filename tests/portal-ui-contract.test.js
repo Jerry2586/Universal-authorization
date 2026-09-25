@@ -53,6 +53,10 @@ test('customer build UI keeps the version catalog in build tasks and removes mig
   assert.match(html, />交付步骤</);
   assert.match(html, />安装并正式激活</);
   assert.match(html, /data-view="tickets"/);
+  assert.match(html, /data-view="lifecycle"/);
+  assert.match(html, /同服务器重装 \/ 修复/);
+  assert.match(html, /迁移到新服务器/);
+  assert.match(html, /离线授权文件/);
   assert.match(html, /id="customer-ticket-form"/);
   assert.doesNotMatch(html, /生成回滚包|回滚构建/);
   assert.match(script, /renderCustomerTickets/);

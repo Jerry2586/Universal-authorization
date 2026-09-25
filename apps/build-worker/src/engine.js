@@ -6,6 +6,7 @@ import { verifyCompactToken } from '../../../packages/core/src/signing.js';
 import { readZip, writeZip } from '../../../packages/core/src/zip.js';
 import { createBuildInjection } from './manifest.js';
 import { createBrowserLicenseRuntime } from './runtime.js';
+import { createXboardBridgePackage, xboardBridgeDescriptor } from './xboard-bridge-package.js';
 
 const BLOCKED_EXTENSIONS = new Set(['.exe', '.dll', '.so', '.dylib', '.bat', '.cmd', '.ps1', '.sh', '.phar', '.jar']);
 const BUILD_MANIFEST_SUFFIX = '/appgog-license/build.json';
@@ -114,6 +115,20 @@ function rootCandidates(files) {
   return candidates;
 }
 
+function themeDescriptor(files, root) {
+  const configPath = `${root}config.json`;
+  invariant(files.has(configPath), 'SOURCE_CONFIG_NOT_FOUND', '主题根目录必须包含 Xboard config.json', 400);
+  let descriptor;
+  try {
+    descriptor = JSON.parse(files.get(configPath).toString('utf8'));
+  } catch {
+    invariant(false, 'SOURCE_CONFIG_INVALID', 'Xboard 主题 config.json 无法解析', 400);
+  }
+  invariant(/^[A-Za-z0-9_-]{1,100}$/.test(descriptor?.name ?? ''),
+    'SOURCE_THEME_NAME_INVALID', 'Xboard 主题名称只能包含字母、数字、下划线和中划线', 400);
+  return descriptor;
+}
+
 function injectRuntime(html, runtimeSrc, marker) {
   invariant(!html.includes('data-appgog-license-runtime'), 'SOURCE_ALREADY_PROTECTED', '主题包已经包含 APPGOG 授权运行时', 409);
   const tag = `<script data-appgog-license-runtime="${marker}" src="${runtimeSrc}"></script>`;
@@ -176,12 +191,18 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     });
     const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
     const root = roots[0] === '.' ? '' : `${roots[0]}/`;
+    const theme = themeDescriptor(files, root);
     const pathSeed = createHmac('sha256', packageSecret).update(`appgog-paths:${packageId}:${watermark}`, 'utf8').digest('hex');
     const protectedRoot = `${root}appgog-license/p-${pathSeed.slice(0, 12)}/`;
     const runtimePath = `${protectedRoot}r-${pathSeed.slice(12, 28)}.js`;
     const protectedIdentityPath = `${protectedRoot}i-${pathSeed.slice(28, 44)}.bin`;
+    const bridgeContractPath = `${root}appgog-license/xboard-bridge-contract.json`;
+    const bridgePackagePath = `${root}appgog-license/appgog-license-bridge.zip`;
+    const bridgePackage = createXboardBridgePackage();
+    const bridgeDescriptor = xboardBridgeDescriptor();
     const protectedIdentity = protectIdentity({ product, version, build_id: buildId, package_id: packageId, domain, watermark }, packageSecret);
     files.set(protectedIdentityPath, protectedIdentity);
+    files.set(bridgePackagePath, bridgePackage);
     const runtime = createBrowserLicenseRuntime({
       injection,
       publicKeyPem: this.activationPublicKey,
@@ -189,8 +210,51 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       packagePublicKeyPem: this.packagePublicKey,
       notificationPublicKeyPem: this.notificationPublicKey,
       protectedIdentity: { ref: posix.basename(protectedIdentityPath), sha256: sha256(protectedIdentity) },
+      xboardBridge: {
+        code: bridgeDescriptor.code,
+        version: bridgeDescriptor.version,
+        ref: posix.relative(posix.dirname(runtimePath), bridgePackagePath),
+        sha256: sha256(bridgePackage),
+        themeName: theme.name,
+      },
     });
     files.set(runtimePath, Buffer.from(runtime, 'utf8'));
+    files.set(bridgeContractPath, Buffer.from(JSON.stringify({
+      schema: 'appgog-xboard-bridge-v1',
+      product, version, build_id: buildId, package_id: packageId,
+      required_server_identity: 'Ed25519',
+      plugin: {
+        code: bridgeDescriptor.code,
+        version: bridgeDescriptor.version,
+        package_path: bridgePackagePath,
+        package_sha256: sha256(bridgePackage),
+        installation: 'xboard_admin_upload_install_enable',
+        theme_name: theme.name,
+      },
+      persistent_state: [
+        'storage/app/private/appgog-license-bridge/identity.json.enc',
+        'storage/app/private/appgog-license-bridge/packages/*.json',
+        'storage/app/private/appgog-license-bridge/state/*.json.enc',
+      ],
+      operations: {
+        deactivate_and_remove_theme: {
+          browser_hook: 'APPGOGThemeBridge.deactivateAndRemoveTheme',
+          requirement: '先安全切回安装前主题，再删除当前未激活主题；禁止删除 Xboard 数据或其他主题',
+        },
+        recover_activation: {
+          endpoint: '/api/v1/activations/recover',
+          requirement: '必须使用原服务器安装私钥签署一次性 Challenge',
+        },
+        offline_license: {
+          endpoint: '/api/v1/offline-licenses',
+          requirement: '离线文件必须绑定 Installation ID、域名、Build 和 Package',
+        },
+        product_migration: {
+          endpoint: '/api/v1/product-migrations',
+          requirement: '目标服务器生成新 Installation ID；完成切换后旧服务器 Fenced',
+        },
+      },
+    }, null, 2), 'utf8'));
     for (const entry of entries) {
       const html = files.get(entry).toString('utf8');
       const relative = posix.relative(posix.dirname(entry), runtimePath);
@@ -206,6 +270,10 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       '',
       '第一阶段：安装时只输入打包中心显示的一次性 Install Key，成功后该 Key 立即作废。',
       '第二阶段：首次进入 APPGOG 后台，只输入长期固定 License Key 完成正式激活。',
+      '首次点击“开始激活”才启动 60 分钟窗口；刷新、退出和输错 Key 不会重置。',
+      '主题首次从已登录的 Xboard 管理后台打开时，会自动上传、安装并启用 APPGOG License Bridge。',
+      '服务端桥健康检查通过后才允许开始 60 分钟激活；失败时主题保持锁定且不会开始计时。',
+      '安全删除、同机恢复、离线授权和服务器迁移均由服务端桥执行。',
     ].join('\r\n'), 'utf8'));
     const manifestPath = `${root}appgog-license/build.json`;
     const manifest = {
@@ -224,8 +292,20 @@ export class HardenedThemeBuildEngine extends BuildEngine {
         protected_identity_path: protectedIdentityPath,
         protected_identity_sha256: sha256(protectedIdentity),
         runtime_path: runtimePath,
+        bridge_contract_path: bridgeContractPath,
+        bridge_package_path: bridgePackagePath,
+        bridge_package_sha256: sha256(bridgePackage),
+        bridge_plugin_code: bridgeDescriptor.code,
+        bridge_plugin_version: bridgeDescriptor.version,
         source_maps_removed: true,
         source_watermark: watermark,
+      },
+      lifecycle: {
+        install_window_seconds: 3600,
+        reinstall: 'recover_with_original_installation_identity',
+        domain_rebind: 'rebuild_after_self_service_domain_migration',
+        server_migration: 'new_installation_identity_and_controlled_handoff',
+        offline_license: 'signed_offline-license-v1',
       },
       created_at: new Date().toISOString(),
     };
@@ -261,6 +341,9 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       'PACKAGE_PROTECTION_INVALID', '成品缺少 APPGOG v1 加密保护信息', 409);
     invariant(typeof manifest.protection.protected_identity_path === 'string' && typeof manifest.protection.runtime_path === 'string',
       'PACKAGE_PROTECTION_INVALID', '成品保护路径无效', 409);
+    invariant(typeof manifest.protection.bridge_package_path === 'string'
+      && typeof manifest.protection.bridge_package_sha256 === 'string',
+    'PACKAGE_PROTECTION_INVALID', '成品缺少 Xboard 授权桥插件信息', 409);
 
     const identityFields = ['product', 'version', 'build_id', 'package_id', 'domain', 'watermark'];
     for (const field of identityFields) {
@@ -273,9 +356,13 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       invariant(signed[field] === expected[field], 'PACKAGE_MANIFEST_TOKEN_INVALID', `签名包身份字段 ${field} 不匹配`, 409);
     }
     const protectedIdentity = files.get(manifest.protection.protected_identity_path);
-    invariant(protectedIdentity && files.has(manifest.protection.runtime_path), 'PACKAGE_PROTECTION_MISSING', '成品缺少加密包身份或授权运行时', 409);
+    const bridgePackage = files.get(manifest.protection.bridge_package_path);
+    invariant(protectedIdentity && bridgePackage && files.has(manifest.protection.runtime_path),
+      'PACKAGE_PROTECTION_MISSING', '成品缺少加密包身份、授权运行时或 Xboard 授权桥插件', 409);
     invariant(equalHex(manifest.protection.protected_identity_sha256, sha256(protectedIdentity)),
       'PACKAGE_PROTECTION_INVALID', '加密包身份摘要不匹配', 409);
+    invariant(equalHex(manifest.protection.bridge_package_sha256, sha256(bridgePackage)),
+      'PACKAGE_PROTECTION_INVALID', 'Xboard 授权桥插件摘要不匹配', 409);
     const protectedClaims = openProtectedIdentity(protectedIdentity, packageSecret);
     for (const field of identityFields) {
       invariant(protectedClaims[field] === expected[field], 'PACKAGE_PROTECTION_INVALID', `加密包身份字段 ${field} 不匹配`, 409);

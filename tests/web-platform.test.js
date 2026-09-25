@@ -105,6 +105,10 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   assert.match(adminHtml, /id="logout" class="header-logout"/);
   assert.ok(adminHtml.includes('id="login-system-version">v' + packageVersion + '</span>'));
   assert.ok(adminHtml.includes('id="admin-system-version">v' + packageVersion + '</strong>'));
+  const brand = adminHtml.match(/<div class="sidebar-brand">([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(brand?.includes('运营后台 · <strong id="admin-system-version">v' + health.version + '</strong>'), 'top sidebar badge must show the running program version');
+  assert.equal((adminHtml.match(/id="admin-system-version"/g) ?? []).length, 1);
+  assert.doesNotMatch(adminHtml, /\{\{APPGOG_VERSION\}\}/);
   assert.equal(adminPage.headers.get('x-appgog-version'), packageVersion);
   assert.doesNotMatch(adminHtml, /id="account-menu"/);
   assert.doesNotMatch(adminHtml, /返回首页/);

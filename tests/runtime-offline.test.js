@@ -38,12 +38,15 @@ function fakeElement(tagName) {
   };
 }
 
-function installBrowser({ token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey, manifestToken }) {
+function installBrowser({
+  token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey,
+  manifestToken, bridge = null, initialValues = null,
+}) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
     location: globalThis.location, fetch: globalThis.fetch, DateNow: Date.now,
   };
-  const values = new Map([
+  const values = initialValues ?? new Map([
     ['appgog_install_appgog', 'installation_runtime_123'],
     ['appgog_license_pkg_runtime', JSON.stringify({
       activation_id: 'act_runtime', activation_token: token, refresh_secret: 'refresh_runtime',
@@ -57,7 +60,7 @@ function installBrowser({ token, fetchImpl, publicKey, packagePublicKey = public
     setItem: (key, value) => values.set(key, String(value)),
   };
   globalThis.location = {
-    hostname: 'demo.example.com', origin: 'https://demo.example.com', reload() {},
+    hostname: 'demo.example.com', origin: 'https://demo.example.com', href: 'https://demo.example.com/', reload() {},
   };
   globalThis.document = {
     readyState: 'complete',
@@ -73,7 +76,7 @@ function installBrowser({ token, fetchImpl, publicKey, packagePublicKey = public
     p: 'appgog', v: '1.17.1', b: 'bld_runtime', i: 'pkg_runtime',
     u: 'https://license.example.com', k: publicKeyDer(publicKey),
     a: publicKeyDer(publicKey), q: publicKeyDer(packagePublicKey), n: publicKeyDer(notificationPublicKey),
-    s: [], o: [], m: manifestToken,
+    s: [], o: [], m: manifestToken, ...(bridge || {}),
   });
   return {
     values, elements, classes,
@@ -154,6 +157,52 @@ test('成功刷新会验签并更新本地凭证', async () => {
     await browser.settle();
     assert.equal(globalThis.APPGOGLicense.status, 'active');
     assert.equal(JSON.parse(browser.values.get('appgog_license_pkg_runtime')).activation_token, refreshed);
+  } finally { browser.restore(); }
+});
+
+test('普通主题浏览器从 Xboard 服务端恢复安全状态并由桥接服务刷新授权', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const expired = activation(privateKey);
+  const refreshed = activation(privateKey, {
+    exp: Math.floor(FIXED_NOW / 1000) + 86400,
+    offline_until: Math.floor(FIXED_NOW / 1000) + 172800,
+  });
+  const requests = [];
+  const browser = installBrowser({
+    token: expired,
+    publicKey,
+    manifestToken: packageManifest(privateKey),
+    initialValues: new Map(),
+    bridge: { gc: 'appgog_license_bridge', gv: '1.0.0', gt: 'APPGOG', j: '../appgog-license-bridge.zip', y: '00' },
+    fetchImpl: async (url) => {
+      const href = String(url);
+      requests.push(href);
+      if (href.endsWith('/health')) return { ok: true, status: 200, async json() { return {
+        ok: true, code: 'appgog_license_bridge', version: '1.0.0',
+        identity: { installation_id: 'installation_runtime_123', installation_public_key: 'public-key' },
+      }; } };
+      if (href.endsWith('/state/runtime')) return { ok: true, status: 200, async json() { return {
+        state: { activation_id: 'act_runtime', activation_token: expired, backend_origin: 'https://demo.example.com' },
+      }; } };
+      if (href.endsWith('/refresh')) return { ok: true, status: 200, async json() { return {
+        activation_id: 'act_runtime', activation_token: refreshed, backend_origin: 'https://demo.example.com',
+      }; } };
+      throw new Error(`unexpected request: ${href}`);
+    },
+  });
+  try {
+    await browser.settle();
+    assert.equal(globalThis.APPGOGLicense.status, 'active');
+    assert.equal(browser.classes.has('__appgog_locked'), false);
+    const saved = JSON.parse(browser.values.get('appgog_license_pkg_runtime'));
+    assert.equal(saved.activation_token, refreshed);
+    assert.equal(saved.refresh_secret, undefined);
+    assert.equal(saved.install_receipt_secret, undefined);
+    assert.equal(saved.install_window_token, undefined);
+    assert.ok(requests.some((url) => url.endsWith('/state/runtime')));
+    assert.ok(requests.some((url) => url.endsWith('/refresh')));
+    assert.equal(requests.some((url) => url.includes('/installation-challenges')), false);
+    assert.equal(requests.some((url) => url.endsWith('/register')), false);
   } finally { browser.restore(); }
 });
 
@@ -270,12 +319,22 @@ test('生成的运行时先提交一次性 Install Key，再使用 Install Recei
     },
     publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
   });
-  assert.match(source, /post\('\/api\/v1\/install-unlocks'/);
+  assert.match(source, /post\('\/api\/v1\/install-windows\/start'/);
+  assert.match(source, /post\('\/api\/v2\/install-unlocks'/);
+  assert.match(source, /install_window_id: saved\.install_window_id/);
   assert.match(source, /install_key: installInput\.value\.trim\(\)/);
   assert.match(source, /post\('\/api\/v1\/activations'/);
   assert.match(source, /license_key: fixedInput\.value\.trim\(\)/);
   assert.match(source, /install_receipt_id: saved\.install_receipt_id/);
   assert.match(source, /install_receipt_secret: saved\.install_receipt_secret/);
+  assert.match(source, /XBOARD_ACCESS_TOKEN/);
+  assert.match(source, /\/plugin\/upload/);
+  assert.match(source, /\/plugin\/install/);
+  assert.match(source, /\/plugin\/enable/);
+  assert.match(source, /bridgeRequest\('\/state\/runtime'/);
+  assert.match(source, /bridgeRequest\('\/refresh'/);
+  assert.match(source, /activationAdminRequired/);
+  assert.match(source, /await persistBridgeState\(\);[\s\S]*location\.reload\(\)/);
   assert.doesNotMatch(source, /install_key: installInput\.value\.trim\(\), license_key:/);
   assert.match(source, /result\.release_token/);
   assert.match(source, /feed\.version !== latest\.version/);

@@ -3,6 +3,8 @@ const METHODS = Object.freeze([
   'activeActivationForEnvironment', 'buildById', 'consumeInstallationChallenge',
   'consumeInstallKey', 'consumeProductMigrationGrant', 'countActiveActivationsForLicense',
   'createActivation', 'createInstallationChallenge', 'createInstallReceipt',
+  'createInstallWindow', 'installWindowByBuildInstallation', 'installWindowById',
+  'consumeInstallWindow', 'expireInstallWindow',
   'createProductMigrationGrant', 'fenceActivationsByInstallation', 'fenceInstallationIdentity',
   'installationChallengeById', 'installationIdentityById', 'installKeyByHash',
   'installReceiptById', 'licenseByHash', 'licenseById', 'markBuildActivated',
@@ -11,6 +13,7 @@ const METHODS = Object.freeze([
   'transitionActivationStatus', 'activateInstallationIdentity', 'revokeInstallationIdentity',
   'revokeActivationsByLicense', 'revokeInstallReceiptsByLicense', 'supersedeActivations',
   'touchInstallationIdentity', 'updateActivationSeen',
+  'recoverActivationCredentials', 'createOfflineLicenseFile',
 ]);
 
 export function createActivationRepositoryPort(repository) {

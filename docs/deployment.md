@@ -2,9 +2,11 @@
 
 日期：2026-09-25。
 
-APPGOG打包授权系统 v1.2.20 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.22 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
+
+生产环境默认安装激活窗口为 3600 秒。确有业务需要时可通过 `INSTALL_ACTIVATION_WINDOW_SECONDS` 修改，但已开始的窗口会继续使用数据库中原截止时间，升级或重启不会重置。
 
 - 一台全新的 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux 或 Fedora 服务器；
 - root 或 sudo 权限；
@@ -37,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.20 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.22 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -158,6 +160,8 @@ appgog migration-rollback-import <迁移ID>
 导入会校验迁移 ID、文件名、固定目录和整包 SHA-256，恢复目标产生的最终数据，再把所有权 generation 提升一代。失败时自动恢复旧源导入前的 Fenced 数据并保持服务停止；禁止直接删除 `source-fenced.json`、复制旧数据库后强行启动或让两边同时写入。
 
 不要删除源数据、数据卷、`.env`、`.backup-key` 或旧服务器，直到新服务器完成公网验收。SQLite 最终切换需要短暂只读，不属于完全零停机迁移。
+
+客户 Xboard 服务器迁移还必须单独保留 `storage/app/private/appgog-license-bridge/` 与原 Laravel `APP_KEY`。该目录包含以 `APP_KEY` 加密的安装私钥、安装窗口和激活刷新状态；两者缺一都不能还原原 Installation ID。不要只复制主题目录，也不要在目标服务器自动生成新密钥冒充原安装；跨服务器应使用客户产品迁机流程生成新的 Installation ID 并完成唯一 Active 交接。
 
 ## 8. 跨服务器节点
 

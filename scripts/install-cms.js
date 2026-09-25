@@ -73,6 +73,7 @@ if (role === 'all-in-one' || role === 'license-center') {
     line('UPLOAD_ROOT', './var/uploads'),
     line('ACTIVATION_TOKEN_TTL_SECONDS', '604800'),
     line('OFFLINE_GRACE_SECONDS', '2592000'),
+    line('INSTALL_ACTIVATION_WINDOW_SECONDS', '3600'),
     line('BUILD_TICKET_TTL_SECONDS', '900'),
     line('DOWNLOAD_TICKET_TTL_SECONDS', '300'),
     line('WEB_SESSION_TTL_SECONDS', '28800'),

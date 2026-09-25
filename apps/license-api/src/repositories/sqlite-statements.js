@@ -76,6 +76,23 @@ export function createSqliteStatements(database) {
     `),
     installKeyByBuildId: database.prepare(`SELECT * FROM install_keys WHERE build_id = ?`),
     consumeInstallKey: database.prepare(`UPDATE install_keys SET status = 'consumed', consumed_at = ? WHERE id = ? AND status = 'available'`),
+    installWindowByBuildInstallation: database.prepare(`
+      SELECT * FROM install_activation_windows WHERE build_id = ? AND installation_id = ?
+    `),
+    installWindowById: database.prepare(`SELECT * FROM install_activation_windows WHERE id = ?`),
+    insertInstallWindow: database.prepare(`
+      INSERT INTO install_activation_windows (
+        id, build_id, installation_id, domain, token_hash, status, started_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+    `),
+    consumeInstallWindow: database.prepare(`
+      UPDATE install_activation_windows SET status = 'consumed', consumed_at = ?
+      WHERE id = ? AND status = 'active' AND expires_at >= ?
+    `),
+    expireInstallWindow: database.prepare(`
+      UPDATE install_activation_windows SET status = 'expired', expired_at = ?
+      WHERE id = ? AND status = 'active' AND expires_at < ?
+    `),
     insertInstallReceipt: database.prepare(`
       INSERT INTO install_receipts (
         id, license_id, build_id, receipt_secret_hash, domain, backend_origin,
@@ -133,6 +150,14 @@ export function createSqliteStatements(database) {
       WHERE activations.id = ?
     `),
     updateActivationSeen: database.prepare(`UPDATE activations SET last_seen_at = ? WHERE id = ?`),
+    recoverActivationCredentials: database.prepare(`
+      UPDATE activations SET refresh_secret_hash = ?, recovered_at = ?, recovery_generation = recovery_generation + 1,
+        last_seen_at = ? WHERE id = ? AND status = 'active'
+    `),
+    insertOfflineLicenseFile: database.prepare(`
+      INSERT INTO offline_license_files (id, activation_id, token_hash, format_version, issued_at, expires_at)
+      VALUES (?, ?, ?, 'offline-license-v1', ?, ?)
+    `),
     activeActivationForEnvironment: database.prepare(`
       SELECT activations.id FROM activations
       JOIN licenses ON licenses.id = activations.license_id
@@ -571,6 +596,10 @@ export function createSqliteStatements(database) {
     deleteSupportAttachmentsByLicense: database.prepare(`DELETE FROM support_attachments WHERE ticket_id IN (SELECT id FROM support_tickets WHERE license_id = ?)`),
     deleteSupportMessagesByLicense: database.prepare(`DELETE FROM support_messages WHERE ticket_id IN (SELECT id FROM support_tickets WHERE license_id = ?)`),
     deleteSupportTicketsByLicense: database.prepare(`DELETE FROM support_tickets WHERE license_id = ?`),
+    deleteOfflineLicenseFilesByLicense: database.prepare(`
+      DELETE FROM offline_license_files
+      WHERE activation_id IN (SELECT id FROM activations WHERE license_id = ?)
+    `),
     deleteActivationsByLicense: database.prepare(`DELETE FROM activations WHERE license_id = ?`),
     deleteInstallationChallengesByLicense: database.prepare(`
       DELETE FROM installation_challenges
@@ -580,6 +609,10 @@ export function createSqliteStatements(database) {
     deleteInstallationIdentitiesByLicense: database.prepare(`DELETE FROM installation_identities WHERE license_id = ?`),
     deleteInstallReceiptsByLicense: database.prepare(`DELETE FROM install_receipts WHERE license_id = ?`),
     deleteInstallKeysByLicense: database.prepare(`DELETE FROM install_keys WHERE build_id IN (SELECT id FROM builds WHERE license_id = ?)`),
+    deleteInstallWindowsByLicense: database.prepare(`
+      DELETE FROM install_activation_windows
+      WHERE build_id IN (SELECT id FROM builds WHERE license_id = ?)
+    `),
     deleteBuildJobsByLicense: database.prepare(`DELETE FROM build_jobs WHERE license_id = ?`),
     deleteBuildsByLicense: database.prepare(`DELETE FROM builds WHERE license_id = ?`),
     deleteBuildTicketsByLicense: database.prepare(`DELETE FROM build_tickets WHERE license_id = ?`),

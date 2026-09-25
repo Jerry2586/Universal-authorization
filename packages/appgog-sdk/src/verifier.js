@@ -18,3 +18,13 @@ export function verifyActivation({ token, publicKey, product = 'appgog', domain,
   invariant(payload.exp > seconds || offlineValid, 'TOKEN_EXPIRED', '激活凭证与离线宽限期均已结束，需要联网刷新', 401);
   return payload;
 }
+
+export function verifyOfflineLicenseFile({ file, ...options }) {
+  const parsed = typeof file === 'string' ? JSON.parse(file) : file;
+  invariant(parsed && parsed.format === 'offline-license-v1' && typeof parsed.activation_token === 'string',
+    'OFFLINE_LICENSE_FILE_INVALID', '离线授权文件格式无效', 401);
+  const payload = verifyActivation({ ...options, token: parsed.activation_token, allowOffline: true });
+  invariant(parsed.activation_id === undefined || parsed.activation_id === payload.sub,
+    'OFFLINE_LICENSE_FILE_MISMATCH', '离线授权文件与激活记录不匹配', 403);
+  return payload;
+}
