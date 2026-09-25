@@ -76,6 +76,7 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
     database, repository: createSupportRepositoryPort(repository), artifactStore, clock,
   });
   const packaging = createPackagingService({
+    database,
     repository: createPackagingRepositoryPort(repository), queue,
     buildAuthorization: Object.freeze({ claimBuildForJob: service.claimBuildForJob }),
     entitlementAccess: Object.freeze({

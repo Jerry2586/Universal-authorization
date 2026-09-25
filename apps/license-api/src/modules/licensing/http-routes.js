@@ -1,5 +1,4 @@
 import { invariant } from '../../../../../packages/core/src/errors.js';
-import { verifyPassword } from '../../../../../packages/core/src/password.js';
 
 function licenseResult(result) {
   return {
@@ -26,7 +25,8 @@ export async function handleLicensingHttp({
     const result = service.issueLicense({
       productCode: body.product_code, customerRef: body.customer_ref, domain: body.domain,
       updateUntil: body.update_until, planCode: body.plan_code,
-      maxBuildsPerDay: body.max_builds_per_day, maxActivations: body.max_activations,
+      maxBuildsPerDay: body.max_builds_per_day, maxBuildsTotal: body.max_builds_total ?? null,
+      maxActivations: body.max_activations,
       actorId: admin.actor_id,
     });
     respondJson(response, 201, licenseResult(result));
@@ -45,9 +45,6 @@ export async function handleLicensingHttp({
     rateLimit(`license-key-reveal:${clientAddress}`, 8, 15 * 60 * 1000);
     const authResult = auth.requireAdmin(true, 'license.manage');
     requireOwner(authResult.admin, 'LICENSE_KEY_REVEAL_FORBIDDEN', '只有平台所有者可以查看完整 Key');
-    const body = await readJson(request);
-    invariant(verifyPassword(String(body.password ?? ''), authResult.admin.password_hash),
-      'ADMIN_PASSWORD_CURRENT_INVALID', '当前管理员密码不正确', 403);
     const result = service.revealLicenseKey({ licenseId: revealMatch[1], actorId: authResult.admin.id });
     respondJson(response, 200, { license_id: result.license.id, license_key: result.licenseKey });
     return true;
@@ -95,8 +92,6 @@ async function handleLicensingMutations({
     const authResult = auth.requireAdmin(true, 'license.manage');
     requireOwner(authResult.admin, 'LICENSE_DELETE_FORBIDDEN', '只有平台所有者可以永久删除授权');
     const body = await readJson(request);
-    invariant(verifyPassword(String(body.password ?? ''), authResult.admin.password_hash),
-      'ADMIN_PASSWORD_CURRENT_INVALID', '当前管理员密码不正确', 403);
     invariant(String(body.confirmation ?? '') === `DELETE ${deleteMatch[1]}`,
       'LICENSE_DELETE_CONFIRMATION_INVALID', '永久删除确认文本不正确', 400);
     respondJson(response, 200, portal.deleteLicensePermanently({ licenseId: deleteMatch[1], actorId: authResult.admin.id }));
@@ -123,13 +118,30 @@ async function handleLicensingMutations({
     return true;
   }
 
+  const quotaMatch = url.pathname.match(/^\/web\/admin\/licenses\/([^/]+)\/quota$/);
+  if (method === 'POST' && quotaMatch) {
+    const admin = auth.requireSession('admin', true, 'license.manage');
+    const body = await readJson(request);
+    const total = body.max_builds_total === null || body.max_builds_total === '' ? null : Number(body.max_builds_total);
+    const license = service.changeLicenseQuota({
+      licenseId: quotaMatch[1], maxBuildsPerDay: Number(body.max_builds_per_day),
+      maxBuildsTotal: total, reason: body.reason, actorId: admin.actor_id,
+    });
+    respondJson(response, 200, {
+      license_id: license.id, max_builds_per_day: license.max_builds_per_day,
+      max_builds_total: license.max_builds_total,
+    });
+    return true;
+  }
+
   if (method === 'POST' && url.pathname === '/api/v1/admin/licenses') {
     auth.requireToken(config.adminToken, '管理员');
     const body = await readJson(request);
     const result = service.issueLicense({
       productCode: body.product_code, customerRef: body.customer_ref, domain: body.domain,
       updateUntil: body.update_until, planCode: body.plan_code,
-      maxBuildsPerDay: body.max_builds_per_day, maxActivations: body.max_activations,
+      maxBuildsPerDay: body.max_builds_per_day, maxBuildsTotal: body.max_builds_total ?? null,
+      maxActivations: body.max_activations,
     });
     respondJson(response, 201, {
       ...licenseResult(result), product: result.license.product_code,

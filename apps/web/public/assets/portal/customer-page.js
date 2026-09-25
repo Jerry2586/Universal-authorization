@@ -18,6 +18,7 @@ export function createCustomerPage(shell) {
     row.append(version, td(job.domain), badge(job.status), progressCell(job.progress), td(date(job.created_at)));
     const action = element('td');
     action.append(button(job.status === 'succeeded' ? '领取交付' : '查看状态', () => showBuild(job.id)));
+    if (job.can_void) action.append(button('作废', () => voidBuild(job.id)));
     row.append(action);
     return row;
   }
@@ -26,10 +27,10 @@ export function createCustomerPage(shell) {
     if (!state.data?.license?.bound_domain) return notify('当前授权尚未绑定域名', true);
     if (trigger) trigger.disabled = true;
     try {
-      await request('/web/customer/builds', {
-        method: 'POST', body: { version: version.version, domain: state.data.license.bound_domain, intent },
+      const job = await request('/web/customer/builds', {
+        method: 'POST', body: { version: version.version, domain: state.data.license.bound_domain, intent, base_version: intent === 'install' ? null : state.data.current_version ?? null },
       });
-      notify(`${intentLabel(intent)}已进入安全构建队列`);
+      notify(job.reused ? '已打开已有任务；请先使用或作废未使用的安装包' : `${intentLabel(intent)}已进入安全构建队列`);
       await refresh();
       selectView('builds');
     } catch (error) { notify(error.message, true); }
@@ -70,6 +71,7 @@ export function createCustomerPage(shell) {
     const tickets = Array.isArray(data.tickets) ? data.tickets : [];
     $('license-status').textContent = license.status === 'active' ? '正常' : license.status;
     $('license-domain').textContent = license.bound_domain ?? '未绑定';
+    $('license-domain').title = license.bound_domain ?? '未绑定';
     $('header-domain').textContent = license.bound_domain ?? '未绑定域名';
     $('license-limit').textContent = license.max_builds_per_day == null
       ? '按授权策略'
@@ -131,6 +133,19 @@ export function createCustomerPage(shell) {
     renderCustomerTickets(tickets, builds);
   }
 
+  async function voidBuild(id) {
+    try {
+      const job = await request(`/web/customer/builds/${encodeURIComponent(id)}`);
+      if (!job.can_void) return notify('此包正在构建、已经使用或已经失效，不能作废', true);
+      dialog('作废未使用的安装包', '作废后安装 Key 和下载入口立即失效，已下载的此包也不能激活。已消耗的构建额度不返还，记录保留用于追溯。', (card, close) => {
+        actions(card, close, '确认作废', async () => {
+          await request(`/web/customer/builds/${encodeURIComponent(id)}/void`, { method: 'POST' });
+          notify('安装包已作废'); await refresh();
+        }, true);
+      });
+    } catch (error) { notify(error.message, true); }
+  }
+
   async function showBuild(id) {
     try {
       const job = await request(`/web/customer/builds/${encodeURIComponent(id)}`);
@@ -151,11 +166,18 @@ export function createCustomerPage(shell) {
       toggle.textContent = expanded ? '收起内容' : '查看详情';
       toggle.setAttribute('aria-expanded', String(expanded));
     });
+    const ticketDialog = $('customer-ticket-dialog');
+    $('open-customer-ticket')?.addEventListener('click', () => ticketDialog.showModal());
+    $('cancel-customer-ticket')?.addEventListener('click', () => ticketDialog.close());
+    ticketDialog?.addEventListener('cancel', (event) => {
+      if ($('customer-ticket-form').querySelector('[type="submit"]').disabled) event.preventDefault();
+    });
     $('customer-ticket-form')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
       const submit = form.querySelector('[type="submit"]');
       submit.disabled = true;
+      $('cancel-customer-ticket').disabled = true;
       try {
         const fields = new FormData(form);
         const ticket = await request('/web/customer/tickets', { method: 'POST', body: {
@@ -164,9 +186,9 @@ export function createCustomerPage(shell) {
         } });
         await uploadTicketAttachment(`/web/customer/tickets/${encodeURIComponent(ticket.id)}/attachments`, $('customer-ticket-file')?.files?.[0]);
         state.selectedCustomerTicketId = ticket.id;
-        form.reset(); notify('工单已提交'); await refresh(); selectView('tickets');
+        form.reset(); ticketDialog.close(); notify('工单已提交'); await refresh(); selectView('tickets');
       } catch (error) { notify(error.message, true); }
-      finally { submit.disabled = false; }
+      finally { submit.disabled = false; $('cancel-customer-ticket').disabled = false; }
     });
     $('domain-bind-form')?.addEventListener('submit', async (event) => {
       event.preventDefault();

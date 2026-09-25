@@ -98,7 +98,7 @@ test('HTTP contracts: operations, admin lifecycle, license key rotation and revo
   await send(`/web/admin/admins/${account.id}`, { actor: admin, method: 'DELETE' });
   const issued = (await post('/web/admin/licenses', { customer_ref: 'HTTP-contract' }, 201)).data;
   const id = issued.license_id;
-  assert.equal((await post(`/web/admin/licenses/${id}/key`, { password: config.adminPassword })).data.license_key, issued.license_key);
+  assert.equal((await post(`/web/admin/licenses/${id}/key`, {})).data.license_key, issued.license_key);
   const customer = await login('customer', { license_key: issued.license_key });
   await send('/web/customer/domain/bind', { actor: customer, body: { domain: 'contract.example.com' } });
   await post(`/web/admin/licenses/${id}/domain`, { domain: 'changed.example.com' });
@@ -113,7 +113,7 @@ test('HTTP contracts: operations, admin lifecycle, license key rotation and revo
   assert.ok((await send(`/web/admin/licenses/${id}/events`, { actor: admin })).data.events.length);
   const apiLicense = (await send('/api/v1/admin/licenses', { token: config.adminToken, body: { customer_ref: 'API-contract' }, status: 201 })).data;
   await send(`/api/v1/admin/licenses/${apiLicense.license_id}/rotate-key`, { token: config.adminToken, body: {} });
-  await send(`/web/admin/licenses/${id}`, { actor: admin, method: 'DELETE', body: { password: config.adminPassword, confirmation: `DELETE ${id}` } });
+  await send(`/web/admin/licenses/${id}`, { actor: admin, method: 'DELETE', body: { confirmation: `DELETE ${id}` } });
   await post('/web/admin/erasure-cleanup/retry', {});
   await post('/web/admin/account/password', { current_password: config.adminPassword, new_password: '654321', confirm_password: '654321' });
   await send('/web/session?actor=admin', { actor: admin, status: 401 });
@@ -187,4 +187,20 @@ test('HTTP contracts: public build authorization, unlock, activation and refresh
   }
   await send('/api/v1/releases/latest?product=appgog');
   await send('/api/v1/releases/latest?product=unknown', { status: 404 });
+});
+
+
+test('浏览器跨域两阶段激活预检放行，管理接口不开放跨域', async t => {
+  const { base } = await fixture(t);
+  for (const path of ['/api/v1/install-windows/start', '/api/v1/install-windows/expire', '/api/v2/install-unlocks', '/api/v1/installation-challenges', '/api/v1/activations']) {
+    const response = await fetch(base + path, { method: 'OPTIONS', headers: {
+      origin: 'https://customer.example.com', 'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    } });
+    assert.equal(response.status, 204, path);
+    assert.equal(response.headers.get('access-control-allow-origin'), 'https://customer.example.com');
+    assert.match(response.headers.get('access-control-allow-headers'), /content-type/);
+  }
+  const rejected = await fetch(base + '/web/admin/licenses', { method: 'OPTIONS', headers: { origin: 'https://customer.example.com' } });
+  assert.equal(rejected.headers.get('access-control-allow-origin'), null);
 });

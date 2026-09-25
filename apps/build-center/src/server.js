@@ -13,7 +13,8 @@ const root = resolve(process.cwd(), 'apps/web/public');
 const files = new Map([
   ['/', ['build.html', 'text/html; charset=utf-8']],
   ['/build', ['build.html', 'text/html; charset=utf-8']],
-  ...['site.css', 'admin-login.css', 'build-center.css'].map(name => [`/assets/${name}`, [`assets/${name}`, 'text/css; charset=utf-8']]),
+  ...['site.css', 'admin-login.css', 'build-center.css', 'portal-design.css'].map(name => [`/assets/${name}`, [`assets/${name}`, 'text/css; charset=utf-8']]),
+  ['/assets/favicon.svg', ['assets/favicon.svg', 'image/svg+xml']],
   ['/assets/logo.png', ['assets/logo.png', 'image/png']],
   ...['customer-portal.js', ...['customer-page', 'shell', 'core', 'ui', 'tickets', 'api-client', 'dialog'].map(name => `portal/${name}.js`)]
     .map(name => [`/assets/${name}`, [`assets/${name}`, 'text/javascript; charset=utf-8']]),

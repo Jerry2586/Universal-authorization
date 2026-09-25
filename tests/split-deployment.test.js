@@ -114,3 +114,44 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   assert.ok([...readZip(output).keys()].some((path) => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(path)));
   assert.equal((await send(buildUrl, '/web/admin/overview', { cookie: customerCookie })).status, 404);
 });
+
+
+test('Worker 源码下载失败记录阶段和错误码，不泄露凭证', async () => {
+  const reports = [];
+  const fetchImpl = async (url, options) => {
+    assert.ok(options.signal);
+    if (url.pathname.endsWith('/lease')) return Response.json({ task: { job: { id: 'job-network' }, source: {}, build: {} } });
+    if (url.pathname.endsWith('/source')) throw new TypeError('fetch failed secret-token', { cause: { code: 'ECONNREFUSED', message: 'secret-token' } });
+    if (url.pathname.endsWith('/fail')) reports.push(JSON.parse(options.body));
+    return Response.json({});
+  };
+  await assert.rejects(runWorkerOnce({ baseUrl: 'https://license.example.com', token: 'secret-token', workerId: 'worker-test', remoteTransfer: true, fetchImpl }), (error) => {
+    assert.equal(error.code, 'WORKER_ECONNREFUSED');
+    assert.match(error.message, /下载主题源码/);
+    assert.doesNotMatch(error.message, /secret-token/);
+    return true;
+  });
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].code, 'WORKER_ECONNREFUSED');
+});
+
+test('Worker 领取请求超时会结束，不无限等待', async () => {
+  const server = createServer(() => {}); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  try {
+    await assert.rejects(runWorkerOnce({ baseUrl: 'http://127.0.0.1:' + server.address().port, token: 'test', workerId: 'timeout', requestTimeoutMs: 30 }), { code: 'WORKER_TIMEOUT' });
+  } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+});
+
+
+test('Worker 下载响应体停滞也返回阶段超时诊断', async () => {
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.write('{');
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  try {
+    await assert.rejects(runWorkerOnce({ baseUrl: 'http://127.0.0.1:' + server.address().port, token: 'test', workerId: 'body-timeout', requestTimeoutMs: 100 }), (error) => {
+      assert.equal(error.code, 'WORKER_TIMEOUT'); assert.match(error.message, /领取构建任务/); return true;
+    });
+  } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+});

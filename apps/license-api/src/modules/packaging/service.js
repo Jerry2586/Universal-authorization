@@ -1,3 +1,4 @@
+import { transaction } from '../../database.js';
 import { createHash } from 'node:crypto';
 import { canonicalizeDomain } from '../../../../../packages/core/src/canonicalize.js';
 import { invariant } from '../../../../../packages/core/src/errors.js';
@@ -7,12 +8,34 @@ import { secretMatches } from '../../../../../packages/core/src/security.js';
 import { publicBuildJob, SOURCE_KIND } from '../../../../../packages/contracts/src/build-job.js';
 
 export function createPackagingService({
-  repository, queue, buildAuthorization, entitlementAccess, operations, artifactStore, buildEngine, config, clock = () => new Date(),
+  database, repository, queue, buildAuthorization, entitlementAccess, operations, artifactStore, buildEngine, config, clock = () => new Date(),
 }) {
   function customerLicense(session) {
     const license = repository.licenseById(session.actor_id);
     invariant(license && license.status === 'active', 'LICENSE_INACTIVE', '授权已停用', 403);
     return license;
+  }
+
+  function recoverExpiredBuilds() {
+    const now = clock().toISOString();
+    transaction(database, () => {
+      for (const job of repository.expiredBuildJobs(now)) {
+        repository.failBuildJob({ id: job.id, workerId: job.lease_owner, errorCode: 'BUILD_LEASE_EXPIRED',
+          message: '构建节点失联或超时，可重新构建', now });
+        repository.audit({ actorType: 'system', actorId: 'build-queue', action: 'build_job.lease_expired',
+          subjectType: 'build_job', subjectId: job.id, metadata: {}, now });
+      }
+    });
+  }
+
+  function cleanupCancelledArtifacts() {
+    // The cancelled job retains its reference until removal succeeds: retryable outbox.
+    for (const job of repository.cancelledArtifacts()) {
+      try {
+        artifactStore.remove(job.artifact_ref);
+        repository.clearCancelledArtifact(job.id);
+      } catch { /* Keep the reference for the next Worker poll or void request. */ }
+    }
   }
 
   return Object.freeze({
@@ -24,8 +47,13 @@ export function createPackagingService({
       invariant(sourceVersion && sourceVersion.status === 'active', 'SOURCE_VERSION_NOT_READY', '该 APPGOG 版本尚未接入安全构建 Worker', 409);
       entitlementAccess.assertVersionAccess({ license, source: sourceVersion });
       invariant(['install', 'update', 'reinstall'].includes(intent), 'BUILD_INTENT_INVALID', '构建类型无效');
+      invariant(base_version === null || typeof base_version === 'string' && base_version.length <= 128, 'BUILD_BASE_VERSION_INVALID', '原版本号无效');
       const versions = repository.listActiveSourceVersions(license.product_code);
       const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
+      if (intent !== 'install' && currentVersion) {
+        invariant(base_version === null || base_version === currentVersion, 'BUILD_BASE_VERSION_STALE', '当前安装版本已变化，请刷新后重新构建', 409);
+        base_version = currentVersion;
+      }
       const latestEligibleVersion = versions.find((item) => entitlementAccess.versionEligibility({ license, source: item }).eligible)?.version ?? null;
       invariant(sourceVersion.version === latestEligibleVersion || sourceVersion.version === currentVersion,
         'HISTORICAL_BUILD_DISABLED', '历史版本不再提供客户构建；请选择最新版本或重新构建当前版本', 409);
@@ -33,26 +61,37 @@ export function createPackagingService({
         invariant(new Date(sourceVersion.published_at ?? sourceVersion.created_at) <= new Date(license.update_until),
           'UPDATE_WINDOW_EXPIRED', '该版本发布时间已超出更新服务期限', 403);
       }
+      recoverExpiredBuilds();
       const now = clock().toISOString();
-      const job = queue.enqueue({
-        id: newId('job'), licenseId: license.id, sourceVersionId: sourceVersion.id,
-        version: sourceVersion.version, domain: normalizedDomain, intent, baseVersion: base_version,
-        sourceKind: SOURCE_KIND.OFFICIAL, message: '任务已进入安全构建队列', now,
+      return transaction(database, () => {
+        const existing = repository.reusableBuildJob(license.id, sourceVersion.id, normalizedDomain, intent, base_version, now);
+        if (existing) return { ...publicBuildJob(existing), reused: true };
+        const job = queue.enqueue({
+          id: newId('job'), licenseId: license.id, sourceVersionId: sourceVersion.id,
+          version: sourceVersion.version, domain: normalizedDomain, intent, baseVersion: base_version,
+          sourceKind: SOURCE_KIND.OFFICIAL, message: '任务已进入安全构建队列', now,
+        });
+        repository.audit({
+          actorType: 'customer', actorId: license.id, action: 'build_job.created',
+          subjectType: 'build_job', subjectId: job.id,
+          metadata: { version: job.requested_version, domain: job.requested_domain, intent }, now,
+        });
+        return publicBuildJob(job);
       });
-      repository.audit({
-        actorType: 'customer', actorId: license.id, action: 'build_job.created',
-        subjectType: 'build_job', subjectId: job.id,
-        metadata: { version: job.requested_version, domain: job.requested_domain, intent }, now,
-      });
-      return publicBuildJob(job);
     },
 
     buildDetails(session, jobId) {
+      customerLicense(session);
       const job = repository.buildJobById(jobId);
       invariant(job && job.license_id === session.actor_id, 'BUILD_JOB_NOT_FOUND', '构建任务不存在', 404);
+      const build = job.build_id && repository.buildById(job.build_id);
+      const key = job.build_id && repository.installKeyByBuildId(job.build_id);
+      const available = build?.status === 'ready' && key?.status === 'available'
+        && (!key.expires_at || key.expires_at > clock().toISOString());
       return {
         ...publicBuildJob(job),
-        install_key: job.status === 'succeeded' && job.install_key_encrypted
+        can_void: job.status === 'queued' || job.status === 'succeeded' && build?.status === 'ready' && key?.status === 'available',
+        install_key: job.status === 'succeeded' && available && job.install_key_encrypted
           ? openSecret(job.install_key_encrypted, config.deliveryEncryptionKey)
           : null,
         artifact_sha256: job.artifact_sha256,
@@ -60,9 +99,15 @@ export function createPackagingService({
     },
 
     artifactForDownload(session, jobId) {
+      customerLicense(session);
       const job = repository.buildJobById(jobId);
       invariant(job && job.license_id === session.actor_id, 'BUILD_JOB_NOT_FOUND', '构建任务不存在', 404);
       invariant(job.status === 'succeeded' && job.artifact_ref, 'ARTIFACT_NOT_READY', '构建成品尚未生成', 409);
+      const build = repository.buildById(job.build_id);
+      const installKey = repository.installKeyByBuildId(job.build_id);
+      invariant(build?.status === 'ready' && installKey?.status === 'available'
+        && (!installKey.expires_at || installKey.expires_at > clock().toISOString()),
+        'ARTIFACT_NO_LONGER_AVAILABLE', '此包已使用、失效或作废，请重新构建', 409);
       return {
         key: job.artifact_ref,
         filename: `APPGOG-${job.requested_version}-${job.build_id.slice(-10)}.zip`,
@@ -70,7 +115,32 @@ export function createPackagingService({
       };
     },
 
+    voidCustomerBuild(session, jobId) {
+      customerLicense(session);
+      const result = transaction(database, () => {
+        const job = repository.buildJobById(jobId);
+        invariant(job && job.license_id === session.actor_id, 'BUILD_JOB_NOT_FOUND', '构建任务不存在', 404);
+        if (job.status === 'cancelled') return publicBuildJob(job);
+        invariant(['queued', 'succeeded'].includes(job.status), 'BUILD_CANNOT_VOID', '正在构建的任务不能作废，请等待构建结束', 409);
+        if (job.build_id) {
+          const build = repository.buildById(job.build_id);
+          const key = repository.installKeyByBuildId(job.build_id);
+          invariant(build?.status === 'ready' && key?.status === 'available', 'BUILD_ALREADY_USED', '已解锁或激活的安装包不能作废', 409);
+          repository.revokeUnactivatedBuild(job.build_id);
+        }
+        const now = clock().toISOString();
+        invariant(repository.cancelBuildJob(job.id, now), 'BUILD_STATE_CHANGED', '任务状态已变化，请刷新', 409);
+        repository.audit({ actorType: 'customer', actorId: session.actor_id, action: 'build_job.voided',
+          subjectType: 'build_job', subjectId: job.id, metadata: { build_id: job.build_id }, now });
+        return publicBuildJob(repository.buildJobById(job.id));
+      });
+      cleanupCancelledArtifacts();
+      return result;
+    },
+
     leaseBuild(workerId) {
+      recoverExpiredBuilds();
+      cleanupCancelledArtifacts();
       const job = queue.leaseNext(workerId, 300);
       if (!job) return null;
       let claimedBuild;

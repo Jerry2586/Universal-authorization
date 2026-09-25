@@ -58,17 +58,33 @@ function activateWithServerIdentity(app, domain = 'identity.example.com') {
   return { issued, build, keys, publicKey, installationId, activation, domain };
 }
 
+function windowIdentity(app) {
+  const keys = generateKeyPairSync('ed25519');
+  const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' });
+  const installationId = installationIdFromPublicKey(publicKey);
+  return {
+    installationId,
+    start(input) {
+      const context = { build_id: input.buildId, domain: input.domain, install_window_token: input.windowToken };
+      const challenge = app.service.createInstallationChallenge({ purpose: 'install_window', publicKey, context });
+      return app.service.startInstallWindow({ ...input, installationId, installationPublicKey: publicKey,
+        challengeId: challenge.id, challengeSignature: signInstallationChallenge({ challenge, privateKey: keys.privateKey }) });
+    },
+  };
+}
+
 test('首次点击开始固定 60 分钟窗口，刷新不重置，成功解锁后原子消费', () => {
   const app = fixture();
   const { build, domain } = createBuild(app);
-  const installationId = 'ins_lifecycle_window_001';
+  const identity = windowIdentity(app);
+  const { installationId } = identity;
   const windowToken = 'IWT_product_lifecycle_window_token_1234567890';
-  const started = app.service.startInstallWindow({
+  const started = identity.start({
     buildId: build.buildId, packageProof: build.packageSecret, domain, installationId, windowToken,
   });
   assert.equal(started.status, 'active');
   assert.equal(new Date(started.expiresAt).getTime() - app.now().getTime(), 3600000);
-  const retried = app.service.startInstallWindow({
+  const retried = identity.start({
     buildId: build.buildId, packageProof: build.packageSecret, domain, installationId, windowToken,
   });
   assert.equal(retried.windowId, started.windowId);
@@ -86,16 +102,17 @@ test('首次点击开始固定 60 分钟窗口，刷新不重置，成功解锁�
 test('安装窗口到期后不能靠刷新重开，并返回安全清理指令', () => {
   const app = fixture();
   const { build, domain } = createBuild(app, 'expired.example.com');
-  const installationId = 'ins_lifecycle_expired_001';
+  const identity = windowIdentity(app);
+  const { installationId } = identity;
   const windowToken = 'IWT_product_lifecycle_expired_token_123456789';
-  const started = app.service.startInstallWindow({
+  const started = identity.start({
     buildId: build.buildId, packageProof: build.packageSecret, domain, installationId, windowToken,
   });
   app.advance(3600001);
   const status = app.service.expireInstallWindow({ windowId: started.windowId, windowToken });
   assert.equal(status.cleanupRequired, true);
   assert.equal(status.cleanupAction, 'deactivate_and_remove_theme');
-  const retried = app.service.startInstallWindow({
+  const retried = identity.start({
     buildId: build.buildId, packageProof: build.packageSecret, domain, installationId, windowToken,
   });
   assert.equal(retried.status, 'expired');
@@ -159,4 +176,27 @@ test('离线授权文件绑定服务器身份、域名、Build 和套餐能力�
     installationId: setup.installationId, now: app.now(),
   }), (error) => error.code === 'DOMAIN_MISMATCH');
   app.database.close();
+});
+
+
+test('公开安装信息不能抢占激活窗口，签名必须绑定当前窗口凭证且不可重放', () => {
+  const app = fixture();
+  try {
+    const { build, domain } = createBuild(app);
+    const keys = generateKeyPairSync('ed25519');
+    const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' });
+    const installationId = installationIdFromPublicKey(publicKey);
+    const input = { buildId: build.buildId, packageProof: build.packageSecret, domain,
+      installationId, windowToken: 'IWT_signed_window_ownership_1234567890123456' };
+    assert.throws(() => app.service.startInstallWindow(input), { code: 'INSTALLATION_PROOF_REQUIRED' });
+    assert.equal(app.repository.installWindowByBuildInstallation(build.buildId, installationId), undefined);
+    const challenge = app.service.createInstallationChallenge({ purpose: 'install_window', publicKey,
+      context: { build_id: build.buildId, domain, install_window_token: input.windowToken } });
+    const proof = { installationPublicKey: publicKey, challengeId: challenge.id,
+      challengeSignature: signInstallationChallenge({ challenge, privateKey: keys.privateKey }) };
+    assert.throws(() => app.service.startInstallWindow({ ...input, ...proof, windowToken: input.windowToken + 'tampered' }),
+      { code: 'INSTALLATION_CHALLENGE_CONTEXT_MISMATCH' });
+    assert.equal(app.service.startInstallWindow({ ...input, ...proof }).status, 'active');
+    assert.throws(() => app.service.startInstallWindow({ ...input, ...proof }), { code: 'INSTALLATION_CHALLENGE_USED' });
+  } finally { app.database.close(); }
 });

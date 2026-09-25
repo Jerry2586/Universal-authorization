@@ -7,6 +7,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
   function ticketListItem(ticket, selected, onSelect) {
     const item = element('button', null, `ticket-list-item${selected ? ' selected' : ''}`);
     item.type = 'button';
+    item.setAttribute('aria-pressed', String(selected));
     const top = element('span', null, 'ticket-list-top');
     top.append(element('b', ticket.ticket_number), element('span', ticketStatusLabel(ticket.status), `ticket-status status-${ticket.status}`));
     item.append(
@@ -62,9 +63,10 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
     if (ticket.status !== 'closed') {
       const form = element('form', null, 'ticket-reply-form');
       const textarea = element('textarea');
+      textarea.setAttribute('aria-label', '工单回复');
       textarea.required = true; textarea.maxLength = 5000; textarea.placeholder = '补充信息或回复客服…';
       const controls = element('div', null, 'ticket-reply-actions');
-      const file = element('input'); file.type = 'file'; file.accept = '.png,.jpg,.jpeg,.webp,.txt,.log,.pdf';
+      const file = element('input'); file.setAttribute('aria-label', '添加工单附件'); file.type = 'file'; file.accept = '.png,.jpg,.jpeg,.webp,.txt,.log,.pdf';
       const submit = element('button', '发送回复', 'button button-primary'); submit.type = 'submit';
       controls.append(file, submit); form.append(textarea, controls);
       form.addEventListener('submit', async (event) => {
@@ -111,7 +113,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
     const list = $('customer-ticket-list'); list.replaceChildren();
     if (!tickets.length) {
       const empty = element('div', null, 'empty-state compact-empty');
-      empty.append(element('span', '✦'), element('strong', '暂无工单'), element('p', '遇到问题时从左侧提交。'));
+      empty.append(element('span', '✦'), element('strong', '暂无工单'), element('p', '点击“新建工单”，我们会在这里跟进。'));
       list.append(empty);
     } else {
       for (const ticket of tickets) list.append(ticketListItem(ticket, ticket.id === state.selectedCustomerTicketId, () => {
@@ -145,12 +147,15 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
     const controls = element('div', null, 'ticket-admin-controls');
     const status = element('select');
     for (const [value, label] of Object.entries({ pending: '待处理', processing: '处理中', waiting_customer: '等客户', resolved: '已解决', closed: '已关闭' })) status.append(new Option(label, value));
+    status.setAttribute('aria-label', '工单状态');
     status.value = ticket.status;
     const priority = element('select');
     for (const [value, label] of Object.entries({ low: '低', normal: '普通', high: '较急', urgent: '紧急' })) priority.append(new Option(label, value));
+    priority.setAttribute('aria-label', '紧急程度');
     priority.value = ticket.priority;
     const assignee = element('select'); assignee.append(new Option('未指派', ''));
     for (const admin of admins.filter((item) => item.status === 'active')) assignee.append(new Option(admin.display_name || admin.username, admin.id));
+    assignee.setAttribute('aria-label', '指派处理人');
     assignee.value = ticket.assigned_admin_id || '';
     const save = element('button', ticket.status === 'closed' ? '重新打开工单' : '保存处理状态', 'button button-secondary'); save.type = 'button'; save.disabled = !can('ticket.manage');
     save.addEventListener('click', async () => {
@@ -176,7 +181,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
     target.append(head, context, controls, ticketConversation(ticket, 'admin'), ticketAttachments(ticket, 'admin'));
     if (ticket.status !== 'closed' && can('ticket.manage')) {
       const form = element('form', null, 'ticket-reply-form');
-      const textarea = element('textarea'); textarea.required = true; textarea.maxLength = 5000; textarea.placeholder = '回复客户或记录内部处理备注…';
+      const textarea = element('textarea'); textarea.setAttribute('aria-label', '工单回复'); textarea.required = true; textarea.maxLength = 5000; textarea.placeholder = '回复客户或记录内部处理备注…';
       const actions = element('div', null, 'ticket-reply-actions');
       const visibility = element('select'); visibility.append(new Option('客户可见回复', 'public'), new Option('内部备注', 'internal'));
       const file = element('input'); file.type = 'file'; file.accept = '.png,.jpg,.jpeg,.webp,.txt,.log,.pdf';

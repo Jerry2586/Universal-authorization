@@ -2,7 +2,8 @@ export function publicCorsHeaders(request) {
   const pathname = new URL(request.url, 'http://localhost').pathname;
   const releaseFeed = pathname === '/api/v1/releases/latest';
   const publicWrite = new Set([
-    '/api/v1/installation-challenges', '/api/v1/install-unlocks', '/api/v1/activations',
+    '/api/v1/installation-challenges', '/api/v1/install-unlocks', '/api/v2/install-unlocks', '/api/v1/activations',
+    '/api/v1/install-windows/start', '/api/v1/install-windows/expire',
     '/api/v1/activations/refresh', '/api/v1/product-migrations', '/api/v1/product-migrations/accept',
   ]);
   if (!releaseFeed && !publicWrite.has(pathname)) return {};

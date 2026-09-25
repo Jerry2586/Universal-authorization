@@ -2,19 +2,20 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="icon" type="image/svg+xml" sizes="any" href="/assets/favicon.svg?v=1.2.27.2">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b1020">
-  <title>打包中心 · APPGOG</title>
+  <meta name="theme-color" content="#f4f5fa">
+  <title>APPGOG · 打包中心</title>
   <link rel="stylesheet" href="/assets/site.css">
   <link rel="stylesheet" href="/assets/admin-login.css">
   <link rel="stylesheet" href="/assets/build-center.css">
+  <link rel="stylesheet" href="/assets/portal-design.css">
   <script src="/assets/customer-portal.js" type="module"></script>
 </head>
 <body data-portal="customer">
   <section id="login-view" class="admin-entry build-entry" aria-labelledby="build-login-title">
     <header class="admin-entry-header">
-      <a class="wordmark" href="/" aria-label="APPGOG 平台首页"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a>
+      <a class="wordmark" href="/build" aria-label="APPGOG 打包中心"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a>
       <span class="admin-entry-caption">主题打包平台</span>
     </header>
     <div class="admin-entry-main">
@@ -47,17 +48,18 @@
 
   <div id="dashboard-view" class="saas-shell" hidden>
     <aside class="app-sidebar">
-      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a><span class="workspace-badge">打包中心</span></div>
+      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/build"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a><span class="workspace-badge">打包中心 · <strong id="customer-system-version">v{{APPGOG_VERSION}}</strong></span></div>
       <nav class="app-nav" aria-label="客户中心导航">
-        <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon">⌂</span><span>工作台</span></button>
-        <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon">▤</span><span>构建任务</span></button>
-        <button class="nav-item" type="button" data-view="lifecycle" data-title="安装与迁移"><span class="nav-icon">⇄</span><span>安装与迁移</span></button>
-        <button class="nav-item" type="button" data-view="tickets" data-title="工单反馈"><span class="nav-icon">✦</span><span>工单反馈</span></button>
-        <button class="nav-item" type="button" data-view="license" data-title="授权信息"><span class="nav-icon">◇</span><span>我的授权</span></button>
+        <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span>工作台</span></button>
+        <div class="nav-section-label">产品交付</div>
+        <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M9 5V3h6v2m-3 9v4m-2-2h4"/></svg></span><span>构建任务</span></button>
+        <button class="nav-item" type="button" data-view="lifecycle" data-title="安装与迁移"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h17l-4-4m5 14H4l4 4M20 7l-4 4M4 17l4-4"/></svg></span><span>安装与迁移</span></button>
+        <div class="nav-section-label">服务与授权</div>
+        <button class="nav-item" type="button" data-view="tickets" data-title="工单反馈"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H3l2-5A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 10h8M8 14h5"/></svg></span><span>工单反馈</span></button>
+        <button class="nav-item" type="button" data-view="license" data-title="授权信息"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></span><span>我的授权</span></button>
       </nav>
       <div class="sidebar-meta">
         <div class="service-state"><span class="live-dot"></span><div><strong>专属交付空间</strong><span>使用固定 Key 识别授权</span></div></div>
-        <div class="sidebar-version"><span>系统版本</span><strong id="customer-system-version">v{{APPGOG_VERSION}}</strong></div>
       </div>
     </aside>
 
@@ -126,8 +128,8 @@
         </section>
 
         <section class="page-view" data-page="tickets">
-          <div class="page-heading"><div><span class="overline">SUPPORT REQUESTS</span><h2>工单反馈</h2><p>提交打包、构建、安装或授权问题，并与客服持续沟通。</p></div><span class="status-pill" id="customer-ticket-count">0 张工单</span></div>
-          <div class="ticket-workspace customer-ticket-workspace"><section class="surface form-surface ticket-create"><div class="surface-head"><div><span class="overline">NEW TICKET</span><h3>提交新工单</h3><p>请描述现象、操作步骤和期望结果。</p></div><span class="surface-number">01</span></div><form id="customer-ticket-form" class="form-stack form-compact"><div class="form-columns"><label class="field"><span>工单类型</span><select name="category"><option value="packaging">打包问题</option><option value="build">构建问题</option><option value="install">安装问题</option><option value="license">授权问题</option><option value="consulting">使用咨询</option></select></label><label class="field"><span>紧急程度</span><select name="priority"><option value="normal">普通</option><option value="high">较急</option><option value="urgent">紧急</option><option value="low">低</option></select></label></div><label class="field"><span>关联构建（可选）</span><select id="ticket-build-select" name="build_job_id"><option value="">不关联构建</option></select></label><label class="field"><span>问题标题</span><input name="subject" maxlength="120" required placeholder="简要说明问题"></label><label class="field"><span>问题描述</span><textarea name="body" rows="6" maxlength="5000" required placeholder="发生了什么？如何复现？"></textarea></label><label class="field ticket-file-field"><span>截图或日志（可选）</span><input id="customer-ticket-file" type="file" accept=".png,.jpg,.jpeg,.webp,.txt,.log,.pdf"><small>PNG / JPG / WebP / TXT / LOG / PDF，最大 10 MB</small></label><button class="button button-primary button-wide" type="submit">提交工单</button></form></section><section class="surface ticket-queue"><div class="surface-head"><div><span class="overline">MY TICKETS</span><h3>我的工单</h3><p>选择工单查看处理进度和回复。</p></div></div><div id="customer-ticket-list" class="ticket-list"><div class="empty-state compact-empty"><span>✦</span><strong>暂无工单</strong><p>遇到问题时从左侧提交。</p></div></div></section><section id="customer-ticket-detail" class="surface ticket-detail"><div class="empty-state"><span>↗</span><strong>选择一张工单</strong><p>查看客服回复并继续补充信息。</p></div></section></div>
+          <div class="page-heading"><div><span class="overline">SUPPORT REQUESTS</span><h2>工单反馈</h2><p>提交打包、构建、安装或授权问题，并与客服持续沟通。</p></div><div class="heading-actions"><span class="status-pill" id="customer-ticket-count">0 张工单</span><button id="open-customer-ticket" class="button button-primary" type="button">＋ 新建工单</button></div></div>
+          <div class="ticket-workspace customer-ticket-workspace support-workspace"><section class="surface ticket-queue"><div class="surface-head"><div><span class="overline">MY TICKETS</span><h3>我的工单</h3><p>选择工单查看处理进度和回复。</p></div></div><div id="customer-ticket-list" class="ticket-list"><div class="empty-state compact-empty"><span>✦</span><strong>暂无工单</strong><p>点击“新建工单”，我们会在这里跟进。</p></div></div></section><section id="customer-ticket-detail" class="surface ticket-detail"><div class="empty-state"><span>↗</span><strong>选择一张工单</strong><p>查看客服回复并继续补充信息。</p></div></section></div>
         </section>
 
         <section class="page-view" data-page="license">
@@ -146,6 +148,11 @@
       </div>
     </main>
   </div>
+
+  <dialog id="customer-ticket-dialog" class="ticket-create-dialog" aria-labelledby="ticket-create-title" aria-describedby="ticket-create-description">
+    <div class="ticket-dialog-heading"><span class="overline">SUPPORT REQUEST</span><h2 id="ticket-create-title">新建工单</h2><p id="ticket-create-description">描述遇到的问题，添加截图或日志，便于我们准确定位。</p></div>
+    <form id="customer-ticket-form" class="form-stack form-compact"><div class="form-columns ticket-create-meta"><label class="field"><span>工单类型</span><select name="category"><option value="packaging">打包问题</option><option value="build">构建问题</option><option value="install">安装问题</option><option value="license">授权问题</option><option value="consulting">使用咨询</option></select></label><label class="field"><span>紧急程度</span><select name="priority"><option value="normal">普通</option><option value="high">较急</option><option value="urgent">紧急</option><option value="low">低</option></select></label><label class="field"><span>关联构建（可选）</span><select id="ticket-build-select" name="build_job_id"><option value="">不关联构建</option></select></label></div><label class="field"><span>问题标题</span><input name="subject" maxlength="120" required placeholder="简要说明问题"></label><label class="field"><span>问题描述</span><textarea name="body" rows="4" maxlength="5000" required placeholder="发生了什么？如何复现？"></textarea></label><label class="field ticket-file-field"><span>截图或日志（可选）</span><input id="customer-ticket-file" type="file" accept=".png,.jpg,.jpeg,.webp,.txt,.log,.pdf"><small>PNG / JPG / WebP / TXT / LOG / PDF，最大 10 MB</small></label><div class="dialog-actions"><button id="cancel-customer-ticket" class="button button-secondary" type="button">取消</button><button class="button button-primary ticket-submit" type="submit">提交工单</button></div></form>
+  </dialog>
   <div id="message" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

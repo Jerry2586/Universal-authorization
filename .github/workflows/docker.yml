@@ -19,6 +19,8 @@ jobs:
         run: corepack enable && pnpm install --frozen-lockfile
       - name: Release contract source validation
         run: node scripts/verify-release-contract.js --source
+      - name: PHP bridge test runtime
+        run: php -v
       - name: Unit and integration tests
         run: npm test
       - name: Fresh install, real build, update and complete restore

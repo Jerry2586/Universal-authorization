@@ -1,4 +1,5 @@
 import { $ } from './core.js';
+import { createPlanUi } from './plans.js';
 import { button, element, roleLabel } from './ui.js';
 import { createTicketUi } from './tickets.js';
 import { createLicenseUi } from './licenses.js';
@@ -15,7 +16,8 @@ export function createAdminPage(shell) {
     dialog, actions, setView,
   } = shell;
   const { renderAdminTickets } = createTicketUi({ state, request, uploadTicketAttachment, notify, refresh, can });
-  const { licenseRow } = createLicenseUi({ state, can, request, notify, refresh, showSecret });
+  const licenseUi = createLicenseUi({ state, can, request, notify, refresh, showSecret });
+  const { licenseRow } = licenseUi;
   const migrationUi = createMigrationUi({ state, request, notify, showSecret, selectView });
   const announcementUi = createAnnouncementUi({ request, notify, refresh });
   const operationsUi = createOperationsUi({ request, notify, can });
@@ -23,15 +25,17 @@ export function createAdminPage(shell) {
     state, request, notify, refresh, showSecret, openDialog: dialog, appendActions: actions,
   });
   const dashboard = createAdminDashboard(shell, {
-    licenseRow, membersUi, announcementUi, operationsUi, renderAdminTickets,
+    licenseRow, renderLicenseManager: licenseUi.renderLicenseManager,
+    membersUi, announcementUi, operationsUi, renderAdminTickets,
   });
+  const plansUi = createPlanUi(shell);
   const releaseUpload = createAdminReleaseUpload(shell);
 
   function applySession(session) {
     state.session = session;
     state.permissions = Array.isArray(session.permissions) ? session.permissions : [];
     const sections = {
-      licenses: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view',
+      licenses: 'license.view', plans: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view',
       activations: 'activation.view', members: 'admin.manage', audit: 'audit.view',
       announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage',
     };
@@ -99,6 +103,7 @@ export function createAdminPage(shell) {
           product_code: 'appgog', customer_ref: fields.get('customer_ref'), domain: fields.get('domain'),
           plan_code: fields.get('plan_code'), update_until: until ? new Date(`${until}T23:59:59Z`).toISOString() : null,
           max_builds_per_day: Number(fields.get('max_builds_per_day')),
+          max_builds_total: fields.get('max_builds_total') ? Number(fields.get('max_builds_total')) : null,
           max_activations: Number(fields.get('max_activations')),
         } });
         form.reset();
@@ -107,18 +112,7 @@ export function createAdminPage(shell) {
       } catch (error) { notify(error.message, true); }
       finally { submit.disabled = false; }
     });
-    $('license-plan')?.addEventListener('change', (event) => {
-      const form = event.currentTarget.form;
-      const buildLimit = form.elements.max_builds_per_day;
-      const activationLimit = form.elements.max_activations;
-      if (event.currentTarget.value === 'free') {
-        buildLimit.value = '1'; buildLimit.max = '1'; activationLimit.value = '1'; activationLimit.max = '1';
-      } else {
-        buildLimit.max = '10'; activationLimit.max = '3';
-        if (Number(buildLimit.value) < 1) buildLimit.value = '3';
-        if (Number(activationLimit.value) < 1) activationLimit.value = '1';
-      }
-    });
+    $('license-plan')?.addEventListener('change', () => plansUi.applyIssueLimits(true));
   }
 
   function bindSettingsForm() {
@@ -138,17 +132,19 @@ export function createAdminPage(shell) {
   }
 
   function bind() {
+    plansUi.bind();
     migrationUi.bind();
     membersUi.bind();
     announcementUi.bind();
     operationsUi.bind();
     releaseUpload.bind();
+    licenseUi.bind();
     bindLicenseForm();
     bindSettingsForm();
     $('open-account-center')?.addEventListener('click', openAccountCenter);
     $('refresh-admin')?.addEventListener('click', refresh);
     for (const id of [
-      'license-search', 'license-status-filter', 'version-search', 'version-status-filter',
+      'license-search', 'license-plan-filter', 'license-status-filter', 'version-search', 'version-status-filter',
       'admin-build-search', 'build-status-filter', 'admin-ticket-search', 'admin-ticket-status-filter',
       'activation-search', 'audit-search',
     ]) {
@@ -160,5 +156,5 @@ export function createAdminPage(shell) {
     if (session.is_owner) await migrationUi.refresh();
   }
 
-  return Object.freeze({ bind, render: dashboard.render, applySession, afterSession });
+  return Object.freeze({ bind, render(data) { plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
 }

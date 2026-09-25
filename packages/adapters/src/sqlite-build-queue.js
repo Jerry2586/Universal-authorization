@@ -64,13 +64,13 @@ export class SqliteBuildQueue extends BuildQueue {
   }
 
   fail(jobId, error) {
-    return this.repository.failBuildJob({
+    return transaction(this.database, () => this.repository.failBuildJob({
       id: jobId,
       workerId: error.workerId,
       errorCode: error.code ?? 'BUILD_FAILED',
       message: error.message ?? '构建失败',
       now: this.clock().toISOString(),
-    });
+    }));
   }
 }
 

@@ -5,6 +5,7 @@ export async function handleAdminOverviewHttp({ method, url, response, portal, a
   if (!admin.permissions.includes('*')) {
     if (!admin.permissions.includes('license.view')) {
       overview.licenses = [];
+      overview.license_plans = [];
       overview.domain_migrations = [];
     }
     if (!admin.permissions.includes('version.view')) overview.versions = [];

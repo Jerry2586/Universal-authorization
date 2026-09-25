@@ -54,8 +54,9 @@ export function createCustomerPortalService({
           product: license.product_code, key_prefix: license.key_prefix, status: license.status,
           bound_domain: license.bound_domain, update_until: license.update_until,
           plan_code: license.plan_code ?? 'legacy', plan_name: license.plan_name ?? '历史兼容版',
-          max_builds_per_day: license.max_builds_per_day, builds_used_last_24_hours: buildsUsed,
-          builds_remaining: Math.max(0, license.max_builds_per_day - buildsUsed), generation: license.generation,
+          max_builds_per_day: license.max_builds_per_day, max_builds_total: license.max_builds_total,
+          builds_used_last_24_hours: buildsUsed, builds_remaining: Math.max(0, license.max_builds_per_day - buildsUsed),
+          total_builds_used: repository.totalBuildCount?.(license.id) ?? null, generation: license.generation,
         },
         domain_migration: migration ? {
           id: migration.id, previous_domain: migration.previous_domain,
@@ -78,7 +79,7 @@ export function createCustomerPortalService({
         current_version: currentVersion,
         latest_version: latestVersion,
         latest_eligible_version: latestEligibleVersion,
-        builds: builds.map(publicBuildJob),
+        builds: builds.map(job => ({ ...publicBuildJob(job), can_void: Boolean(job.can_void) })),
         tickets: support.listCustomerTickets(license.id),
       };
     },

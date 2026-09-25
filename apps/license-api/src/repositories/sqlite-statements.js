@@ -4,12 +4,15 @@ export function createSqliteStatements(database) {
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
     planByCode: database.prepare(`SELECT * FROM license_plans WHERE code = ?`),
     listPlans: database.prepare(`SELECT * FROM license_plans WHERE status = 'active' ORDER BY code ASC`),
+    allPlans: database.prepare(`SELECT * FROM license_plans ORDER BY created_at, code`),
+    insertPlan: database.prepare(`INSERT INTO license_plans (id, code, name, access_tier, status, capabilities_json, limits_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    updatePlan: database.prepare(`UPDATE license_plans SET name = ?, access_tier = ?, status = ?, capabilities_json = ?, limits_json = ?, updated_at = ? WHERE code = ?`),
     insertLicense: database.prepare(`
       INSERT INTO licenses (
         id, product_id, customer_ref, key_prefix, key_hash, key_encrypted, status, bound_domain,
-        update_until, max_builds_per_day, max_activations, plan_id,
+        update_until, max_builds_per_day, max_builds_total, max_activations, plan_id,
         entitlement_capabilities_json, entitlement_limits_json, generation, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `),
     licenseByHash: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
@@ -287,7 +290,8 @@ export function createSqliteStatements(database) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     listLicenseEvents: database.prepare(`SELECT * FROM license_events WHERE license_id = ? ORDER BY created_at DESC LIMIT ?`),
-    countRecentBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND created_at >= ? AND status != 'revoked'`),
+    countRecentBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND created_at >= ? AND (status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL))`),
+    countLicenseBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND (status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL))`),
     insertSession: database.prepare(`
       INSERT INTO web_sessions (id, token_hash, csrf_token, actor_type, actor_id, expires_at, last_seen_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -345,10 +349,14 @@ export function createSqliteStatements(database) {
       WHERE build_jobs.id = ?
     `),
     listBuildJobsByLicense: database.prepare(`
-      SELECT build_jobs.*, licenses.customer_ref, products.code AS product_code
+      SELECT build_jobs.*, licenses.customer_ref, products.code AS product_code,
+        (build_jobs.status = 'queued' OR (build_jobs.status = 'succeeded'
+          AND b.status = 'ready' AND ik.status = 'available')) AS can_void
       FROM build_jobs
       JOIN licenses ON licenses.id = build_jobs.license_id
       JOIN products ON products.id = licenses.product_id
+      LEFT JOIN builds b ON b.id = build_jobs.build_id
+      LEFT JOIN install_keys ik ON ik.build_id = b.id
       WHERE build_jobs.license_id = ?
       ORDER BY build_jobs.created_at DESC LIMIT ?
     `),
@@ -358,6 +366,25 @@ export function createSqliteStatements(database) {
       JOIN licenses ON licenses.id = build_jobs.license_id
       JOIN products ON products.id = licenses.product_id
       ORDER BY build_jobs.created_at DESC LIMIT ?
+    `),
+    reusableBuildJob: database.prepare(`
+      SELECT j.* FROM build_jobs j
+      LEFT JOIN builds b ON b.id = j.build_id
+      LEFT JOIN install_keys k ON k.build_id = b.id
+      WHERE j.license_id = ? AND j.source_version_id = ? AND j.requested_domain = ?
+      AND j.intent = ? AND j.base_version IS ?
+      AND (j.status IN ('queued', 'processing') OR
+        (j.status = 'succeeded' AND b.status = 'ready' AND k.status = 'available'
+         AND (k.expires_at IS NULL OR k.expires_at > ?)))
+      ORDER BY j.created_at DESC LIMIT 1
+    `),
+    expiredBuildJobs: database.prepare("SELECT * FROM build_jobs WHERE status = 'processing' AND lease_expires_at <= ?"),
+    cancelledArtifacts: database.prepare("SELECT id, artifact_ref FROM build_jobs WHERE status = 'cancelled' AND artifact_ref IS NOT NULL LIMIT 100"),
+    clearCancelledArtifact: database.prepare("UPDATE build_jobs SET artifact_ref = NULL WHERE id = ? AND status = 'cancelled'"),
+    cancelBuildJob: database.prepare(`
+      UPDATE build_jobs SET status = 'cancelled', status_message = '已作废，请重新构建',
+        install_key_encrypted = NULL, updated_at = ?, completed_at = ?
+      WHERE id = ? AND status IN ('queued', 'succeeded')
     `),
     nextQueuedJob: database.prepare(`
       SELECT * FROM build_jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1
@@ -390,7 +417,7 @@ export function createSqliteStatements(database) {
         license_plans.code AS plan_code, license_plans.name AS plan_name,
         licenses.entitlement_capabilities_json AS plan_capabilities_json,
         licenses.entitlement_limits_json AS plan_limits_json,
-        (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id) AS build_count,
+        (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id AND (builds.status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL))) AS build_count,
         (SELECT COUNT(*) FROM activations WHERE activations.license_id = licenses.id AND activations.status = 'active') AS active_activation_count
       FROM licenses
       JOIN products ON products.id = licenses.product_id
@@ -540,6 +567,11 @@ export function createSqliteStatements(database) {
       UPDATE licenses SET bound_domain = ?, generation = generation + 1, updated_at = ? WHERE id = ?
     `),
     changeLicenseStatus: database.prepare(`UPDATE licenses SET status = ?, updated_at = ? WHERE id = ?`),
+    changeLicenseQuota: database.prepare(`
+      UPDATE licenses
+      SET max_builds_per_day = ?, max_builds_total = ?, entitlement_limits_json = ?, updated_at = ?
+      WHERE id = ?
+    `),
     changeLicensePlan: database.prepare(`
       UPDATE licenses
       SET plan_id = ?, entitlement_capabilities_json = ?, entitlement_limits_json = ?,

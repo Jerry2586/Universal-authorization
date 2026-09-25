@@ -1,5 +1,5 @@
 const METHODS = Object.freeze([
-  'bindDomain', 'changeLicenseDomain', 'changeLicenseStatus', 'createDomainMigration',
+  'bindDomain', 'changeLicenseDomain', 'changeLicenseQuota', 'changeLicenseStatus', 'createDomainMigration',
   'createLicense', 'decideDomainMigration', 'domainMigrationById', 'latestApprovedDomainMigrationByLicense',
   'licenseByHash', 'licenseById', 'pendingDomainMigrationByLicense', 'planByCode', 'rotateLicense',
 ]);

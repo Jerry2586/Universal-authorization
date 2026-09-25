@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 CREATE TABLE IF NOT EXISTS license_plans (
+  access_tier TEXT NOT NULL DEFAULT 'free',
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS licenses (
   bound_domain TEXT,
   update_until TEXT,
   max_builds_per_day INTEGER NOT NULL DEFAULT 3,
+  max_builds_total INTEGER,
   max_activations INTEGER NOT NULL DEFAULT 1,
   plan_id TEXT REFERENCES license_plans(id),
   entitlement_capabilities_json TEXT NOT NULL DEFAULT '[]',

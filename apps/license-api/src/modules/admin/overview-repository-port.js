@@ -1,6 +1,6 @@
 const METHODS = Object.freeze([
   'dashboardStats', 'listActivations', 'listAdmins', 'listAudit', 'listBuildJobs',
-  'listDomainMigrations', 'listLicenses', 'listPlans', 'listSourceVersions',
+  'listDomainMigrations', 'listLicenses', 'listPlans', 'allPlans', 'listSourceVersions', 'recentBuildCount',
 ]);
 
 export function createAdminOverviewRepositoryPort(repository) {

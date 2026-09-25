@@ -281,7 +281,15 @@ test('制品校验拒绝篡改签名 Token 与跨包替换清单', async () => {
     (error) => ['TOKEN_SIGNATURE_INVALID', 'TOKEN_INVALID'].includes(error.code),
   );
 
+  const firstRef = 'builds/' + first.job.id + '/APPGOG.zip';
+  app.artifactStore.put(firstRef, first.output.buffer);
+  app.portal.completeBuild(first.workerId, first.job.id, {
+    build_id: first.leased.build.buildId, artifact_ref: firstRef,
+    artifact_sha256: first.output.sha256, install_key: first.leased.build.installKey,
+    package_proof: first.leased.build.packageSecret,
+  });
   const customer = first.customer;
+  app.portal.voidCustomerBuild(customer, first.job.id);
   const secondJob = app.portal.enqueueCustomerBuild(customer, { version: '1.17.0', domain: 'demo.example.com' });
   const secondLease = app.portal.leaseBuild('worker-integrity-b');
   const secondOutput = await app.buildEngine.build({
@@ -330,4 +338,89 @@ test('制品校验拒绝篡改每包 AES-GCM 加密身份载荷', async () => {
     (error) => error.code === 'PACKAGE_PROTECTION_INVALID',
   );
   app.close();
+});
+
+
+test('未使用构建复用、作废权限与审计回滚', async (t) => {
+  const app = fixture(); t.after(() => app.close());
+  const built = await buildProtectedArtifact(app, { customerRef: 'ORDER-LIFECYCLE' });
+  const repeat = () => app.portal.enqueueCustomerBuild(built.customer, { version: '1.17.0', domain: 'demo.example.com' });
+  assert.equal(repeat().id, built.job.id);
+  assert.equal(repeat().reused, true);
+  assert.throws(() => app.portal.voidCustomerBuild(built.customer, built.job.id), { code: 'BUILD_CANNOT_VOID' });
+  const ref = 'builds/' + built.job.id + '/APPGOG.zip';
+  app.artifactStore.put(ref, built.output.buffer);
+  app.portal.completeBuild(built.workerId, built.job.id, {
+    build_id: built.leased.build.buildId, artifact_ref: ref,
+    artifact_sha256: built.output.sha256, install_key: built.leased.build.installKey,
+    package_proof: built.leased.build.packageSecret,
+  });
+  assert.equal(repeat().id, built.job.id);
+  assert.equal(app.portal.buildDetails(built.customer, built.job.id).can_void, true);
+  assert.equal(app.portal.customerOverview(built.customer).builds.find(job => job.id === built.job.id).can_void, true);
+  const other = app.service.issueLicense({ customerRef: 'OTHER', domain: 'other.example.com' });
+  const otherSession = app.sessions.loginCustomer(other.licenseKey).session;
+  assert.throws(() => app.portal.voidCustomerBuild(otherSession, built.job.id), { code: 'BUILD_JOB_NOT_FOUND' });
+  app.database.exec("CREATE TEMP TRIGGER deny_void_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'build_job.voided' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+  assert.throws(() => app.portal.voidCustomerBuild(built.customer, built.job.id), /audit unavailable/);
+  assert.equal(app.repository.buildJobById(built.job.id).status, 'succeeded');
+  assert.equal(app.repository.buildById(built.leased.build.buildId).status, 'ready');
+  assert.equal(app.repository.installKeyByBuildId(built.leased.build.buildId).status, 'available');
+  app.database.exec('DROP TRIGGER deny_void_audit');
+  assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
+  assert.throws(() => app.artifactStore.read(ref), { code: 'ENOENT' });
+  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 1);
+  assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
+  assert.equal(app.portal.buildDetails(built.customer, built.job.id).install_key, null);
+  assert.equal(app.portal.customerOverview(built.customer).builds.find(job => job.id === built.job.id).can_void, false);
+  assert.throws(() => app.portal.artifactForDownload(built.customer, built.job.id), { code: 'ARTIFACT_NOT_READY' });
+  assert.notEqual(app.repository.installKeyByBuildId(built.leased.build.buildId).status, 'available');
+  assert.notEqual(repeat().id, built.job.id);
+  assert.equal(app.database.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='build_job.voided'").get().n, 1);
+});
+
+
+test('过期 Worker 租约不会永久复用坏任务，旧 Worker 不能交付', async (t) => {
+  const app = fixture(); t.after(() => app.close());
+  const built = await buildProtectedArtifact(app, { customerRef: 'ORDER-EXPIRED-WORKER' });
+  app.database.prepare('UPDATE build_jobs SET lease_expires_at = ? WHERE id = ?')
+    .run('2026-09-22T07:59:59.000Z', built.job.id);
+  const next = app.portal.enqueueCustomerBuild(built.customer, { version: '1.17.0', domain: 'demo.example.com' });
+  assert.notEqual(next.id, built.job.id);
+  assert.equal(app.repository.buildJobById(built.job.id).error_code, 'BUILD_LEASE_EXPIRED');
+  assert.equal(app.repository.buildById(built.leased.build.buildId).status, 'revoked');
+  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 0);
+  assert.throws(() => app.portal.updateBuildProgress(built.workerId, built.job.id, { progress: 82, message: 'late progress' }), { code: 'BUILD_LEASE_INVALID' });
+  assert.equal(app.portal.leaseBuild('replacement-worker').job.id, next.id);
+});
+
+test('不同构建意图和基础版本不能静默复用旧任务', async (t) => {
+  const app = fixture(); t.after(() => app.close());
+  const built = await buildProtectedArtifact(app, { customerRef: 'ORDER-INTENTS' });
+  const update = app.portal.enqueueCustomerBuild(built.customer, { version: '1.17.0', domain: 'demo.example.com', intent: 'update', base_version: '1.16.0' });
+  assert.notEqual(update.id, built.job.id);
+  const differentBase = app.portal.enqueueCustomerBuild(built.customer, { version: '1.17.0', domain: 'demo.example.com', intent: 'update', base_version: '1.15.0' });
+  assert.notEqual(differentBase.id, update.id);
+  assert.equal(app.portal.enqueueCustomerBuild(built.customer, { version: '1.17.0', domain: 'demo.example.com', intent: 'update', base_version: '1.16.0' }).id, update.id);
+});
+
+test('作废文件清理失败保留重试记录且不能继续下载', async (t) => {
+  const app = fixture(); t.after(() => app.close());
+  const built = await buildProtectedArtifact(app, { customerRef: 'ORDER-CLEANUP' });
+  const ref = 'builds/' + built.job.id + '/APPGOG.zip';
+  app.artifactStore.put(ref, built.output.buffer);
+  app.portal.completeBuild(built.workerId, built.job.id, {
+    build_id: built.leased.build.buildId, artifact_ref: ref, artifact_sha256: built.output.sha256,
+    install_key: built.leased.build.installKey, package_proof: built.leased.build.packageSecret,
+  });
+  const remove = app.artifactStore.remove.bind(app.artifactStore);
+  app.artifactStore.remove = () => { throw new Error('disk temporarily busy'); };
+  assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
+  assert.equal(app.repository.buildJobById(built.job.id).artifact_ref, ref);
+  assert.throws(() => app.portal.artifactForDownload(built.customer, built.job.id), { code: 'ARTIFACT_NOT_READY' });
+  app.artifactStore.remove = remove;
+  app.portal.leaseBuild('cleanup-worker');
+  assert.equal(app.repository.buildJobById(built.job.id).artifact_ref, null);
+  assert.throws(() => app.artifactStore.read(ref), { code: 'ENOENT' });
+  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 1);
 });

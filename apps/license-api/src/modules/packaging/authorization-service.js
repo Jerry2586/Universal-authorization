@@ -11,6 +11,14 @@ import { addSeconds, startOfRollingDay } from '../shared/service-utils.js';
 export function createBuildAuthorizationService({
   database, repository, licensingAccess, entitlementAccess, audit, config, packagePrivateKey, clock = () => new Date(),
 }) {
+  function assertBuildQuota(license, nowDate) {
+    const recent = repository.recentBuildCount(license.id, startOfRollingDay(nowDate));
+    invariant(recent < license.max_builds_per_day, 'BUILD_RATE_LIMITED', '过去 24 小时打包次数已达到上限', 429);
+    if (Number.isInteger(license.max_builds_total)) {
+      const total = repository.totalBuildCount(license.id);
+      invariant(total < license.max_builds_total, 'BUILD_TOTAL_LIMITED', '授权总打包额度已用完，请联系平台调整额度', 429);
+    }
+  }
   function packageManifestPayload({ buildId, packageId, product, version, domain, watermark }, nowDate) {
     return {
       iss: config.publicBaseUrl, typ: 'package-manifest', product,
@@ -77,8 +85,7 @@ export function createBuildAuthorizationService({
           invariant(new Date(license.update_until) >= nowDate, 'UPDATE_WINDOW_EXPIRED', '该授权的更新服务已到期', 403);
         }
         license = licensingAccess.bindDomainForBuild(license, normalizedDomain, now);
-        const recent = repository.recentBuildCount(license.id, startOfRollingDay(nowDate));
-        invariant(recent < license.max_builds_per_day, 'BUILD_RATE_LIMITED', '过去 24 小时打包次数已达到上限', 429);
+        assertBuildQuota(license, nowDate);
         const ticket = newBuildTicket();
         const ticketId = newId('btk');
         const expiresAt = addSeconds(nowDate, config.buildTicketTtlSeconds);
@@ -114,8 +121,7 @@ export function createBuildAuthorizationService({
         entitlementAccess.assertVersionAccess({ license, source });
         if (license.update_until) invariant(new Date(source.published_at ?? source.created_at) <= new Date(license.update_until),
           'UPDATE_WINDOW_EXPIRED', '该版本发布时间已超出更新服务期限', 403);
-        const recent = repository.recentBuildCount(license.id, startOfRollingDay(nowDate));
-        invariant(recent < license.max_builds_per_day, 'BUILD_RATE_LIMITED', '过去 24 小时打包次数已达到上限', 429);
+        assertBuildQuota(license, nowDate);
         const ticket = newBuildTicket();
         repository.createTicket({
           id: newId('btk'), licenseId: license.id, tokenHash: hashSecret(ticket, config.pepper),

@@ -2,18 +2,19 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="icon" type="image/svg+xml" sizes="any" href="/assets/favicon.svg?v=1.2.27.2">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b1020">
-  <title>运营管理后台 · APPGOG</title>
+  <meta name="theme-color" content="#f4f5fa">
+  <title>APPGOG · 运营中心</title>
   <link rel="stylesheet" href="/assets/site.css">
   <link rel="stylesheet" href="/assets/admin-login.css">
+  <link rel="stylesheet" href="/assets/portal-design.css">
   <script src="/assets/admin-portal.js" type="module"></script>
 </head>
 <body data-portal="admin">
   <section id="login-view" class="admin-entry" aria-labelledby="admin-login-title">
     <header class="admin-entry-header">
-      <a class="wordmark" href="/" aria-label="APPGOG 平台首页"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a>
+      <a class="wordmark" href="/admin" aria-label="APPGOG 运营中心"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a>
       <span class="admin-entry-caption">授权管理平台</span>
     </header>
     <div class="admin-entry-main">
@@ -46,19 +47,24 @@
 
   <div id="dashboard-view" class="saas-shell" hidden>
     <aside class="app-sidebar">
-      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/"><img class="wordmark-mark" src="/assets/logo.png" alt="" width="32" height="32"><span>APPGOG</span></a><span class="workspace-badge">运营后台 · <strong id="admin-system-version">v{{APPGOG_VERSION}}</strong></span></div>
+      <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/admin"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a><span class="workspace-badge">运营后台 · <strong id="admin-system-version">v{{APPGOG_VERSION}}</strong></span></div>
       <nav class="app-nav" aria-label="运营后台导航">
-        <button class="nav-item active" type="button" data-view="overview" data-title="运营总览"><span class="nav-icon">⌂</span><span>总览</span></button>
-        <button class="nav-item" type="button" data-view="licenses" data-title="授权管理"><span class="nav-icon">◇</span><span>授权管理</span></button>
-        <button class="nav-item" type="button" data-view="versions" data-title="版本发布"><span class="nav-icon">▦</span><span>主题版本</span></button>
-        <button class="nav-item" type="button" data-view="builds" data-title="构建任务"><span class="nav-icon">▤</span><span>构建任务</span></button>
-        <button class="nav-item" type="button" data-view="tickets" data-title="工单中心"><span class="nav-icon">✦</span><span>工单中心</span></button>
-        <button class="nav-item" type="button" data-view="activations" data-title="激活站点"><span class="nav-icon">◎</span><span>激活站点</span></button>
-        <button class="nav-item" type="button" data-view="members" data-title="成员权限"><span class="nav-icon">♙</span><span>成员权限</span></button>
-        <button class="nav-item" type="button" data-view="audit" data-title="审计记录"><span class="nav-icon">≡</span><span>审计记录</span></button>
-        <button class="nav-item" type="button" data-view="announcements" data-title="公告运营"><span class="nav-icon">◈</span><span>公告运营</span></button>
-        <button class="nav-item" type="button" data-view="migration" data-title="系统迁移"><span class="nav-icon">⇄</span><span>系统迁移</span></button>
-        <button class="nav-item" type="button" data-view="cms" data-title="系统与节点"><span class="nav-icon">⚙</span><span>系统与节点</span></button>
+        <button class="nav-item active" type="button" data-view="overview" data-title="运营总览"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span>总览</span></button>
+        <span class="nav-section-label">客户与授权</span>
+        <button class="nav-item" type="button" data-view="licenses" data-title="授权管理"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></span><span>授权管理</span></button>
+        <button class="nav-item" type="button" data-view="plans" data-title="套餐管理"><span class="nav-icon" aria-hidden="true">▤</span><span>套餐管理</span></button>
+        <button class="nav-item" type="button" data-view="activations" data-title="激活站点"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18Z"/></svg></span><span>激活站点</span></button>
+        <span class="nav-section-label">产品交付</span>
+        <button class="nav-item" type="button" data-view="versions" data-title="版本发布"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg></span><span>版本发布</span></button>
+        <button class="nav-item" type="button" data-view="builds" data-title="构建交付"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M9 5V3h6v2m-3 9v4m-2-2h4"/></svg></span><span>构建交付</span></button>
+        <span class="nav-section-label">客户服务</span>
+        <button class="nav-item" type="button" data-view="tickets" data-title="工单中心"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H3l2-5A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 10h8M8 14h5"/></svg></span><span>工单中心</span></button>
+        <button class="nav-item" type="button" data-view="announcements" data-title="公告管理"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 17-6v16L3 14zm4 6 2 5h4l-2-4M3 10v4"/></svg></span><span>公告管理</span></button>
+        <span class="nav-section-label">系统运维</span>
+        <button class="nav-item" type="button" data-view="cms" data-title="系统运维"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M15 7h2M15 17h2"/></svg></span><span>系统运维</span></button>
+        <button class="nav-item" type="button" data-view="migration" data-title="系统迁移"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h17l-4-4m5 14H4l4 4M20 7l-4 4M4 17l4-4"/></svg></span><span>系统迁移</span></button>
+        <button class="nav-item" type="button" data-view="members" data-title="成员权限"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3m1-17a3 3 0 0 1 0 6m2 5a5 5 0 0 1 3 4v2"/></svg></span><span>成员权限</span></button>
+        <button class="nav-item" type="button" data-view="audit" data-title="审计记录"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 12h6M9 17h4"/></svg></span><span>审计记录</span></button>
       </nav>
       <div class="sidebar-meta">
         <div class="service-state"><span class="live-dot"></span><div><strong>系统在线</strong><span>Operator console</span></div></div>
@@ -73,7 +79,7 @@
 
       <div class="workspace-content">
         <section class="page-view active" data-page="overview">
-          <div class="welcome-row"><div><span class="overline">OPERATIONS OVERVIEW</span><h2>授权业务运行状态</h2><p>以下数据来自当前授权数据库与构建队列，不包含演示指标。</p></div><button class="button button-primary" type="button" data-go-view="licenses">＋ 签发授权</button></div>
+          <div class="welcome-row"><div><span class="overline">OPERATIONS OVERVIEW</span><h2>授权业务运行状态</h2><p>集中掌握授权、构建与客户交付的实时进展。</p></div><button class="button button-primary" type="button" data-go-view="licenses">＋ 签发授权</button></div>
           <div class="stats-grid stats-grid-four">
             <article class="stat-card"><div class="stat-icon stat-blue">◇</div><div><span>授权总数</span><strong id="stat-licenses">—</strong><small>累计签发</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>正常授权</span><strong id="stat-active">—</strong><small>允许登录与构建</small></div></article>
@@ -88,16 +94,32 @@
         </section>
 
         <section class="page-view" data-page="licenses">
-          <div class="page-heading"><div><span class="overline">LICENSE MANAGEMENT</span><h2>授权管理</h2><p>签发、暂停、恢复、换绑域名和轮换客户固定 Key。</p></div></div>
-          <div class="management-grid">
-            <section class="surface form-surface"><div class="surface-head"><div><span class="overline">ISSUE LICENSE</span><h3>签发新授权</h3></div><span class="surface-number">01</span></div><form id="license-form" class="form-stack form-compact"><label class="field"><span>客户 / 订单编号</span><input name="customer_ref" required placeholder="例如 ORDER-10001"></label><label class="field"><span>授权域名（可选）</span><input name="domain" placeholder="留空后由客户首次绑定"></label><label class="field"><span>授权套餐</span><select name="plan_code" id="license-plan"><option value="paid">付费版</option><option value="free">免费版</option></select><small>免费版能力由服务端、激活凭证与产品端共同限制。</small></label><div class="form-columns"><label class="field"><span>更新到期日</span><input name="update_until" type="date"></label><label class="field"><span>每日构建上限</span><input name="max_builds_per_day" type="number" min="1" max="10" value="3"></label></div><label class="field"><span>最大激活环境数</span><input name="max_activations" type="number" min="1" max="3" value="1"></label><button class="button button-primary button-wide" type="submit"><span>创建并生成固定 Key</span><span>→</span></button></form></section>
-            <section class="surface table-surface grow-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="license-search" placeholder="搜索订单、域名或 Key 前缀"></label><select id="license-status-filter" class="filter-select"><option value="">全部状态</option><option value="active">正常</option><option value="suspended">已暂停</option><option value="revoked">已撤销</option></select></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>Key 前缀</th><th>套餐</th><th>授权域名</th><th>状态</th><th>构建</th><th>激活</th><th>操作</th></tr></thead><tbody id="license-list"><tr><td colspan="8" class="empty-cell">暂无授权</td></tr></tbody></table></div></section>
+          <div class="page-heading license-page-heading"><div><span class="overline">LICENSE MANAGEMENT</span><h2>授权管理</h2><p>签发、管理、恢复和审计客户授权。</p></div></div>
+          <section id="license-issue-panel" class="surface form-surface license-issue-panel"><div class="surface-head"><div><span class="overline">ISSUE LICENSE</span><h3>签发新授权</h3></div></div><form id="license-form" class="license-issue-form"><label class="field"><span>客户 / 订单编号</span><input name="customer_ref" required placeholder="例如 ORDER-10001"></label><label class="field"><span>授权域名（可选）</span><input name="domain" placeholder="留空后由客户首次绑定"></label><label class="field"><span>授权套餐</span><select name="plan_code" id="license-plan"><option value="paid">付费版</option><option value="free">免费版</option></select></label><label class="field"><span>更新到期日</span><input name="update_until" type="date"></label><label class="field"><span>每日打包上限</span><input name="max_builds_per_day" type="number" min="1" max="10" value="3"></label><label class="field"><span>总打包额度（留空不限）</span><input name="max_builds_total" type="number" min="1" max="1000000" placeholder="不限"></label><label class="field"><span>最大激活环境数</span><input name="max_activations" type="number" min="1" max="3" value="1"></label><button class="button button-primary" type="submit">创建并生成固定 Key</button></form></section>
+
+          <div id="license-management-panel" class="license-management-modal" hidden>
+          <section class="surface license-management-panel" role="dialog" aria-modal="true" aria-labelledby="license-manager-title">
+            <div class="license-manager-head"><div><span class="overline">MANAGE LICENSE</span><h3 id="license-manager-title">管理授权</h3><p><strong id="managed-license-customer">—</strong> · <span id="managed-license-domain">—</span></p></div><div class="license-manager-head-actions"><span id="managed-license-status" class="status-pill">—</span><button id="close-license-manager" class="license-manager-close" type="button" aria-label="关闭管理授权弹窗">×</button></div></div>
+            <div class="license-manager-grid">
+              <section class="license-manager-section"><div class="license-manager-title"><strong>基础信息</strong><span>LICENSE PROFILE</span></div><div class="license-facts"><div><small>授权套餐</small><strong id="managed-license-plan">—</strong></div><div><small>Key 前缀</small><strong id="managed-license-key">—</strong></div><div><small>更新到期日</small><strong id="managed-license-update">—</strong></div><div><small>激活环境</small><strong id="managed-license-activations">—</strong></div></div></section>
+              <section class="license-manager-section license-quota-section"><div class="license-manager-title"><strong>打包额度</strong><span>BUILD QUOTA</span></div><form id="license-quota-form"><div class="form-columns"><label class="field"><span>每日打包上限</span><input name="max_builds_per_day" type="number" min="1" max="50" required></label><label class="field"><span>总打包额度</span><input name="max_builds_total" type="number" min="1" max="1000000" placeholder="不限"></label></div><div class="license-quota-summary"><div><span>已使用</span><strong id="managed-license-used">0 次</strong></div><div><span>剩余</span><strong id="managed-license-remaining">不限</strong></div><div><span>过去 24 小时</span><strong id="managed-license-daily-used">0 次</strong></div></div><label class="field"><span>调整原因</span><input name="reason" required minlength="2" maxlength="300" placeholder="例如：客户续费，增加本期打包额度"></label><button class="button button-primary button-wide" type="submit">保存额度</button></form></section>
+              <section class="license-manager-section license-actions-section"><div class="license-manager-title"><strong>授权操作</strong><span>LICENSE ACTIONS</span></div><div class="license-action-grid"><button id="managed-license-events" type="button">事件记录</button><button id="managed-license-domain-action" type="button">换绑域名</button><button id="managed-license-plan-action" type="button">切换套餐</button><button id="managed-license-rotate" type="button">轮换 Key</button></div><div class="license-danger-zone"><strong>授权操作</strong><p>暂停或撤销会立即影响客户使用；永久删除需要二次确认。</p><div><button id="managed-license-toggle" type="button">暂停授权</button><button id="managed-license-revoke" type="button">撤销授权</button><button id="managed-license-delete" class="danger" type="button">永久删除</button></div></div></section>
+            </div>
+          </section>
           </div>
+
+          <section class="surface table-surface license-list-panel"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="license-search" placeholder="搜索客户、订单、域名或 Key 前缀"></label><select id="license-plan-filter" class="filter-select"><option value="">全部套餐</option><option value="paid">付费版</option><option value="free">免费版</option></select><select id="license-status-filter" class="filter-select"><option value="">全部状态</option><option value="active">正常</option><option value="suspended">已暂停</option><option value="revoked">已撤销</option></select></div><div class="table-scroll"><table class="license-table"><thead><tr><th>客户 / 订单</th><th>套餐</th><th>授权域名</th><th>状态</th><th>打包额度</th><th>激活环境</th><th>更新到期日</th><th>操作</th></tr></thead><tbody id="license-list"><tr><td colspan="8" class="empty-cell">暂无授权</td></tr></tbody></table></div></section>
           <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">DOMAIN MIGRATIONS</span><h3>域名换绑记录</h3><p>客户自助换绑即时完成；管理员后台主动换域名不受冷却限制，所有变更均保留审计。</p></div><span class="status-pill" id="migration-count">0 条记录</span></div><div class="table-scroll"><table><thead><tr><th>客户 / 订单</th><th>原域名</th><th>新域名</th><th>说明</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody id="migration-list"><tr><td colspan="7" class="empty-cell">暂无域名换绑记录</td></tr></tbody></table></div></section>
         </section>
 
+        <section class="page-view" data-page="plans">
+          <div class="page-heading"><div><span class="overline">PLANS</span><h2>套餐管理</h2><p>定义新授权的权益和额度。已签发授权保持原有权益，需在授权管理中单独切换。</p></div><button id="create-plan" class="button button-primary" type="button">创建套餐</button></div>
+          <section class="surface table-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="plan-search" placeholder="搜索套餐名称或标识" aria-label="搜索套餐"></label><select id="plan-status-filter" class="filter-select" aria-label="套餐状态"><option value="">全部状态</option><option value="active">可签发</option><option value="disabled">已停用</option></select><span class="muted" id="plan-count"></span></div><div class="table-scroll"><table><thead><tr><th>套餐</th><th>版本权益</th><th>每日打包</th><th>激活环境</th><th>产品能力</th><th>状态</th><th>操作</th></tr></thead><tbody id="plan-list"></tbody></table></div></section>
+          <p class="section-footnote">停用后不能新签发或切换到该套餐；已有授权仍按自己的权益快照运行。套餐不直接决定授权是否有效。</p>
+        </section>
+
         <section class="page-view" data-page="versions">
-          <div class="page-heading version-heading"><div><span class="overline">RELEASE CATALOG</span><h2>主题版本</h2><p>上传可安装 ZIP 后自动识别版本信息，通过安全检查即开放客户构建。</p></div><div class="version-kpis"><span><b id="version-total">0</b>全部版本</span><span><b id="version-active">0</b>已发布</span><span><b id="version-draft">0</b>草稿 / 撤回</span></div></div>
+          <div class="page-heading version-heading"><div><span class="overline">RELEASE CATALOG</span><h2>版本发布</h2><p>上传可安装 ZIP 后自动识别版本信息，通过安全检查即开放客户构建。</p></div><div class="version-kpis"><span><b id="version-total">0</b>全部版本</span><span><b id="version-active">0</b>已发布</span><span><b id="version-draft">0</b>草稿 / 撤回</span></div></div>
           <div class="management-grid version-grid version-workbench">
             <section class="surface form-surface version-publisher">
               <div class="surface-head"><div><span class="overline">NEW RELEASE</span><h3>上传并发布</h3><p>版本号和名称可从文件名或 config.json 自动识别。</p></div><span class="surface-number">01</span></div>
@@ -106,7 +128,7 @@
                 <div class="form-columns"><label class="field"><span>版本号</span><input name="version" placeholder="自动识别，例如 1.2.8"></label><label class="field"><span>版本名称</span><input name="display_name" placeholder="自动识别，例如 APPGOG 1.2.8"></label></div>
                 <div class="form-columns"><label class="field"><span>发布渠道</span><select name="channel"><option value="stable">正式版</option><option value="beta">测试版</option><option value="preview">预览版</option></select></label><label class="field"><span>发布类型</span><select name="release_kind"><option value="feature">功能更新</option><option value="security">安全更新</option><option value="hotfix">问题修复</option></select></label></div>
                 <label class="field"><span>发布权限</span><select name="access_tier" required><option value="free">免费授权可用</option><option value="paid">仅付费授权可用</option></select><small>授权有效性始终优先判断；这里只决定有效授权可使用的版本范围。</small></label>
-                <label class="field"><span>更新公告</span><textarea name="release_notes" rows="5" placeholder="说明新增功能、修复内容和升级注意事项"></textarea></label>
+                <label class="field"><span>更新公告</span><textarea name="release_notes" rows="3" placeholder="说明新增功能、修复内容和升级注意事项"></textarea></label>
                 <button class="button button-primary button-wide" type="submit"><span>安全检查并发布版本</span><span>→</span></button>
               </form>
             </section>
@@ -115,13 +137,13 @@
         </section>
 
         <section class="page-view" data-page="builds">
-          <div class="page-heading"><div><span class="overline">BUILD OPERATIONS</span><h2>构建任务</h2><p>查看所有客户构建的队列状态、版本、域名与处理结果。</p></div></div>
+          <div class="page-heading"><div><span class="overline">BUILD OPERATIONS</span><h2>构建交付</h2><p>查看所有客户构建的队列状态、版本、域名与处理结果。</p></div></div>
           <section class="surface table-surface"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="admin-build-search" placeholder="搜索版本、域名或 Build ID"></label><select id="build-status-filter" class="filter-select"><option value="">全部状态</option><option value="queued">排队中</option><option value="processing">构建中</option><option value="succeeded">成功</option><option value="failed">失败</option></select></div><div class="table-scroll"><table><thead><tr><th>Build ID</th><th>版本</th><th>授权域名</th><th>状态</th><th>进度</th><th>状态信息</th><th>创建时间</th></tr></thead><tbody id="admin-build-list"><tr><td colspan="7" class="empty-cell">暂无构建任务</td></tr></tbody></table></div></section>
         </section>
 
         <section class="page-view" data-page="tickets">
           <div class="page-heading"><div><span class="overline">SUPPORT DESK</span><h2>工单中心</h2><p>集中处理打包、构建、安装、授权和使用咨询。</p></div><span class="status-pill" id="admin-ticket-count">0 个待处理</span></div>
-          <div class="ticket-workspace"><section class="surface ticket-queue"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="admin-ticket-search" placeholder="搜索工单号、客户或标题"></label><select id="admin-ticket-status-filter" class="filter-select"><option value="">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="waiting_customer">等客户</option><option value="resolved">已解决</option><option value="closed">已关闭</option></select></div><div id="admin-ticket-list" class="ticket-list"><div class="empty-state compact-empty"><span>✦</span><strong>暂无工单</strong><p>客户提交反馈后会出现在这里。</p></div></div></section><section id="admin-ticket-detail" class="surface ticket-detail"><div class="empty-state"><span>↗</span><strong>选择一张工单</strong><p>查看客户、授权、构建上下文并进行回复。</p></div></section></div>
+          <div class="ticket-workspace support-workspace"><section class="surface ticket-queue"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="admin-ticket-search" placeholder="搜索工单号、客户或标题"></label><select id="admin-ticket-status-filter" class="filter-select"><option value="">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="waiting_customer">等客户</option><option value="resolved">已解决</option><option value="closed">已关闭</option></select></div><div id="admin-ticket-list" class="ticket-list"><div class="empty-state compact-empty"><span>✦</span><strong>暂无工单</strong><p>客户提交反馈后会出现在这里。</p></div></div></section><section id="admin-ticket-detail" class="surface ticket-detail"><div class="empty-state"><span>↗</span><strong>选择一张工单</strong><p>查看客户、授权、构建上下文并进行回复。</p></div></section></div>
         </section>
 
         <section class="page-view" data-page="activations">

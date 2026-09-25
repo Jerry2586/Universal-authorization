@@ -32,6 +32,7 @@ const MIGRATIONS = Object.freeze({
   ],
   licenses: [
     ['max_activations', 'INTEGER NOT NULL DEFAULT 1'],
+    ['max_builds_total', 'INTEGER'],
     ['key_encrypted', 'TEXT'],
     ['plan_id', 'TEXT REFERENCES license_plans(id)'],
     ['entitlement_capabilities_json', "TEXT NOT NULL DEFAULT '[]'"],
@@ -239,6 +240,26 @@ function migrate(database) {
     addMissingColumns(database, { source_versions: [['access_tier', "TEXT NOT NULL DEFAULT 'free'"]] });
     database.exec("UPDATE source_versions SET access_tier = 'free' WHERE access_tier IS NULL OR access_tier NOT IN ('free', 'paid')");
   });
+
+  const licenseBuildQuotaVersion = '2026-09-25-v1.2.26-license-build-quota';
+  runMigration(database, licenseBuildQuotaVersion, () => addMissingColumns(database, {
+    licenses: [['max_builds_total', 'INTEGER']],
+  }));
+  runMigration(database, '2026-09-26-v1.2.28-plan-management', () => {
+    addMissingColumns(database, { license_plans: [['access_tier', "TEXT NOT NULL DEFAULT 'free'"]] });
+    database.exec("UPDATE license_plans SET access_tier = 'paid' WHERE code IN ('paid', 'legacy')");
+    const rows = database.prepare('SELECT id, plan_id, entitlement_limits_json FROM licenses').all();
+    const plan = database.prepare('SELECT access_tier FROM license_plans WHERE id = ?');
+    const save = database.prepare('UPDATE licenses SET entitlement_limits_json = ? WHERE id = ?');
+    for (const row of rows) {
+      const limits = JSON.parse(row.entitlement_limits_json || '{}');
+      if (!['free', 'paid'].includes(limits.access_tier)) {
+        limits.access_tier = plan.get(row.plan_id)?.access_tier ?? 'paid';
+        save.run(JSON.stringify(limits), row.id);
+      }
+    }
+  });
+
 }
 
 export function openDatabase(path) {

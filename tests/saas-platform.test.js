@@ -624,7 +624,7 @@ test('普通管理员可软删除并释放用户名，所有者和当前账号�
   assert.ok(app.repository.listAudit(20).some((event) => event.action === 'admin.deleted' && event.subject_id === created.data.id));
 });
 
-test('只有平台所有者二次验证并输入确认文本后可永久删除 Key、关联记录和文件', async (t) => {
+test('只有已登录平台所有者通过 CSRF 校验并输入确认文本后可免密码永久删除授权', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
   const issued = await issue(app, owner, { customerRef: 'ORDER-DELETE-KEY', domain: 'delete.example.com' });
@@ -674,20 +674,33 @@ test('只有平台所有者二次验证并输入确认文本后可永久删除 K
     VALUES (?, ?, ?, 'offline-license-v1', ?, ?)
   `).run('olf_delete_contract', 'act_delete_contract', 'hash_delete_offline', now, now);
 
-  const wrongPassword = await app.send(`/web/admin/licenses/${issued.license_id}`, {
-    method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
-    body: { password: 'wrong', confirmation: `DELETE ${issued.license_id}` },
+  const forbidden = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'delete-operator', password: '123456', role: 'license_ops' },
   });
-  assert.equal(wrongPassword.status, 403);
+  assert.equal(forbidden.status, 201);
+  const staffLogin = await app.send('/web/admin/login', {
+    method: 'POST', body: { username: 'delete-operator', password: '123456' },
+  });
+  const staffDelete = await app.send(`/web/admin/licenses/${issued.license_id}`, {
+    method: 'DELETE', cookie: staffLogin.cookie.split(';')[0], csrf: staffLogin.data.csrf_token,
+    body: { confirmation: `DELETE ${issued.license_id}` },
+  });
+  assert.equal(staffDelete.status, 403);
+  const noCsrf = await app.send(`/web/admin/licenses/${issued.license_id}`, {
+    method: 'DELETE', cookie: owner.cookie,
+    body: { confirmation: `DELETE ${issued.license_id}` },
+  });
+  assert.equal(noCsrf.status, 403);
   const wrongConfirmation = await app.send(`/web/admin/licenses/${issued.license_id}`, {
     method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
-    body: { password: app.config.adminPassword, confirmation: 'DELETE' },
+    body: { confirmation: 'DELETE' },
   });
   assert.equal(wrongConfirmation.status, 400);
 
   const deleted = await app.send(`/web/admin/licenses/${issued.license_id}`, {
     method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
-    body: { password: app.config.adminPassword, confirmation: `DELETE ${issued.license_id}` },
+    body: { confirmation: `DELETE ${issued.license_id}` },
   });
   assert.equal(deleted.status, 200);
   assert.equal(deleted.data.deleted, true);
@@ -737,7 +750,7 @@ test('永久删除失败文件进入补偿队列并可幂等重试完成', async
 
   const deleted = await app.send(`/web/admin/licenses/${issued.license_id}`, {
     method: 'DELETE', cookie: owner.cookie, csrf: owner.csrf,
-    body: { password: app.config.adminPassword, confirmation: `DELETE ${issued.license_id}` },
+    body: { confirmation: `DELETE ${issued.license_id}` },
   });
   assert.equal(deleted.status, 200);
   assert.equal(deleted.data.cleanup_pending, 1);
@@ -767,19 +780,13 @@ test('永久删除失败文件进入补偿队列并可幂等重试完成', async
   assert.deepEqual(repeated.data, { processed: 0, completed: 0, failed: 0, pending: 0 });
 });
 
-test('只有平台所有者重新验证密码后可查看加密保存的完整 Key，审计不记录明文', async (t) => {
+test('只有平台所有者登录后可直接查看加密保存的完整 Key，审计不记录明文', async (t) => {
   const app = await fixture(t);
   const owner = await app.owner();
   const issued = await issue(app, owner, { customerRef: 'ORDER-REVEAL-KEY' });
 
-  const wrongPassword = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
-    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { password: 'wrong-password' },
-  });
-  assert.equal(wrongPassword.status, 403);
-  assert.equal(wrongPassword.data.error.code, 'ADMIN_PASSWORD_CURRENT_INVALID');
-
   const revealed = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
-    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { password: app.config.adminPassword },
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: {},
   });
   assert.equal(revealed.status, 200);
   assert.equal(revealed.data.license_key, issued.license_key);
@@ -790,7 +797,7 @@ test('只有平台所有者重新验证密码后可查看加密保存的完整 K
   });
   const operator = await app.send('/web/admin/login', { method: 'POST', body: { username: 'license.operator', password: '583214' } });
   const forbidden = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
-    method: 'POST', cookie: operator.cookie.split(';')[0], csrf: operator.data.csrf_token, body: { password: '583214' },
+    method: 'POST', cookie: operator.cookie.split(';')[0], csrf: operator.data.csrf_token, body: {},
   });
   assert.equal(created.status, 201);
   assert.equal(forbidden.status, 403);
@@ -803,7 +810,7 @@ test('只有平台所有者重新验证密码后可查看加密保存的完整 K
 
   app.database.prepare('UPDATE licenses SET key_encrypted = NULL WHERE id = ?').run(issued.license_id);
   const legacy = await app.send(`/web/admin/licenses/${issued.license_id}/key`, {
-    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { password: app.config.adminPassword },
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: {},
   });
   assert.equal(legacy.status, 409);
   assert.equal(legacy.data.error.code, 'LICENSE_KEY_LEGACY');
@@ -1219,19 +1226,23 @@ test('旧授权数据库升级会生成不可漂移的能力与额度快照并�
     const upgraded = openDatabase(path);
     try {
       const license = upgraded.prepare(`
-        SELECT max_builds_per_day, max_activations, plan_id,
+        SELECT max_builds_per_day, max_builds_total, max_activations, plan_id,
           entitlement_capabilities_json, entitlement_limits_json
         FROM licenses WHERE id = 'lic_legacy'
       `).get();
       assert.equal(license.plan_id, 'plan_legacy');
       assert.equal(license.max_builds_per_day, 7);
+      assert.equal(license.max_builds_total, null);
       assert.equal(license.max_activations, 4);
       assert.ok(JSON.parse(license.entitlement_capabilities_json).includes('settings:write'));
       assert.deepEqual(JSON.parse(license.entitlement_limits_json), {
-        max_builds_per_day: 7, max_activations: 4,
+        max_builds_per_day: 7, max_activations: 4, access_tier: 'paid',
       });
       assert.ok(upgraded.prepare(
         "SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.15-entitlement-snapshots'",
+      ).get());
+      assert.ok(upgraded.prepare(
+        "SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.26-license-build-quota'",
       ).get());
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -1281,4 +1292,21 @@ test('旧产品迁机记录升级会追加候选与回滚状态字段并保留�
       ).get());
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('套餐管理 HTTP: owner 可创建编辑，客服只读，CSRF 必需', async (t) => {
+  const app = await fixture(t); const owner = await app.owner();
+  const body = { code: 'studio', name: '工作室', access_tier: 'paid', status: 'active', capabilities: ['settings:read'], limits: { max_builds_per_day: 5, max_activations: 2 } };
+  assert.equal((await app.send('/web/admin/plans', { method: 'POST', cookie: owner.cookie, body })).status, 403);
+  const created = await app.send('/web/admin/plans', { method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body });
+  assert.equal(created.status, 201); assert.equal(created.data.plan.code, 'studio');
+  const updated = await app.send('/web/admin/plans/studio', { method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { ...body, status: 'disabled' } });
+  assert.equal(updated.status, 200); assert.equal(updated.data.plan.status, 'disabled');
+  const account = await app.send('/web/admin/admins', { method: 'POST', cookie: owner.cookie, csrf: owner.csrf, body: { username: 'planreader', password: '123456', role: 'support' } });
+  assert.equal(account.status, 201);
+  const login = await app.send('/web/admin/login', { method: 'POST', body: { username: 'planreader', password: '123456' } });
+  assert.equal(login.status, 200);
+  const reader = { cookie: login.cookie.split(';')[0], csrf: login.data.csrf_token };
+  assert.equal((await app.send('/web/admin/plans', reader)).status, 200);
+  assert.equal((await app.send('/web/admin/plans/studio', { ...reader, method: 'POST', body })).status, 403);
 });

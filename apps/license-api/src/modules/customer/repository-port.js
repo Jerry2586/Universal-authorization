@@ -1,6 +1,6 @@
 const METHODS = Object.freeze([
   'activeActivationByLicense', 'latestApprovedDomainMigrationByLicense', 'licenseById',
-  'listActiveSourceVersions', 'listBuildJobsByLicense', 'recentBuildCount', 'setting',
+  'listActiveSourceVersions', 'listBuildJobsByLicense', 'recentBuildCount', 'setting', 'totalBuildCount',
 ]);
 
 export function createCustomerPortalRepositoryPort(repository) {

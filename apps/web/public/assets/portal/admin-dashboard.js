@@ -6,7 +6,7 @@ import {
 
 export function createAdminDashboard(shell, collaborators) {
   const { can, request, notify, refresh, dialog, actions } = shell;
-  const { licenseRow, membersUi, announcementUi, operationsUi, renderAdminTickets } = collaborators;
+  const { licenseRow, renderLicenseManager, membersUi, announcementUi, operationsUi, renderAdminTickets } = collaborators;
 
   function reviewDomainMigration(requestItem, decision) {
     const approved = decision === 'approved';
@@ -87,10 +87,14 @@ export function createAdminDashboard(shell, collaborators) {
     });
 
     const licenseQuery = search('license-search');
+    const licensePlan = $('license-plan-filter')?.value || '';
     const licenseStatus = $('license-status-filter').value;
-    renderRows('license-list', licenses.filter((license) => (!licenseStatus || license.status === licenseStatus)
+    const visibleLicenses = licenses.filter((license) => (!licenseStatus || license.status === licenseStatus)
+      && (!licensePlan || license.plan_code === licensePlan)
       && [license.customer_ref, license.bound_domain, license.key_prefix, license.plan_name, license.plan_code]
-        .some((value) => match(value, licenseQuery))), 8, licenseRow, '没有匹配的授权');
+        .some((value) => match(value, licenseQuery)));
+    renderLicenseManager(licenses);
+    renderRows('license-list', visibleLicenses, 8, licenseRow, '没有匹配的授权');
     if ($('migration-count')) $('migration-count').textContent = `${migrations.length} 条记录`;
     if ($('migration-list')) renderRows('migration-list', migrations, 7, migrationRow, '暂无域名迁移申请');
 

@@ -1,4 +1,5 @@
 import { publicBuildJob } from '../../../../../packages/contracts/src/build-job.js';
+import { startOfRollingDay } from '../shared/service-utils.js';
 
 export function createAdminOverviewService({ repository, licensing, operations, support, clock = () => new Date() }) {
   return Object.freeze({
@@ -13,10 +14,11 @@ export function createAdminOverviewService({ repository, licensing, operations, 
     adminOverview() {
       const start = new Date(clock());
       start.setHours(0, 0, 0, 0);
+      const rollingDay = startOfRollingDay(clock());
       return {
         stats: repository.dashboardStats(start.toISOString()),
-        license_plans: repository.listPlans().map((plan) => ({
-          id: plan.id, code: plan.code, name: plan.name, status: plan.status,
+        license_plans: repository.allPlans().map((plan) => ({
+          id: plan.id, code: plan.code, name: plan.name, status: plan.status, access_tier: plan.access_tier,
           capabilities: JSON.parse(plan.capabilities_json ?? '[]'), limits: JSON.parse(plan.limits_json ?? '{}'),
         })),
         licenses: repository.listLicenses(100).map((license) => ({
@@ -24,10 +26,13 @@ export function createAdminOverviewService({ repository, licensing, operations, 
           key_prefix: license.key_prefix, key_recoverable: Boolean(license.key_encrypted), status: license.status,
           bound_domain: license.bound_domain, update_until: license.update_until,
           max_builds_per_day: license.max_builds_per_day, max_activations: license.max_activations,
+          max_builds_total: license.max_builds_total,
           plan_code: license.plan_code ?? 'legacy', plan_name: license.plan_name ?? '历史兼容版',
           capabilities: JSON.parse(license.plan_capabilities_json ?? '[]'),
           limits: JSON.parse(license.plan_limits_json ?? '{}'), generation: license.generation,
-          build_count: license.build_count, active_activation_count: license.active_activation_count,
+          build_count: license.build_count,
+          builds_used_last_24_hours: repository.recentBuildCount(license.id, rollingDay),
+          active_activation_count: license.active_activation_count,
           created_at: license.created_at,
         })),
         domain_migrations: repository.listDomainMigrations(100).map((request) => ({

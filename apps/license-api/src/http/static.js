@@ -15,7 +15,7 @@ const MIME = Object.freeze({
 });
 
 export function serveStatic(pathname, response, requestId) {
-  const routeMap = { '/': 'index.html', '/build': 'build.html', '/admin': 'admin.html' };
+  const routeMap = { '/': 'admin.html', '/index.html': 'admin.html', '/build': 'build.html', '/admin': 'admin.html' };
   const relative = routeMap[pathname] ?? pathname.replace(/^\/+/, '');
   const file = resolve(PUBLIC_ROOT, relative);
   if (!(file === PUBLIC_ROOT || file.startsWith(`${PUBLIC_ROOT}${sep}`)) || !existsSync(file) || !statSync(file).isFile()) return false;

@@ -23,6 +23,12 @@ export function createPackagingSqliteRepository(queries) {
     installKeyByBuildId: (buildId) => queries.installKeyByBuildId.get(buildId),
     consumeInstallKey: (id, now) => queries.consumeInstallKey.run(now, id).changes === 1,
     recentBuildCount: (licenseId, since) => queries.countRecentBuilds.get(licenseId, since).count,
+    totalBuildCount: (licenseId) => queries.countLicenseBuilds.get(licenseId).count,
+    reusableBuildJob: (licenseId, sourceId, domain, intent, baseVersion, now) => queries.reusableBuildJob.get(licenseId, sourceId, domain, intent, baseVersion, now),
+    expiredBuildJobs: (now) => queries.expiredBuildJobs.all(now),
+    cancelledArtifacts: () => queries.cancelledArtifacts.all(),
+    clearCancelledArtifact: (id) => queries.clearCancelledArtifact.run(id),
+    cancelBuildJob: (id, now) => queries.cancelBuildJob.run(now, now, id).changes === 1,
     createBuildJob(values) {
       queries.insertBuildJob.run(
         values.id, values.licenseId, values.sourceVersionId ?? null, values.version, values.domain,

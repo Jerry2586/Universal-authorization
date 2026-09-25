@@ -44,6 +44,7 @@ export async function handleActivationHttp({
     const result = service.startInstallWindow({
       buildId: body.build_id, packageProof: body.package_proof, domain: body.domain,
       installationId: body.installation_id, windowToken: body.install_window_token,
+      installationPublicKey: body.installation_public_key, challengeId: body.challenge_id, challengeSignature: body.challenge_signature,
     });
     respondJson(response, 201, {
       install_window_id: result.windowId, started_at: result.startedAt,

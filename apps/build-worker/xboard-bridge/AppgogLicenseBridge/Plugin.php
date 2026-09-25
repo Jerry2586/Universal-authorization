@@ -17,12 +17,18 @@ class Plugin extends AbstractPlugin
         $bridge->identity();
     }
 
+    public function schedule(\Illuminate\Console\Scheduling\Schedule $schedule): void
+    {
+        $schedule->call(fn () => (new BridgeState())->sweepExpiredPackages())
+            ->name('appgog-license-bridge-expiry')->everyMinute()->withoutOverlapping(10);
+    }
+
     public function boot(): void
     {
         $this->filter('guest_comm_config', function (array $config): array {
             $config['appgog_license_bridge'] = [
                 'installed' => true,
-                'version' => '1.0.0',
+                'version' => '1.0.1',
             ];
             return $config;
         });

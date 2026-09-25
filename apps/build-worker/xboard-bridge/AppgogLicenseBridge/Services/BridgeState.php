@@ -12,12 +12,12 @@ use RuntimeException;
 
 class BridgeState
 {
-    private const VERSION = '1.0.0';
+    private const VERSION = '1.0.1';
     private const SPKI_PREFIX_HEX = '302a300506032b6570032100';
     private const PURPOSES = [
         'activation', 'refresh', 'migration_issue', 'migration_accept',
         'migration_prepare', 'migration_commit', 'migration_rollback',
-        'recovery', 'offline_issue',
+        'recovery', 'offline_issue', 'install_window',
     ];
 
     private string $root;
@@ -266,12 +266,53 @@ class BridgeState
         ];
     }
 
-    public function deactivateAndRemoveTheme(
-        string $packageId,
-        string $packageProof,
-    ): array
+    public function deactivateAndRemoveTheme(string $packageId, string $packageProof): array
     {
-        $record = $this->assertPackage($packageId, $packageProof);
+        return $this->cleanupPackage($this->assertPackage($packageId, $packageProof));
+    }
+
+    public function sweepExpiredPackages(): array
+    {
+        $result = ['checked' => 0, 'removed' => 0, 'failed' => 0];
+        foreach (File::files($this->root . '/packages') as $file) {
+            if ($file->getExtension() !== 'json') continue;
+            try {
+                $record = json_decode(File::get($file->getPathname()), true);
+                if (!is_array($record) || empty($record['package_id'])) continue;
+                $state = $this->readEncryptedState($record['package_id']) ?? [];
+                $expires = strtotime($state['install_window_expires_at'] ?? '');
+                if (!$expires || $expires > time() || !empty($state['activation_id'])) continue;
+                if (!$this->ownsInstalledTheme($record)) continue;
+                $result['checked']++;
+                if ($this->cleanupPackage($record)['removed'] ?? false) $result['removed']++;
+            } catch (\Throwable $error) {
+                $result['failed']++;
+                Log::warning('APPGOG scheduled theme cleanup deferred', [
+                    'record' => $file->getFilename(), 'error_type' => get_class($error),
+                ]);
+            }
+        }
+        return $result;
+    }
+
+    private function ownsInstalledTheme(array $record): bool
+    {
+        $theme = $record['theme_name'] ?? '';
+        if (!preg_match('/^[A-Za-z0-9_-]{1,100}$/D', $theme)
+            || in_array($theme, ['Xboard', 'v2board'], true)) return false;
+        $path = app(ThemeService::class)->getThemePath($theme);
+        if (!$path || !File::exists($path . '/appgog-license/build.json')) return false;
+        $manifest = json_decode(File::get($path . '/appgog-license/build.json'), true);
+        foreach (['package_id', 'build_id', 'product', 'domain'] as $field) {
+            if (!is_string($record[$field] ?? null)
+                || ($manifest[$field] ?? null) !== $record[$field]) return false;
+        }
+        return true;
+    }
+
+    private function cleanupPackage(array $record): array
+    {
+        $packageId = $record['package_id'];
         $state = $this->readEncryptedState($packageId) ?? [];
         foreach (['install_window_id', 'install_window_token'] as $field) {
             if (!isset($state[$field]) || !is_string($state[$field]) || $state[$field] === '') {
@@ -297,18 +338,28 @@ class BridgeState
                 'install_window_id' => '授权服务器尚未确认主题可以安全清理',
             ]);
         }
+        $packageId = $record['package_id'];
         $theme = $record['theme_name'];
+        $themes = app(ThemeService::class);
+        // An old expiry job must never delete a newer package using the same theme name.
+        if (!$this->ownsInstalledTheme($record)) {
+            return ['removed' => false, 'reason' => 'package_replaced_or_missing'];
+        }
         $install = File::exists($this->root . '/installation.json')
             ? (json_decode(File::get($this->root . '/installation.json'), true) ?: []) : [];
         $fallback = $install['previous_theme'] ?? 'Xboard';
         if ($fallback === $theme) {
             $fallback = 'Xboard';
         }
-        $themes = app(ThemeService::class);
         if (!$themes->exists($fallback)) {
             $fallback = 'Xboard';
         }
-        $themes->switch($fallback);
+        if (admin_setting('current_theme') === $theme) {
+            if ($fallback === $theme || !$themes->exists($fallback)) {
+                throw new RuntimeException('没有可安全切换的备用主题，已保留原主题');
+            }
+            $themes->switch($fallback);
+        }
         if ($themes->exists($theme)) {
             $themes->delete($theme);
         }

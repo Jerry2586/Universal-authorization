@@ -60,7 +60,7 @@ export function createActivationService({
       invariant([
         'activation', 'refresh', 'migration_issue', 'migration_accept',
         'migration_prepare', 'migration_commit', 'migration_rollback',
-        'recovery', 'offline_issue',
+        'recovery', 'offline_issue', 'install_window',
       ].includes(purpose),
         'INSTALLATION_CHALLENGE_PURPOSE_INVALID', '安装身份挑战用途无效');
       invariant(publicKey && typeof publicKey === 'string' && publicKey.length <= 8192,
@@ -86,7 +86,7 @@ export function createActivationService({
       };
     },
 
-    startInstallWindow({ buildId, packageProof, domain, installationId, windowToken }) {
+    startInstallWindow({ buildId, packageProof, domain, installationId, windowToken, installationPublicKey, challengeId, challengeSignature }) {
       invariant(installationId?.trim().length >= 12, 'INSTALLATION_ID_INVALID', '安装环境 ID 无效');
       invariant(typeof windowToken === 'string' && windowToken.length >= 32,
         'INSTALL_WINDOW_TOKEN_INVALID', '安装激活窗口凭证无效');
@@ -103,6 +103,13 @@ export function createActivationService({
           'DOMAIN_MISMATCH', '当前域名与打包授权域名不一致', 403);
         invariant(secretMatches(packageProof, build.package_secret_hash, config.pepper),
           'PACKAGE_PROOF_INVALID', '安装包身份校验失败', 403);
+        invariant(installationPublicKey && challengeId && challengeSignature,
+          'INSTALLATION_PROOF_REQUIRED', '开始激活必须由已登录的服务端授权桥验证安装身份', 401);
+        consumeInstallationProof({
+          purpose: 'install_window', context: { build_id: buildId, domain: normalizedDomain, install_window_token: windowToken },
+          installationId: installationId.trim(), publicKey: installationPublicKey,
+          challengeId, signature: challengeSignature, now,
+        });
         const tokenHash = hashSecret(windowToken, config.pepper);
         const existing = repository.installWindowByBuildInstallation(buildId, installationId.trim());
         if (existing) {

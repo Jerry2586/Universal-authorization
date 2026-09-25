@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 import { browserLicenseRuntime, createBrowserLicenseRuntime } from '../apps/build-worker/src/runtime.js';
 import { verifyActivation } from '../packages/appgog-sdk/src/verifier.js';
@@ -45,7 +45,7 @@ function fakeElement(tagName) {
 
 function installBrowser({
   token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey,
-  manifestToken, bridge = null, initialValues = null,
+  manifestToken, bridge = null, initialValues = null, referrer = '',
 }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
@@ -68,7 +68,7 @@ function installBrowser({
     hostname: 'demo.example.com', origin: 'https://demo.example.com', href: 'https://demo.example.com/', reload() {},
   };
   globalThis.document = {
-    readyState: 'complete',
+    readyState: 'complete', referrer,
     documentElement: { classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) } },
     head: { append: (...nodes) => elements.push(...nodes) },
     body: { append: (...nodes) => elements.push(...nodes) },
@@ -361,3 +361,104 @@ test('生成的运行时先提交一次性 Install Key，再使用 Install Recei
   assert.match(source, /feed\.version !== latest\.version/);
   assert.doesNotThrow(() => new Function(source));
 });
+
+
+for (const malformed of [false, true]) {
+  test(malformed ? '授权桥上传后插件响应异常会显示可读错误并保持锁定' : '未安装授权桥时自动通过非默认管理路径上传、安装、启用并锁定等待激活', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const pluginZip = Buffer.from('fixture-bridge-zip');
+    const requests = [];
+    let uploaded = false, installed = false, enabled = false;
+    const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
+    const browser = installBrowser({
+      token: null, publicKey, manifestToken: packageManifest(privateKey),
+      referrer: 'https://demo.example.com/secure_test#/theme',
+      initialValues: new Map([['XBOARD_ACCESS_TOKEN', JSON.stringify({ value: 'fixture-admin-token' })]]),
+      bridge: { gc: 'appgog_license_bridge', gv: '1.0.0', gt: 'APPGOG', j: '/bridge.zip',
+        y: createHash('sha256').update(pluginZip).digest('hex') },
+      fetchImpl: async (url, options = {}) => {
+        const path = new URL(url, 'https://demo.example.com').pathname;
+        requests.push(path);
+        if (path.endsWith('/health')) return new Response(JSON.stringify(enabled ? { ok: true, code: 'appgog_license_bridge', version: '1.0.0', identity } : {}), { status: enabled ? 200 : 404 });
+        if (path === '/bridge.zip') return new Response(pluginZip);
+        if (path === '/api/v2/secure_test/plugin/getPlugins') return new Response(JSON.stringify({ data: uploaded ? (malformed ? {} : [{ code: 'appgog_license_bridge', version: '1.0.0', is_installed: installed, is_enabled: enabled }]) : [] }));
+        if (path === '/api/v2/secure_test/plugin/upload') {
+          assert.ok(options.body instanceof FormData);
+          assert.deepEqual(Buffer.from(await options.body.get('file').arrayBuffer()), pluginZip);
+          uploaded = true; return new Response('{}');
+        }
+        if (path === '/api/v2/secure_test/plugin/install') { assert.equal(uploaded, true); installed = true; return new Response('{}'); }
+        if (path === '/api/v2/secure_test/plugin/enable') { assert.equal(installed, true); enabled = true; return new Response('{}'); }
+        if (path.endsWith('/register')) return new Response(JSON.stringify(identity));
+        if (path.endsWith('/state/runtime') || path.endsWith('/state/read')) return new Response(JSON.stringify({ state: {} }));
+        throw new Error('Unexpected bridge request: ' + path);
+      },
+    });
+    try {
+      await browser.settle();
+      assert.equal(browser.classes.has('__appgog_locked'), true);
+      const gate = browser.elements.find(element => element.id === '__appgog_gate');
+      assert.ok(gate);
+      if (malformed) {
+        assert.match(elementText(gate), /插件列表响应无效/);
+        assert.equal(installed, false);
+      } else {
+        assert.equal(enabled, true);
+        assert.match(elementText(gate), /开始激活/);
+        assert.deepEqual(requests.filter(path => /plugin\/(upload|install|enable)$/.test(path)), [
+          '/api/v2/secure_test/plugin/upload', '/api/v2/secure_test/plugin/install', '/api/v2/secure_test/plugin/enable',
+        ]);
+      }
+    } finally { browser.restore(); }
+  });
+}
+
+for (const outdated of [false, true]) {
+  test(outdated ? '健康旧授权桥自动升级后保留安装身份并等待激活' : '健康旧授权桥上传后仍未更新则保持锁定', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const pluginZip = Buffer.from('fixture-bridge-zip');
+    const requests = [];
+    let uploaded = false, installed = true, enabled = true;
+    const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
+    const browser = installBrowser({
+      token: null, publicKey, manifestToken: packageManifest(privateKey),
+      referrer: 'https://demo.example.com/secure_test#/theme',
+      initialValues: new Map([['XBOARD_ACCESS_TOKEN', JSON.stringify({ value: 'fixture-admin-token' })]]),
+      bridge: { gc: 'appgog_license_bridge', gv: '1.0.1', gt: 'APPGOG', j: '/bridge.zip',
+        y: createHash('sha256').update(pluginZip).digest('hex') },
+      fetchImpl: async (url, options = {}) => {
+        const path = new URL(url, 'https://demo.example.com').pathname;
+        requests.push(path);
+        if (path.endsWith('/health')) return new Response(JSON.stringify(enabled ? { ok: true, code: 'appgog_license_bridge', version: uploaded && outdated ? '1.0.1' : '1.0.0', identity } : {}), { status: enabled ? 200 : 404 });
+        if (path === '/bridge.zip') return new Response(pluginZip);
+        if (path === '/api/v2/secure_test/plugin/getPlugins') return new Response(JSON.stringify({ data: [{ code: 'appgog_license_bridge', version: uploaded ? '1.0.1' : '1.0.0', is_installed: installed, is_enabled: enabled }] }));
+        if (path === '/api/v2/secure_test/plugin/upload') {
+          assert.ok(options.body instanceof FormData);
+          assert.deepEqual(Buffer.from(await options.body.get('file').arrayBuffer()), pluginZip);
+          uploaded = true; return new Response('{}');
+        }
+        if (path === '/api/v2/secure_test/plugin/install') { assert.equal(uploaded, true); installed = true; return new Response('{}'); }
+        if (path === '/api/v2/secure_test/plugin/enable') { assert.equal(installed, true); enabled = true; return new Response('{}'); }
+        if (path.endsWith('/register')) return new Response(JSON.stringify(identity));
+        if (path.endsWith('/state/runtime') || path.endsWith('/state/read')) return new Response(JSON.stringify({ state: {} }));
+        throw new Error('Unexpected bridge request: ' + path);
+      },
+    });
+    try {
+      await browser.settle();
+      assert.equal(browser.classes.has('__appgog_locked'), true);
+      const gate = browser.elements.find(element => element.id === '__appgog_gate');
+      assert.ok(gate);
+      if (!outdated) {
+        assert.match(elementText(gate), /授权桥版本尚未生效/);
+        assert.equal(installed, true);
+      } else {
+        assert.equal(enabled, true);
+        assert.match(elementText(gate), /开始激活/);
+        assert.deepEqual(requests.filter(path => /plugin\/(upload|install|enable)$/.test(path)), [
+          '/api/v2/secure_test/plugin/upload',
+        ]);
+      }
+    } finally { browser.restore(); }
+  });
+}

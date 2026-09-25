@@ -33,7 +33,7 @@ export function createLicensingService({
     internal: Object.freeze({ findActiveLicense, bindDomainForBuild }),
     issueLicense({
       productCode = 'appgog', customerRef, domain = null, updateUntil = null, planCode = 'legacy',
-      maxBuildsPerDay = null, maxActivations = null, actorId = null,
+      maxBuildsPerDay = null, maxBuildsTotal = null, maxActivations = null, actorId = null,
     }) {
       const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
       const plan = repository.planByCode(String(planCode ?? 'legacy').trim().toLowerCase());
@@ -47,6 +47,8 @@ export function createLicensingService({
         'BUILD_LIMIT_INVALID', '每日打包上限必须为 1 到 50 的整数');
       invariant(Number.isInteger(resolvedActivationLimit) && resolvedActivationLimit >= 1 && resolvedActivationLimit <= 20,
         'ACTIVATION_LIMIT_INVALID', '激活数量上限必须为 1 到 20 的整数');
+      invariant(maxBuildsTotal === null || Number.isInteger(maxBuildsTotal) && maxBuildsTotal >= 1 && maxBuildsTotal <= 1000000,
+        'BUILD_TOTAL_LIMIT_INVALID', '总打包额度必须留空或填写 1 到 1000000 的整数');
       if (Number.isInteger(planLimits.max_builds_per_day)) {
         invariant(resolvedBuildLimit <= planLimits.max_builds_per_day, 'BUILD_LIMIT_EXCEEDS_PLAN',
           `该套餐每日最多构建 ${planLimits.max_builds_per_day} 次`);
@@ -63,9 +65,10 @@ export function createLicensingService({
           id: newId('lic'), productId: product.id, customerRef: customerRef.trim(), keyPrefix: keyPrefix(plainKey),
           keyHash: hashSecret(plainKey, config.pepper), keyEncrypted: sealSecret(plainKey, licenseEncryptionKey),
           status: LICENSE_STATUS.ACTIVE, boundDomain: domain ? canonicalizeDomain(domain) : null,
-          updateUntil, maxBuildsPerDay: resolvedBuildLimit, maxActivations: resolvedActivationLimit,
+          updateUntil, maxBuildsPerDay: resolvedBuildLimit, maxBuildsTotal, maxActivations: resolvedActivationLimit,
           planId: plan.id, entitlementCapabilities: planCapabilities,
           entitlementLimits: {
+            access_tier: plan.access_tier,
             max_builds_per_day: resolvedBuildLimit,
             max_activations: resolvedActivationLimit,
           }, now,
@@ -275,6 +278,39 @@ export function createLicensingService({
       audit.record({
         actorType: 'admin', actorId, action: `license.${status}`, subjectType: 'license', subjectId: licenseId,
         metadata: { previous_status: license.status }, now,
+      });
+      return updated;
+    },
+
+    changeLicenseQuota({ licenseId, maxBuildsPerDay, maxBuildsTotal = null, reason, actorId = null }) {
+      const license = repository.licenseById(licenseId);
+      invariant(license, 'LICENSE_NOT_FOUND', '授权不存在', 404);
+      invariant(license.status !== 'deleting', 'LICENSE_DELETING', '授权正在永久删除', 409);
+      // An explicit administrator quota override is independent of mutable plan templates.
+      invariant(Number.isInteger(maxBuildsPerDay) && maxBuildsPerDay >= 1 && maxBuildsPerDay <= 50,
+        'BUILD_LIMIT_INVALID', '每日打包上限必须为 1 到 50 的整数');
+      invariant(maxBuildsTotal === null || Number.isInteger(maxBuildsTotal) && maxBuildsTotal >= 1 && maxBuildsTotal <= 1000000,
+        'BUILD_TOTAL_LIMIT_INVALID', '总打包额度必须留空或填写 1 到 1000000 的整数');
+      const note = String(reason ?? '').trim();
+      invariant(note.length >= 2 && note.length <= 300, 'BUILD_QUOTA_REASON_INVALID', '额度调整原因必须为 2 到 300 个字符');
+      const limits = {
+        ...parseJsonObject(license.plan_limits_json, {}),
+        max_builds_per_day: maxBuildsPerDay,
+        max_activations: license.max_activations,
+      };
+      const now = iso(clock);
+      const updated = transaction(database, () => {
+        const result = repository.changeLicenseQuota(licenseId, maxBuildsPerDay, maxBuildsTotal, limits, now);
+        const metadata = {
+          previous_max_builds_per_day: license.max_builds_per_day,
+          max_builds_per_day: maxBuildsPerDay,
+          previous_max_builds_total: license.max_builds_total,
+          max_builds_total: maxBuildsTotal,
+          reason: note,
+        };
+        audit.recordLicenseEvent({ licenseId, eventType: 'license.build_quota_changed', actorType: 'admin', actorId, metadata, now });
+        audit.record({ actorType: 'admin', actorId, action: 'license.build_quota_changed', subjectType: 'license', subjectId: licenseId, metadata, now });
+        return result;
       });
       return updated;
     },

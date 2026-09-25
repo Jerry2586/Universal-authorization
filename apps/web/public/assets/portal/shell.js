@@ -24,7 +24,7 @@ export function createPortalShell(actor) {
     document.querySelectorAll('.admin-entry-footer span:nth-child(2)').forEach((item) => {
       item.textContent = `${platformName} · ${actor === 'customer' ? '主题交付' : '授权管理平台'}`;
     });
-    document.title = `${actor === 'customer' ? '打包中心' : '运营管理后台'} · ${platformName}`;
+    document.title = `${actor === 'customer' ? '打包中心' : '运营中心'}｜${platformName}`;
   }
 
   function setView(authenticated) {
@@ -33,6 +33,10 @@ export function createPortalShell(actor) {
     if (login) login.hidden = authenticated;
     if (dashboard) dashboard.hidden = !authenticated;
     if (!authenticated) {
+      document.querySelectorAll('dialog[open]').forEach((dialog) => {
+        dialog.close();
+        dialog.querySelectorAll('form').forEach((form) => form.reset());
+      });
       state.csrf = null;
       state.data = null;
       state.loading = false;

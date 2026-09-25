@@ -5,6 +5,7 @@ import { handleAdminAccountHttp } from './modules/admin/http-routes.js';
 import { handleAdminOverviewHttp } from './modules/admin/overview-http-routes.js';
 import { handleCustomerHttp } from './modules/customer/http-routes.js';
 import { handleIdentityHttp } from './modules/identity/http-routes.js';
+import { handleEntitlementHttp } from './modules/entitlement/http-routes.js';
 import { handleLicensingHttp } from './modules/licensing/http-routes.js';
 import { handleControlMigrationHttp } from './modules/migration/http-routes.js';
 import { handleOperationsHttp } from './modules/operations/http-routes.js';
@@ -119,6 +120,7 @@ export function createHttpHandler({
         respondJson, rateLimit, securityHeaders,
       })) return;
       if (await handleAdminOverviewHttp({ method, url, response, portal, auth, respondJson })) return;
+      if (await handleEntitlementHttp({ method, url, request, response, service, auth, readJson, respondJson })) return;
       if (await handleLicensingHttp({
         method, url, request, response, service, portal, auth, config, readJson,
         respondJson, rateLimit, clientAddress: remoteAddress,

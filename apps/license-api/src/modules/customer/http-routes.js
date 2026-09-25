@@ -65,6 +65,12 @@ async function handleCustomerDetails({
     return true;
   }
 
+  const voidMatch = url.pathname.match(/^\/web\/customer\/builds\/([^/]+)\/void$/);
+  if (method === 'POST' && voidMatch) {
+    respondJson(response, 200, portal.voidCustomerBuild(auth.requireSession('customer', true), voidMatch[1]));
+    return true;
+  }
+
   const buildMatch = url.pathname.match(/^\/web\/customer\/builds\/([^/]+)$/);
   if (method === 'GET' && buildMatch) {
     respondJson(response, 200, portal.buildDetails(auth.requireSession('customer'), buildMatch[1]));

@@ -1,3 +1,4 @@
+import { newId } from '../../../../../packages/core/src/identifiers.js';
 import { invariant } from '../../../../../packages/core/src/errors.js';
 import { transaction } from '../../database.js';
 import { iso, parseJsonObject } from '../shared/service-utils.js';
@@ -6,7 +7,9 @@ export function createEntitlementService({ database, repository, activationLifec
   function versionEligibility({ license, source }) {
     const accessTier = source?.access_tier === 'paid' ? 'paid' : 'free';
     const planCode = license?.plan_code ?? 'legacy';
-    if (accessTier === 'paid' && planCode === 'free') {
+    const tier = parseJsonObject(license?.plan_limits_json ?? license?.entitlement_limits_json, {}).access_tier
+      ?? (['paid', 'legacy'].includes(planCode) ? 'paid' : 'free');
+    if (accessTier === 'paid' && tier !== 'paid') {
       return Object.freeze({
         eligible: false,
         code: 'VERSION_PLAN_REQUIRED',
@@ -24,7 +27,39 @@ export function createEntitlementService({ database, repository, activationLifec
     return result;
   }
 
+  function publicPlan(plan) {
+    return { id: plan.id, code: plan.code, name: plan.name, access_tier: plan.access_tier,
+      status: plan.status, capabilities: parseJsonObject(plan.capabilities_json, []),
+      limits: parseJsonObject(plan.limits_json, {}), updated_at: plan.updated_at };
+  }
+  const capabilities = ['settings:read', 'settings:write', 'protected:read', 'theme:enable', 'xboard:connect', 'updates:read'];
+  function savePlan({ code, name, accessTier, status = 'active', capabilities: selected, limits, actorId }, creating) {
+    code = String(code ?? '').trim().toLowerCase();
+    name = String(name ?? '').trim();
+    invariant(/^[a-z][a-z0-9_-]{1,39}$/.test(code), 'PLAN_CODE_INVALID', '套餐标识须为 2–40 位小写字母、数字、下划线或短横线');
+    invariant(name.length >= 1 && name.length <= 60, 'PLAN_NAME_INVALID', '套餐名称须为 1–60 个字符');
+    invariant(['free', 'paid'].includes(accessTier), 'PLAN_TIER_INVALID', '请选择免费或付费权益');
+    invariant(['active', 'disabled'].includes(status), 'PLAN_STATUS_INVALID', '套餐状态无效');
+    invariant(Array.isArray(selected) && selected.length <= capabilities.length && selected.every(c => capabilities.includes(c)), 'PLAN_CAPABILITIES_INVALID', '套餐能力无效');
+    invariant(Number.isInteger(limits?.max_builds_per_day) && limits.max_builds_per_day >= 1 && limits.max_builds_per_day <= 50, 'PLAN_LIMIT_INVALID', '每日打包上限须为 1–50');
+    invariant(Number.isInteger(limits?.max_activations) && limits.max_activations >= 1 && limits.max_activations <= 20, 'PLAN_LIMIT_INVALID', '激活环境上限须为 1–20');
+    const now = iso(clock);
+    return transaction(database, () => {
+      const existing = repository.planByCode(code);
+      invariant(creating ? !existing : Boolean(existing), creating ? 'PLAN_EXISTS' : 'PLAN_NOT_FOUND', creating ? '套餐标识已存在' : '套餐不存在', creating ? 409 : 404);
+      invariant(code !== 'legacy', 'PLAN_RESERVED', '历史兼容套餐由系统维护', 409);
+      const result = repository.savePlan({ id: existing?.id ?? newId('plan'), code, name, access_tier: accessTier, status,
+        capabilities: [...new Set(selected)], limits: { max_builds_per_day: limits.max_builds_per_day, max_activations: limits.max_activations }, now }, creating);
+      audit.record({ actorType: 'admin', actorId, action: creating ? 'plan.created' : 'plan.updated', subjectType: 'plan', subjectId: result.id,
+        metadata: { before: existing ? publicPlan(existing) : null, after: publicPlan(result) }, now });
+      return publicPlan(result);
+    });
+  }
+
   return Object.freeze({
+    listLicensePlans: () => repository.allPlans().map(publicPlan),
+    createLicensePlan: input => savePlan(input, true),
+    updateLicensePlan: input => savePlan(input, false),
     versionEligibility,
     assertVersionAccess,
     changeLicensePlan({ licenseId, planCode, actorId = null }) {
@@ -42,7 +77,7 @@ export function createEntitlementService({ database, repository, activationLifec
         ? planLimits.max_activations : license.max_activations;
       const snapshot = {
         capabilities: planCapabilities,
-        limits: { max_builds_per_day: maxBuildsPerDay, max_activations: maxActivations },
+        limits: { access_tier: plan.access_tier, max_builds_per_day: maxBuildsPerDay, max_activations: maxActivations },
         maxBuildsPerDay,
         maxActivations,
       };

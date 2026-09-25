@@ -6,7 +6,7 @@ export function createLicensingSqliteRepository(queries) {
       queries.insertLicense.run(
         values.id, values.productId, values.customerRef, values.keyPrefix, values.keyHash, values.keyEncrypted ?? null,
         values.status, values.boundDomain ?? null, values.updateUntil ?? null,
-        values.maxBuildsPerDay, values.maxActivations, values.planId ?? null,
+        values.maxBuildsPerDay, values.maxBuildsTotal ?? null, values.maxActivations, values.planId ?? null,
         JSON.stringify(values.entitlementCapabilities ?? []), JSON.stringify(values.entitlementLimits ?? {}),
         values.now, values.now,
       );
@@ -44,6 +44,10 @@ export function createLicensingSqliteRepository(queries) {
     },
     changeLicenseStatus(id, status, now) {
       queries.changeLicenseStatus.run(status, now, id);
+      return queries.licenseById.get(id);
+    },
+    changeLicenseQuota(id, maxBuildsPerDay, maxBuildsTotal, limits, now) {
+      queries.changeLicenseQuota.run(maxBuildsPerDay, maxBuildsTotal, JSON.stringify(limits), now, id);
       return queries.licenseById.get(id);
     },
   });

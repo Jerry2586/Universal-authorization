@@ -6,6 +6,7 @@ const LEGACY_CAPABILITIES = Object.freeze([
 ]);
 
 export function capabilitiesFor(record) {
+  if (record.plan_capabilities_json == null && (!record.plan_code || record.plan_code === 'legacy')) return [...LEGACY_CAPABILITIES];
   const capabilities = parseJsonObject(record.plan_capabilities_json, []);
-  return Array.isArray(capabilities) && capabilities.length > 0 ? capabilities : [...LEGACY_CAPABILITIES];
+  return Array.isArray(capabilities) ? capabilities.filter(value => LEGACY_CAPABILITIES.includes(value)) : [];
 }

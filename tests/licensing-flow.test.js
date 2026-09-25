@@ -160,7 +160,7 @@ test('免费版能力写入签名激活凭证，SDK 在产品后端强制拒绝�
   assert.equal(payload.plan, 'free');
   assert.ok(payload.capabilities.includes('settings:read'));
   assert.ok(!payload.capabilities.includes('settings:write'));
-  assert.deepEqual(payload.limits, { max_builds_per_day: 1, max_activations: 1 });
+  assert.deepEqual(payload.limits, { access_tier: 'free', max_builds_per_day: 1, max_activations: 1 });
   assert.throws(() => requireActivation({ ...common, capability: 'settings:write' }), (error) => error.code === 'APPGOG_CAPABILITY_DENIED');
   app.database.close();
 });
@@ -192,6 +192,46 @@ test('版本权益由服务端强制：免费授权拒绝付费版本，付费�
   app.database.close();
 });
 
+test('管理员调整打包额度会审计且总额度耗尽后由服务端拒绝继续打包', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({
+    customerRef: 'customer-build-quota', domain: 'quota.example.com', maxBuildsPerDay: 3,
+  });
+  const changed = app.service.changeLicenseQuota({
+    licenseId: issued.license.id, maxBuildsPerDay: 2, maxBuildsTotal: 1,
+    reason: '客户本期额度调整', actorId: 'admin_owner',
+  });
+  assert.equal(changed.max_builds_per_day, 2);
+  assert.equal(changed.max_builds_total, 1);
+  assert.deepEqual(JSON.parse(changed.entitlement_limits_json), {
+    max_builds_per_day: 2, max_activations: 1, access_tier: 'paid',
+  });
+  const licenseEvent = app.database.prepare(`
+    SELECT actor_id, metadata_json FROM license_events
+    WHERE license_id = ? AND event_type = 'license.build_quota_changed'
+  `).get(issued.license.id);
+  assert.equal(licenseEvent.actor_id, 'admin_owner');
+  assert.equal(JSON.parse(licenseEvent.metadata_json).reason, '客户本期额度调整');
+  const auditEvent = app.database.prepare(`
+    SELECT actor_id, metadata_json FROM audit_events
+    WHERE subject_id = ? AND action = 'license.build_quota_changed'
+  `).get(issued.license.id);
+  assert.equal(auditEvent.actor_id, 'admin_owner');
+  assert.equal(JSON.parse(auditEvent.metadata_json).max_builds_total, 1);
+
+  const authorization = app.service.authorizeBuild({
+    licenseKey: issued.licenseKey, version: '1.0.0', domain: 'quota.example.com',
+  });
+  app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  assert.throws(
+    () => app.service.authorizeBuild({
+      licenseKey: issued.licenseKey, version: '1.0.0', domain: 'quota.example.com',
+    }),
+    (error) => error.code === 'BUILD_TOTAL_LIMITED',
+  );
+  app.database.close();
+});
+
 test('套餐切换原子更新能力与额度快照，并使旧激活立即失效', () => {
   const app = fixture();
   const issued = app.service.issueLicense({ customerRef: 'customer-plan-change', domain: 'plan.example.com', planCode: 'free' });
@@ -215,7 +255,7 @@ test('套餐切换原子更新能力与额度快照，并使旧激活立即失�
   assert.equal(changed.max_builds_per_day, 10);
   assert.equal(changed.max_activations, 3);
   assert.ok(JSON.parse(changed.entitlement_capabilities_json).includes('settings:write'));
-  assert.deepEqual(JSON.parse(changed.entitlement_limits_json), { max_builds_per_day: 10, max_activations: 3 });
+  assert.deepEqual(JSON.parse(changed.entitlement_limits_json), { access_tier: 'paid', max_builds_per_day: 10, max_activations: 3 });
   assert.throws(() => app.service.refresh({
     activationId: activation.activationId, refreshSecret: activation.refreshSecret,
     domain: 'plan.example.com', backendUrl: 'https://panel.example.com', installationId,
@@ -914,3 +954,61 @@ test('客户可首次绑定域名并提交受控迁移，管理员批准后 gene
   );
   app.database.close();
 });
+
+test('套餐模板管理保持已签发权益，自定义付费套餐支持版本授权', () => {
+  const app = fixture();
+  const input = { code: 'business', name: '商业版', accessTier: 'paid', status: 'active', capabilities: ['settings:read', 'settings:write'], limits: { max_builds_per_day: 8, max_activations: 2 }, actorId: 'admin' };
+  app.service.createLicensePlan(input);
+  const issued = app.service.issueLicense({ customerRef: 'snapshot', planCode: 'business' });
+  assert.equal(app.service.versionEligibility({ license: app.repository.licenseById(issued.license.id), source: { access_tier: 'paid' } }).eligible, true);
+  app.service.updateLicensePlan({ ...input, accessTier: 'free', limits: { max_builds_per_day: 2, max_activations: 1 }, status: 'disabled' });
+  const old = app.repository.licenseById(issued.license.id);
+  assert.equal(old.max_builds_per_day, 8);
+  assert.equal(JSON.parse(old.plan_limits_json).access_tier, 'paid');
+  assert.equal(app.service.versionEligibility({ license: old, source: { access_tier: 'paid' } }).eligible, true);
+  assert.throws(() => app.service.issueLicense({ customerRef: 'disabled', planCode: 'business' }), { code: 'LICENSE_PLAN_INVALID' });
+  app.service.changeLicenseQuota({ licenseId: old.id, maxBuildsPerDay: 8, reason: '调整额度' });
+  assert.equal(JSON.parse(app.repository.licenseById(old.id).plan_limits_json).access_tier, 'paid');
+  assert.throws(() => app.service.createLicensePlan(input), { code: 'PLAN_EXISTS' });
+  assert.throws(() => app.service.updateLicensePlan({ ...input, code: 'legacy' }), { code: 'PLAN_RESERVED' });
+  assert.throws(() => app.service.createLicensePlan({ ...input, code: 'invalid', capabilities: ['*'] }), { code: 'PLAN_CAPABILITIES_INVALID' });
+  assert.equal(app.service.listLicensePlans().find(p => p.code === 'business').status, 'disabled');
+  assert.ok(app.database.prepare("SELECT 1 FROM audit_events WHERE action = 'plan.updated'").get());
+  app.database.close();
+});
+
+test('空能力套餐签发后激活仍为零权限，不回退全部能力', () => {
+  const app = fixture();
+  app.database.prepare("UPDATE license_plans SET capabilities_json = '[]' WHERE code = 'free'").run();
+  const issued = app.service.issueLicense({ customerRef: 'customer-free', domain: 'free.example.com', planCode: 'free' });
+  app.database.prepare(`UPDATE license_plans SET capabilities_json = ? WHERE code = 'free'`).run(
+    JSON.stringify(['settings:read', 'settings:write', 'updates:read']),
+  );
+  const authorization = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '1.0.0', domain: 'free.example.com' });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const installationId = 'installation_free_123456';
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'free.example.com', backendUrl: 'https://panel.example.com', installationId,
+  });
+  const activation = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'free.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+  });
+  const common = {
+    token: activation.token, publicKey: app.publicKey, domain: 'free.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+    now: new Date('2026-09-22T00:01:00.000Z'),
+  };
+  const payload = requireActivation(common);
+  assert.equal(payload.plan, 'free');
+  assert.deepEqual(payload.capabilities, []);
+  assert.throws(() => requireActivation({ ...common, capability: 'settings:read' }), { code: 'APPGOG_CAPABILITY_DENIED' });
+  assert.ok(!payload.capabilities.includes('settings:write'));
+  assert.deepEqual(payload.limits, { access_tier: 'free', max_builds_per_day: 1, max_activations: 1 });
+  assert.throws(() => requireActivation({ ...common, capability: 'settings:write' }), (error) => error.code === 'APPGOG_CAPABILITY_DENIED');
+  app.database.close();
+});
+

@@ -242,12 +242,13 @@ export function browserLicenseRuntime(config) {
     }
     let health = await bridgeHealth();
     let plugins = null;
-    if (!health) {
+    if (!health || versionLessThan(health.version, config.gv)) {
       plugins = await findAdminPath();
       let plugin = plugins.find((item) => item.code === config.gc);
       if (!plugin || versionLessThan(plugin.version, config.gv)) {
         await uploadBridgePackage();
         plugins = await xboardAdminRequest('/plugin/getPlugins');
+        if (!Array.isArray(plugins?.data)) throw new Error('Xboard 插件列表响应无效，请刷新管理后台后重试');
         plugin = plugins.data.find((item) => item.code === config.gc);
       }
       if (!plugin) throw new Error('Xboard 未识别 APPGOG 授权桥插件包');
@@ -262,7 +263,7 @@ export function browserLicenseRuntime(config) {
         });
       }
       health = await bridgeHealth();
-      if (!health) throw new Error('APPGOG 授权桥已安装，但健康检查未通过');
+      if (!health || versionLessThan(health.version, config.gv)) throw new Error('APPGOG 授权桥版本尚未生效，请完成插件更新后重试');
     }
     if (!xboardAdminPath && adminToken()) {
       try { await findAdminPath(); } catch { /* Existing bridge can still report its identity. */ }
@@ -307,7 +308,7 @@ export function browserLicenseRuntime(config) {
       installationId,
       deactivateAndRemoveTheme: () => bridgeRequest('/deactivate-theme', {
         package_id: config.i, package_proof: packageProof(),
-      }),
+      }, true),
     });
   }
 
@@ -443,14 +444,19 @@ export function browserLicenseRuntime(config) {
   function showGate() {
     if (document.getElementById('__appgog_gate')) return;
     const style = document.createElement('style');
-    style.textContent = 'html.__appgog_locked body>*:not(#__appgog_gate){visibility:hidden!important}#__appgog_gate{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,#312e81 0,transparent 34%),radial-gradient(circle at 85% 85%,#0e7490 0,transparent 32%),#070b16;color:#edf2ff;font-family:system-ui,-apple-system,sans-serif;padding:24px}#__appgog_gate *{box-sizing:border-box}#__appgog_card{width:min(560px,100%);background:linear-gradient(145deg,#11182bea,#0c1222f2);border:1px solid #ffffff1c;border-radius:24px;padding:34px;box-shadow:0 30px 90px #0008;backdrop-filter:blur(22px)}#__appgog_card h1{font-size:28px;margin:0 0 10px;letter-spacing:-.02em}#__appgog_card p{color:#aebad1;line-height:1.7;margin:0 0 22px}#__appgog_card label{display:grid;gap:8px;margin:15px 0;font-size:12px;font-weight:750;color:#dce5f8}#__appgog_card input{height:48px;border:1px solid #ffffff1c;background:#060b16aa;color:#fff;border-radius:11px;padding:0 14px;font:inherit;outline:none}#__appgog_card input:focus{border-color:#7c8cff;box-shadow:0 0 0 3px #5969ff26}#__appgog_card button{height:48px;width:100%;border:0;border-radius:11px;background:linear-gradient(115deg,#665cff,#16a6d9);color:#fff;font-weight:780;margin-top:8px;cursor:pointer}#__appgog_card button:disabled{opacity:.58;cursor:not-allowed}#__appgog_error{color:#ff8da1!important;margin:13px 0 0!important;font-size:12px}#__appgog_meta{font-size:11px;color:#74829d;margin-top:20px}#__appgog_timer{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1px solid #f5b94b35;background:#f5b94b12;border-radius:11px;color:#ffd98b;font-size:13px;margin:0 0 18px}';
+    style.textContent = 'html.__appgog_locked body>*:not(#__appgog_gate){visibility:hidden!important}#__appgog_gate{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;overflow:auto;background:#f6f7fb;color:#202333;font-family:system-ui,-apple-system,sans-serif;padding:24px}#__appgog_gate *{box-sizing:border-box}#__appgog_card{width:min(480px,100%);margin:auto;background:#fff;border:1px solid #e5e7ef;border-radius:20px;padding:32px;box-shadow:0 12px 40px #2023440a}#__appgog_brand{display:flex;align-items:center;gap:12px;margin-bottom:26px;font-size:15px;font-weight:750;letter-spacing:.08em}#__appgog_brand b{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:#6554c0;color:#fff;font-size:22px;letter-spacing:-.05em}#__appgog_brand span{display:grid;gap:3px}#__appgog_brand small{font-size:11px;font-weight:400;letter-spacing:0;color:#767b8d}#__appgog_card h1{font-size:24px;line-height:1.3;margin:0 0 12px;letter-spacing:-.025em}#__appgog_card p{color:#72788a;font-size:13px;line-height:1.8;margin:0 0 22px}#__appgog_card label{display:grid;gap:8px;margin:18px 0;font-size:12px;font-weight:650;color:#454b60}#__appgog_card input{width:100%;min-width:0;height:46px;border:1px solid #dfe2eb;background:#fafbfe;color:#202333;border-radius:9px;padding:0 12px;font:inherit;outline:none}#__appgog_card input:focus{border-color:#8572ce;box-shadow:0 0 0 3px #6554c012}#__appgog_card button{min-height:46px;width:100%;padding:10px;border:1px solid #5e4db5;border-radius:9px;background:#6554c0;color:#fff;font-weight:650;margin-top:8px;cursor:pointer}#__appgog_card button:hover{background:#5746b0}#__appgog_card button:focus-visible{outline:3px solid #c6bce8;outline-offset:3px}#__appgog_card button:disabled{opacity:.55;cursor:not-allowed}#__appgog_error{color:#b42338!important;margin:13px 0 0!important;font-size:12px}#__appgog_meta{font-size:11px;line-height:1.8;overflow-wrap:anywhere;color:#8990a2;margin-top:24px;padding-top:16px;border-top:1px solid #edf0f5}#__appgog_timer{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #f0dfb8;background:#fffaf0;border-radius:9px;color:#946619;font-size:12px;margin:0 0 20px}@media(max-width:480px){#__appgog_gate{padding:16px}#__appgog_card{padding:24px 20px;border-radius:16px}#__appgog_card h1{font-size:22px}}';
     document.head.append(style);
     const gate = document.createElement('div'); gate.id = '__appgog_gate';
     const card = document.createElement('div'); card.id = '__appgog_card';
+    gate.setAttribute('role', 'dialog'); gate.setAttribute('aria-modal', 'true'); gate.setAttribute('aria-labelledby', '__appgog_title');
+    const brand = document.createElement('div'); brand.id = '__appgog_brand';
+    const mark = document.createElement('b'); mark.textContent = 'A'; mark.setAttribute('aria-hidden', 'true');
+    const brandName = document.createElement('span'); brandName.textContent = 'APPGOG';
+    const welcome = document.createElement('small'); welcome.textContent = '欢迎使用 APPGOG · 安全激活'; brandName.append(welcome); brand.append(mark, brandName); card.append(brand);
     const hasInstallReceipt = Boolean(saved?.install_receipt_id && saved?.install_receipt_secret && saved?.backend_origin);
     const hasInstallWindow = Boolean(saved?.install_window_id && saved?.install_window_token && saved?.install_window_expires_at);
     const installWindowExpired = hasInstallWindow && Math.floor(new Date(saved.install_window_expires_at).getTime() / 1000) <= now();
-    const title = document.createElement('h1');
+    const title = document.createElement('h1'); title.id = '__appgog_title';
     const domainMismatch = integrityFailure?.reason === 'domain';
     title.textContent = domainMismatch ? 'APPGOG 授权域名不匹配'
       : (integrityFailure ? 'APPGOG 安装包完整性验证失败'
@@ -483,7 +489,7 @@ export function browserLicenseRuntime(config) {
     const button = document.createElement('button'); button.type = 'submit';
     button.textContent = hasInstallReceipt ? '正式激活 APPGOG'
       : (hasInstallWindow ? (installWindowExpired ? '执行安全清理' : '验证并解锁安装包') : '开始激活');
-    const error = document.createElement('p'); error.id = '__appgog_error';
+    const error = document.createElement('p'); error.id = '__appgog_error'; error.setAttribute('role', 'alert');
     const metadata = document.createElement('div'); metadata.id = '__appgog_meta'; metadata.textContent = `授权域名：${domain()} · 版本：${config.v} · Build：${config.b.slice(0, 18)}`;
     let countdownTimer = null;
     if (hasInstallWindow && !hasInstallReceipt) {
@@ -512,11 +518,16 @@ export function browserLicenseRuntime(config) {
       try {
         if (!hasInstallReceipt && !hasInstallWindow) {
           const tokenBytes = new Uint8Array(32); crypto.getRandomValues(tokenBytes);
-          const installWindowToken = `IWT_${[...tokenBytes].map((item) => item.toString(16).padStart(2, '0')).join('')}`;
+          const installWindowToken = saved?.install_window_token || `IWT_${[...tokenBytes].map((item) => item.toString(16).padStart(2, '0')).join('')}`;
           store({ ...(saved || {}), install_window_token: installWindowToken });
+          const windowProof = await installationProof('install_window', {
+            build_id: config.b, domain: domain(), install_window_token: installWindowToken,
+          });
           const started = await post('/api/v1/install-windows/start', {
             build_id: config.b, package_proof: packageProof(), domain: domain(),
             installation_id: installationId, install_window_token: installWindowToken,
+            installation_public_key: windowProof.installation_public_key,
+            challenge_id: windowProof.challenge_id, challenge_signature: windowProof.challenge_signature,
           });
           store({ ...(saved || {}), install_window_token: installWindowToken,
             install_window_id: started.install_window_id, install_window_expires_at: started.expires_at });

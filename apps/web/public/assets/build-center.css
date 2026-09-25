@@ -6,33 +6,43 @@
 .build-entry .admin-entry-capabilities > div > span:first-child { color: #94b9b0; }
 .build-entry .admin-entry-form { align-self: center; }
 .build-key-help { margin-top: -10px; color: #74808c; font-size: 11px; line-height: 1.7; }
-body[data-portal="customer"] .workspace { background: #f5f6f8; }
-body[data-portal="customer"] .app-sidebar { background: #18283d; }
-body[data-portal="customer"] .workspace-content { max-width: 1440px; margin-inline: auto; }
-body[data-portal="customer"] .welcome-row h2 { font-size: 27px; letter-spacing: -.6px; }
+body[data-portal="customer"] .workspace { background: var(--canvas); }
+body[data-portal="customer"] .app-sidebar { background: #fff; color: var(--ink); }
+body[data-portal="customer"] .workspace-content { max-width: 1700px; margin-inline: auto; }
+body[data-portal="customer"] .welcome-row h2 { font-size: clamp(32px, 3vw, 44px); letter-spacing: -.055em; }
 body[data-portal="customer"] .welcome-row p { max-width: 580px; line-height: 1.8; }
-body[data-portal="customer"] .surface, body[data-portal="customer"] .stat-card { box-shadow: 0 2px 8px #16283d03; border-color: #e2e6ec; border-radius: 12px; }
+body[data-portal="customer"] .surface, body[data-portal="customer"] .stat-card { box-shadow: var(--shadow); border-color: var(--line); border-radius: 18px; }
 body[data-portal="customer"] .surface-number { color: #8b96a6; background: #f5f6f8; }
-body[data-portal="customer"] .process-card { background: #fafbfc; }
+body[data-portal="customer"] .process-card { background: #fff; }
 body[data-portal="customer"] .table-title { padding-block: 22px; }
-body[data-portal="customer"] .service-state { color: #b6c2d4; }
-body[data-portal="customer"] .announcement-compact { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 18px; padding: 15px 17px; border-color: #d9e3f6; background: linear-gradient(135deg, #f3f7ff 0%, #f8faff 100%); }
+body[data-portal="customer"] .service-state { color: var(--muted); }
+body[data-portal="customer"] .announcement-compact { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 22px; padding: 17px 19px; border-color: #ded7fb; background: linear-gradient(135deg, #f2efff 0%, #faf9ff 100%); }
 body[data-portal="customer"] .announcement-compact .announcement-content { min-width: 0; }
 body[data-portal="customer"] .announcement-compact strong { display: block; margin-top: 6px; font-size: 12px; }
 body[data-portal="customer"] .announcement-compact p { display: -webkit-box; margin-top: 3px; overflow: hidden; color: #5a6a83; font-size: 10px; line-height: 1.65; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
 body[data-portal="customer"] .announcement-compact.is-expanded { align-items: flex-start; }
 body[data-portal="customer"] .announcement-compact.is-expanded p { display: block; overflow: visible; -webkit-line-clamp: unset; }
 body[data-portal="customer"] .announcement-toggle { align-self: center; min-width: 68px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--accent); font-size: 10px; font-weight: 720; }
-body[data-portal="customer"] .delivery-flow-card { margin-bottom: 18px; padding: 23px 25px; }
-body[data-portal="customer"] .delivery-flow-count { flex: none; padding: 6px 9px; border: 1px solid #e0e6ef; border-radius: 7px; background: #f8f9fb; color: #7d899a; font-size: 9px; font-weight: 700; }
+body[data-portal="customer"] .delivery-flow-card { margin-bottom: 22px; padding: 28px 30px; }
+body[data-portal="customer"] .delivery-flow-count { flex: none; padding: 7px 10px; border: 1px solid #ded8fb; border-radius: 9px; background: #f5f2ff; color: var(--accent-deep); font-size: 9px; font-weight: 700; }
 body[data-portal="customer"] .delivery-step-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 23px 0 0; padding: 0; list-style: none; }
 body[data-portal="customer"] .delivery-step-list li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 11px; position: relative; min-width: 0; padding-right: 23px; }
 body[data-portal="customer"] .delivery-step-list li:not(:last-child)::after { content: ''; position: absolute; top: 15px; left: 35px; right: 8px; height: 1px; background: #dfe5ed; }
-body[data-portal="customer"] .delivery-step-number { z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #d7dfe9; border-radius: 50%; background: #fff; color: #8a96a7; font-size: 10px; font-weight: 800; }
+body[data-portal="customer"] .delivery-step-number { z-index: 1; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #dcd6f8; border-radius: 50%; background: #fff; color: var(--accent-deep); font-size: 10px; font-weight: 800; }
 body[data-portal="customer"] .delivery-step-list li.done .delivery-step-number { border-color: #bfe7d8; background: #eaf8f3; color: var(--green); }
 body[data-portal="customer"] .delivery-step-list li > div { z-index: 1; display: grid; gap: 4px; min-width: 0; padding: 4px 7px 0 0; background: #fff; }
 body[data-portal="customer"] .delivery-step-list strong { font-size: 11px; line-height: 1.35; }
 body[data-portal="customer"] .delivery-step-list small { color: #8995a5; font-size: 9px; line-height: 1.6; }
+body[data-portal="customer"] .sidebar-brand .wordmark-light { color: var(--ink); }
+body[data-portal="customer"] .workspace-badge { color: #7c879b; }
+body[data-portal="customer"] .nav-item { color: #59667d; }
+body[data-portal="customer"] .nav-item.active { border-color: #d9d0ff; background: #eeeaff; color: var(--accent-deep); }
+body[data-portal="customer"] .sidebar-meta { border-top-color: var(--line); }
+body[data-portal="customer"] .service-state strong { color: var(--ink); }
+body[data-portal="customer"] .service-state span:not(.live-dot), body[data-portal="customer"] .sidebar-version, body[data-portal="customer"] .sidebar-version strong { color: #7c879b; }
+body[data-portal="customer"] .progress-fill { background: var(--accent); }
+body[data-portal="customer"] .customer-version-card.latest { border-color: #d9d0ff; background: linear-gradient(145deg, #fff 0%, #f4f1ff 100%); box-shadow: 0 12px 28px rgba(107, 85, 232, .08); }
+body[data-portal="customer"] .lifecycle-card { border-radius: 18px; }
 @media (hover: hover) and (pointer: fine) { body[data-portal="customer"] .announcement-toggle:hover { background: #eaf0ff; } }
 @media (max-width: 760px) {
   body[data-portal="customer"] .welcome-row h2 { font-size: 24px; }
