@@ -11,12 +11,8 @@ REQUESTED_VERSION=${APPGOG_VERSION:-}
 log() { printf '\n==> %s\n' "$*"; }
 fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
 
-# A source checkout installs locally. Through curl | sh this file becomes the
-# signed remote bootstrap and downloads the latest production installer.
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
-if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/scripts/install-linux.sh" ]; then
-  exec sh "$SCRIPT_DIR/scripts/install-linux.sh" --source-dir "$SCRIPT_DIR" "$@"
-fi
+# Stable entrypoint always resolves a signed release, independent of working directory.
+# Explicit local builds use scripts/install-linux.sh --source-dir.
 
 [ "$(id -u)" -eq 0 ] || fail '请使用 root 运行，或在命令末尾使用 | sudo sh。'
 [ "$(uname -s 2>/dev/null || true)" = Linux ] || fail '仅支持 Linux。'
@@ -73,7 +69,7 @@ install_bootstrap_tools() {
 download_file() {
   url=$1
   output=$2
-  curl -fL --connect-timeout 15 --max-time 300 --retry 2 --retry-delay 2 "$url" -o "$output"
+  curl -fsSL --connect-timeout 15 --max-time 300 --retry 2 --retry-delay 2 "$url" -o "$output"
 }
 
 json_string() {
@@ -103,7 +99,8 @@ try_release_base() {
   TARGET_VERSION=$(json_string version "$WORK_DIR/release-manifest.json")
   RUN_NAME=$(json_string run_name "$WORK_DIR/release-manifest.json")
   RUN_SHA256=$(json_string run_sha256 "$WORK_DIR/release-manifest.json")
-  [ -n "$TARGET_VERSION" ] && [ -n "$RUN_NAME" ] && [ -n "$RUN_SHA256" ] || return 1
+  printf '%s\n' "$TARGET_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+  [ "$RUN_NAME" = "APPGOG-Packaging-Licensing-System-$TARGET_VERSION.run" ] || return 1
   case "$RUN_NAME" in APPGOG-Packaging-Licensing-System-*.run) ;; *) return 1 ;; esac
   case "$RUN_NAME" in *[!A-Za-z0-9._-]*) return 1 ;; esac
   printf '%s\n' "$RUN_SHA256" | grep -Eq '^[0-9a-fA-F]{64}$' || return 1
@@ -169,7 +166,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 fi
 if [ -n "$installed_version" ]; then
   if [ "$installed_version" = "$TARGET_VERSION" ]; then
-    if [ "$running_image_version" = "$TARGET_VERSION" ] && { [ "$running_health" = healthy ] || [ "$running_health" = running ]; }; then
+    if [ "$running_image_version" = "$TARGET_VERSION" ] && [ "$running_env_version" = "$TARGET_VERSION" ] && [ "$running_health" = healthy ]; then
       if [ "${APPGOG_REPAIR_SOURCE:-false}" != true ]; then
         log "APPGOG v$TARGET_VERSION 源码与运行镜像一致，且服务状态正常，无需重复部署。"
         exit 0

@@ -1,6 +1,8 @@
+import { PACKAGE_VERSION } from '../../../../../packages/core/src/version.js';
 export function securityHeaders(contentType = 'application/json; charset=utf-8') {
   return {
     'content-type': contentType,
+    'x-appgog-version': PACKAGE_VERSION,
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'DENY',

@@ -2,7 +2,7 @@
 
 日期：2026-09-25。
 
-APPGOG打包授权系统 v1.2.17 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.20 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -20,8 +20,10 @@ APPGOG打包授权系统 v1.2.17 的正式生产路线只有统一 Docker Compos
 进入服务器 root 终端，执行：
 
 ```sh
-sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh
 ```
+
+若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。之后一直使用上面的固定命令。升级以签名 Latest Release 为准，单独推送 Git 源码不会产生正式更新。
 
 这条命令长期不变。首次运行时，引导器识别系统和 CPU，补齐 CA、OpenSSL、下载与校验工具，获取最新正式 Release，验证 Ed25519 清单签名及 `.run` SHA-256，再由正式安装器补齐 Docker Engine、Compose v2.24+ 和 Buildx，提示输入两个真实域名并启动唯一的 appgog 容器。
 
@@ -34,8 +36,8 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 下载正式包时默认依次尝试自有国内源、GitHub Release、`ghfast.top` 和 `gh-proxy.com`。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.17 sh
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh \
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.20 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -97,7 +99,7 @@ appgog doctor
 正式跨版本更新直接重跑与首次安装完全相同的命令：
 
 ```sh
-sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh
 ```
 
 引导器只接受签名有效且版本更高的正式包。每次更新把完整程序部署到全新版本目录，用户、Key、公告、运营设置、上传、成品和数据库保持不变，其他程序文件由发布包完整覆盖。更新流程会先创建备份、构建版本化镜像、原子切换程序并执行健康检查；失败时自动恢复旧程序链接并尝试恢复上一健康镜像。公开管理菜单不提供手工镜像回滚，避免代码与数据库版本被错误组合。若需要灾难恢复，应在空部署中使用完整加密备份和对应签名版本验证后再切换 DNS。禁止执行 `docker compose down -v`。

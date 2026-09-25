@@ -29,9 +29,8 @@ import { createPackagingService } from './modules/packaging/service.js';
 import { createProductRepositoryPort } from './modules/product/repository-port.js';
 import { createProductCatalogRepositoryPort } from './modules/product/catalog-repository-port.js';
 import { createProductService } from './modules/product/service.js';
-import { readFileSync } from 'node:fs';
+import { PACKAGE_VERSION } from '../../../packages/core/src/version.js';
 
-const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
 
 export function bootstrap({ database, config, privateKey, publicKey = '', keyring = null, clock }) {
   const signingKeys = keyring ?? {

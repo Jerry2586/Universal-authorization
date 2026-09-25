@@ -13,6 +13,7 @@ const scripts = {
   installer: join(root, 'scripts/install-linux.sh'),
   manager: join(root, 'scripts/appgog.sh'),
   updateHelper: join(root, 'scripts/update-helper.sh'),
+  signedUpdateLibrary: join(root, 'scripts/lib/signed-update.sh'),
   releaseDownloadLibrary: join(root, 'scripts/lib/release-download.sh'),
   releaseInstallLibrary: join(root, 'scripts/lib/release-install.sh'),
   managerMigrationLibrary: join(root, 'scripts/lib/manager-migration.sh'),
@@ -191,6 +192,7 @@ test('online update helper writes valid readiness JSON before a latest version e
   mkdirSync(join(installRoot, 'current'), { recursive: true });
   mkdirSync(join(installRoot, 'current', 'scripts', 'lib'), { recursive: true });
   writeFileSync(join(installRoot, 'current', 'package.json'), `${JSON.stringify({ version: projectVersion }, null, 2)}\n`);
+  copyFileSync(scripts.signedUpdateLibrary, join(installRoot, 'current', 'scripts', 'lib', 'signed-update.sh'));
   copyFileSync(scripts.releaseDownloadLibrary, join(installRoot, 'current', 'scripts', 'lib', 'release-download.sh'));
 
   const child = spawn('/bin/sh', [scripts.updateHelper, '--daemon', installRoot], { stdio: 'ignore' });

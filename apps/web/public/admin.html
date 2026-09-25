@@ -41,7 +41,7 @@
         </div>
       </div>
     </div>
-    <footer class="admin-entry-footer"><span>APPGOG · 授权管理平台</span><span>管理后台 / Console</span></footer>
+    <footer class="admin-entry-footer"><span id="login-system-version">v{{APPGOG_VERSION}}</span><span>APPGOG · 授权管理平台</span><span>管理后台 / Console</span></footer>
   </section>
 
   <div id="dashboard-view" class="saas-shell" hidden>
@@ -62,7 +62,7 @@
       </nav>
       <div class="sidebar-meta">
         <div class="service-state"><span class="live-dot"></span><div><strong>系统在线</strong><span>Operator console</span></div></div>
-        <div class="sidebar-version"><span>系统版本</span><strong id="admin-system-version">v—</strong></div>
+        <div class="sidebar-version"><span>系统版本</span><strong id="admin-system-version">v{{APPGOG_VERSION}}</strong></div>
       </div>
     </aside>
 
@@ -196,7 +196,7 @@
                 <button class="button button-primary button-wide" type="submit"><span>创建节点凭证</span><span>→</span></button>
               </form>
             </section>
-            <section class="surface form-surface online-update-card"><div class="surface-head"><div><span class="overline">SIGNED ONLINE UPDATE</span><h3>在线安全更新</h3><p>校验签名、完整备份、匹配环境并切换最新版；失败自动恢复旧健康版本。</p></div><span class="status-pill" id="update-state">读取中</span></div><dl class="details update-details"><div><dt>当前源码版本</dt><dd id="update-current-version">—</dd></div><div><dt>最新可用版本</dt><dd id="update-latest-version">—</dd></div><div><dt>更新阶段</dt><dd id="update-message">等待检查</dd></div></dl><div class="update-actions"><button id="check-update" class="button button-secondary" type="button">检查更新</button><button id="install-update" class="button button-primary" type="button">安全更新最新版本</button><button id="repair-current" class="button button-secondary" type="button">修复当前版本</button></div><div id="update-fallback" class="update-fallback" hidden><strong>网页助手离线时可用备用命令</strong><code>sudo systemctl restart appgog-update-helper.service</code><code>appgog update</code></div><pre id="update-log" class="update-log">暂无更新日志</pre></section>
+            <section class="surface form-surface online-update-card"><div class="surface-head"><div><span class="overline">SIGNED ONLINE UPDATE</span><h3>在线安全更新</h3><p>校验签名、完整备份、匹配环境并切换最新版；失败自动恢复旧健康版本。</p></div><span class="status-pill" id="update-state">读取中</span></div><dl class="details update-details"><div><dt>当前运行版本</dt><dd id="update-current-version">—</dd></div><div><dt>最新可用版本</dt><dd id="update-latest-version">—</dd></div><div><dt>更新阶段</dt><dd id="update-message">等待检查</dd></div></dl><div class="update-actions"><button id="check-update" class="button button-secondary" type="button">检查更新</button><button id="install-update" class="button button-primary" type="button">安全更新最新版本</button><button id="repair-current" class="button button-secondary" type="button">修复当前版本</button></div><div id="update-fallback" class="update-fallback" hidden><strong>网页助手离线时可用备用命令</strong><code>sudo systemctl restart appgog-update-helper.service</code><code>appgog update</code></div><pre id="update-log" class="update-log">暂无更新日志</pre></section>
           </div>
           <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">SERVICE NODES</span><h3>节点列表</h3></div><span class="status-pill" id="node-count">0 个节点</span></div><div class="table-scroll"><table><thead><tr><th>节点</th><th>角色</th><th>地址</th><th>凭证前缀</th><th>状态</th><th>最后在线</th><th>操作</th></tr></thead><tbody id="node-list"><tr><td colspan="7" class="empty-cell">尚未创建独立节点</td></tr></tbody></table></div></section>
         </section>

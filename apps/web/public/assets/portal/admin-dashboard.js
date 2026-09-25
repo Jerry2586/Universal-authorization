@@ -73,7 +73,6 @@ export function createAdminDashboard(shell, collaborators) {
     const cms = data.cms ?? {};
     const nodes = Array.isArray(cms.nodes) ? cms.nodes : [];
 
-    if ($('admin-system-version')) $('admin-system-version').textContent = cms.system_version ? `v${cms.system_version}` : 'v—';
     $('stat-licenses').textContent = stats.licenses ?? licenses.length;
     $('stat-active').textContent = stats.activeLicenses ?? licenses.filter((item) => item.status === 'active').length;
     $('stat-builds').textContent = stats.buildsToday ?? 0;

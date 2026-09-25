@@ -1,3 +1,4 @@
+import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { loadConfig } from '../apps/license-api/src/config.js';
@@ -6,9 +7,10 @@ import { loadLocalEnvironment } from '../packages/core/src/environment.js';
 // 本机开发用进程管理器；生产环境分别部署三个服务并使用各自的环境文件。
 loadLocalEnvironment();
 const internalToken = process.env.INTERNAL_SERVICE_TOKEN || (process.env.NODE_ENV === 'production' ? '' : randomBytes(48).toString('base64url'));
-const config = loadConfig({ surface: 'license-center', embeddedWorker: false, internalServiceToken: internalToken });
-const buildPort = Number.parseInt(process.env.BUILD_CENTER_PORT ?? '8788', 10);
+const config = loadConfig({ role: 'license-center', surface: 'license-center', embeddedWorker: false, internalServiceToken: internalToken });
+const buildPort = Number(process.env.BUILD_CENTER_PORT ?? '8788');
 if (!Number.isInteger(buildPort) || buildPort < 1 || buildPort > 65535) throw new Error('BUILD_CENTER_PORT 无效');
+if (buildPort === config.port) throw new Error('PORT 与 BUILD_CENTER_PORT 不能相同');
 const internalUrl = `http://127.0.0.1:${config.port}`;
 const children = [];
 let stopping = false;
@@ -55,9 +57,19 @@ async function ready(url) {
 process.on('SIGINT', () => stop());
 process.on('SIGTERM', () => stop());
 
+async function checkPort(port) {
+  const probe = createServer();
+  await new Promise((resolve, reject) => {
+    probe.once('error', () => reject(new Error(`端口 ${port} 已被占用或无法绑定，请先停止旧 APPGOG 进程或调整端口`)));
+    probe.listen(port, () => probe.close(resolve));
+  });
+}
+
 try {
+  await checkPort(config.port);
+  await checkPort(buildPort);
   launch('license-center', 'apps/license-api/src/server.js', {
-    APPGOG_SURFACE: 'license-center', EMBEDDED_WORKER: 'false', INTERNAL_SERVICE_TOKEN: internalToken,
+    APPGOG_ROLE: 'license-center', APPGOG_SURFACE: 'license-center', EMBEDDED_WORKER: 'false', INTERNAL_SERVICE_TOKEN: internalToken,
   });
   await ready(`${internalUrl}/health`);
   launch('build-center', 'apps/build-center/src/server.js', {

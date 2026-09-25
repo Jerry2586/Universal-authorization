@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { PACKAGE_VERSION } from '../../../packages/core/src/version.js';
 import { DomainError } from '../../../packages/core/src/errors.js';
 import { handleActivationHttp } from './modules/activation/http-routes.js';
 import { handleAdminAccountHttp } from './modules/admin/http-routes.js';
@@ -22,7 +22,6 @@ import { createRequestContext } from './http/middleware/request-context.js';
 import { createJsonResponder, securityHeaders } from './http/middleware/response.js';
 import { serveStatic } from './http/static.js';
 
-const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
 
 function enforceSurfaceBoundary({ request, response, url, config, portal, auth }) {
   if (config.surface !== 'license-center') return false;

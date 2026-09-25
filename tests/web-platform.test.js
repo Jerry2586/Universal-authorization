@@ -103,6 +103,9 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   const adminPage = await fetch(`${base}/admin`);
   const adminHtml = await adminPage.text();
   assert.match(adminHtml, /id="logout" class="header-logout"/);
+  assert.ok(adminHtml.includes('id="login-system-version">v' + packageVersion + '</span>'));
+  assert.ok(adminHtml.includes('id="admin-system-version">v' + packageVersion + '</strong>'));
+  assert.equal(adminPage.headers.get('x-appgog-version'), packageVersion);
   assert.doesNotMatch(adminHtml, /id="account-menu"/);
   assert.doesNotMatch(adminHtml, /返回首页/);
 

@@ -28,7 +28,7 @@ export function createOperationsUi({ request, notify, can }) {
     const labels = { 'check-update': '检查更新', 'install-version': '安全更新最新版本', 'repair-current': '修复当前版本' };
     try {
       await request('/web/admin/system/update', { method: 'POST', body: { action } });
-      notify(`${labels[action]}任务已提交，服务重启后页面会自动恢复`);
+      notify(action === 'check-update' ? '检查更新任务已提交，请等待检查结果' : `${labels[action]}任务已提交，完成后请核对当前运行版本`);
       await refresh();
     } catch (error) { notify(error.message, true); }
   }

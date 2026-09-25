@@ -77,7 +77,13 @@ function installBrowser({ token, fetchImpl, publicKey, packagePublicKey = public
   });
   return {
     values, elements, classes,
-    async settle() { await new Promise((resolve) => setTimeout(resolve, 30)); },
+    async settle(predicate = () => globalThis.APPGOGLicense.status !== 'checking' || elements.some(element => element.id === '__appgog_gate')) {
+      const deadline = performance.now() + 3000;
+      while (!predicate()) {
+        if (performance.now() >= deadline) throw new Error('Browser runtime did not finish within 3 seconds');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    },
     restore() {
       globalThis.document = original.document;
       globalThis.localStorage = original.localStorage; globalThis.location = original.location;
@@ -249,7 +255,7 @@ test('浏览器运行时分别使用 Activation、Package 和 Notification 公�
     },
   });
   try {
-    await browser.settle();
+    await browser.settle(() => browser.elements.some(element => element.id === '__appgog_update'));
     assert.equal(browser.classes.has('__appgog_locked'), false);
     assert.ok(browser.elements.some((element) => element.id === '__appgog_update'));
   } finally { browser.restore(); }

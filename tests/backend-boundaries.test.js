@@ -107,7 +107,8 @@ test('phase two HTTP boundaries own public, identity, customer, licensing and pr
 
 test('HTTP middleware owns request IDs, errors, authentication and rate limits', () => {
   const http = read('apps/license-api/src/http.js');
-  const requestContext = read('apps/license-api/src/http/middleware/request-context.js');
+  const requestContext = read('packages/core/src/request-context.js');
+  assert.match(read('apps/license-api/src/http/middleware/request-context.js'), /packages\/core\/src\/request-context/);
   const errorHandler = read('apps/license-api/src/http/middleware/error-handler.js');
   const auth = read('apps/license-api/src/http/middleware/auth.js');
   const rateLimit = read('apps/license-api/src/http/middleware/rate-limit.js');

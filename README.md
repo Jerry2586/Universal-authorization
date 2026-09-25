@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.2.17
+# APPGOG打包授权系统 v1.2.20
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -9,12 +9,14 @@
 进入服务器的 root 终端，只复制下面这一条固定命令。首次执行自动安装，今后发布新版本后仍然逐字执行同一句命令自动升级：
 
 ```sh
-sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; else echo "不支持的系统包管理器" >&2; exit 1; fi; }; curl -fsSL https://cdn.jsdelivr.net/gh/Jerry2586/Universal-authorization@main/install-docker.sh | sh'
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh
 ```
+
+若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。之后一直使用上面的固定命令。升级以签名 Latest Release 为准，单独推送 Git 源码不会产生正式更新。
 
 引导器识别 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora 和 Oracle Linux 以及 amd64/arm64，自动补齐 CA、OpenSSL、系统工具、Docker、Compose 和 Buildx。它获取最新正式 Release，先验证 Ed25519 清单签名，再校验 `.run` 的 SHA-256，最后下载安装包并部署。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
 
-默认使用 jsDelivr 获取固定引导器；引导器下载正式包时依次尝试配置的国内源、GitHub Release 和两个 GitHub 代理地址。无论来自哪个源，签名或哈希不匹配都会拒绝执行。自有国内对象存储可通过 `APPGOG_CHINA_RELEASE_BASE=https://你的国内地址` 配置。完全断网时仍可上传版本化 `.run` 离线安装。传入一次性 `--cloudflare-token` 后可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
+默认从 GitHub 源码地址获取固定引导器；引导器下载正式包时依次尝试配置的国内源、GitHub Release 和两个 GitHub 代理地址。无论来自哪个源，签名或哈希不匹配都会拒绝执行。自有国内对象存储可通过 `APPGOG_CHINA_RELEASE_BASE=https://你的国内地址` 配置。完全断网时仍可上传版本化 `.run` 离线安装。传入一次性 `--cloudflare-token` 后可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
 
 安装器会在构建前真实拉取 Node 与 Caddy 基础镜像做网络探测。Docker Hub、DNS 或 TLS 链路不可用时，会自动改用 DaoCloud 公开维护的 Docker Hub 镜像路径，并把成功选择同步到升级后的 `.env`；构建发生临时网络错误会自动重试 3 次。整个过程不会关闭 TLS，也不会配置 `insecure-registries`。探测和构建分别写入 `shared/logs/image-source-*.log` 与 `shared/logs/build-*.log`。
 
@@ -22,7 +24,7 @@ sh -c 'command -v curl >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&
 
 仓库为公开仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.17` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.20` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -119,7 +121,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.17 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.20 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
@@ -214,7 +216,7 @@ npm run start:split
 - 客户打包中心：`http://127.0.0.1:8788/build`
 - 打包中心健康检查：`http://127.0.0.1:8788/health`
 
-`npm start` 仍可运行兼容单体模式；分别部署时使用 `npm run start:license`、`npm run start:build` 和 `npm run start:worker`。独立服务必须共享相同的 `INTERNAL_SERVICE_TOKEN`，Worker 使用另一个 `WORKER_TOKEN`。
+`npm start` 默认同时启动授权中心、打包中心和独立 Worker；兼容单体模式使用 `npm run start:combined`（两个页面均在 `PORT` 端口）；分别部署时使用 `npm run start:license`、`npm run start:build` 和 `npm run start:worker`。独立服务必须共享相同的 `INTERNAL_SERVICE_TOKEN`，Worker 使用另一个 `WORKER_TOKEN`。
 
 管理员用户名和密码来自 `.env` 的 `ADMIN_USERNAME`、`ADMIN_PASSWORD`。`ADMIN_TOKEN` 只用于自动化管理 API，不用于网页登录。
 

@@ -75,7 +75,6 @@ export function createCustomerPage(shell) {
     $('license-prefix').textContent = license.key_prefix ? `${license.key_prefix}••••` : '已验证';
     $('license-domain-detail').textContent = license.bound_domain ?? '未绑定';
     $('update-until').textContent = date(license.update_until);
-    if ($('customer-system-version')) $('customer-system-version').textContent = data.system_version ? `v${data.system_version}` : 'v—';
 
     const announcement = data.announcement;
     const banner = $('announcement-banner');

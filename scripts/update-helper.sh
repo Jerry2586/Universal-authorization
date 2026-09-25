@@ -9,6 +9,7 @@ LOG_FILE="$INSTALL_ROOT/shared/logs/update.log"
 CURRENT_LINK="$INSTALL_ROOT/current"
 RELOAD_HELPER=false
 . "$CURRENT_LINK/scripts/lib/release-download.sh"
+. "$CURRENT_LINK/scripts/lib/signed-update.sh"
 
 mkdir -p "$REQUEST_DIR" "$(dirname -- "$LOG_FILE")"
 chown -R 1000:1000 "$CONTROL_DIR" 2>/dev/null || true
@@ -60,10 +61,10 @@ check_update() {
   public_key="$CURRENT_LINK/scripts/release-public.pem"
   for base in $(appgog_latest_release_sources); do
     rm -f "$work/manifest" "$work/signature"
-    if curl -fL --connect-timeout 12 --max-time 180 --retry 2 "$base/release-manifest.json" -o "$work/manifest" \
-      && curl -fL --connect-timeout 12 --max-time 180 --retry 2 "$base/release-manifest.json.sig" -o "$work/signature" \
+    if curl -fsSL --connect-timeout 12 --max-time 180 --retry 2 "$base/release-manifest.json" -o "$work/manifest" \
+      && curl -fsSL --connect-timeout 12 --max-time 180 --retry 2 "$base/release-manifest.json.sig" -o "$work/signature" \
       && openssl pkeyutl -verify -pubin -inkey "$public_key" -rawin -in "$work/manifest" -sigfile "$work/signature" >/dev/null 2>&1; then
-      jq -r '.version // empty' "$work/manifest"
+      jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$work/manifest" || continue
       rm -rf "$work"; trap - 0 1 2 15
       return 0
     fi
@@ -73,18 +74,16 @@ check_update() {
 }
 
 run_installer() {
-  requested=${1:-}
-  bootstrap=$(mktemp)
-  cp "$CURRENT_LINK/install-docker.sh" "$bootstrap"
-  chmod 700 "$bootstrap"
-  if [ -n "$requested" ]; then
-    APPGOG_VERSION="$requested" APPGOG_INSTALL_DIR="$INSTALL_ROOT" APPGOG_HELPER_ACTIVE=true APPGOG_REPAIR_SOURCE=${APPGOG_REPAIR_SOURCE:-false} \
-      sh "$bootstrap" --install-dir "$INSTALL_ROOT" --non-interactive --no-menu
-  else
-    APPGOG_INSTALL_DIR="$INSTALL_ROOT" APPGOG_HELPER_ACTIVE=true \
-      sh "$bootstrap" --install-dir "$INSTALL_ROOT" --non-interactive --no-menu
-  fi
-  rm -f "$bootstrap"
+  # Shared install-docker.sh entrypoint preserves installer failure status.
+  APPGOG_HELPER_ACTIVE=true appgog_run_signed_update "$CURRENT_LINK" "$INSTALL_ROOT" "${1:-}" "${APPGOG_REPAIR_SOURCE:-false}" "$LOG_FILE" &
+  installer_pid=$!
+  while kill -0 "$installer_pid" 2>/dev/null; do
+    write_status running '正在校验、部署并检查运行版本，请勿重复提交'
+    sleep 5
+  done
+  result=0
+  wait "$installer_pid" || result=$?
+  return "$result"
 }
 
 process_request() {
@@ -99,13 +98,13 @@ process_request() {
       ;;
     install-version)
       write_status running '正在备份、下载、构建并切换新版本'
-      if run_installer "$version" >> "$LOG_FILE" 2>&1; then latest=${version:-$(current_version)}; log "在线更新完成：v$latest"; write_status succeeded "已更新到 v$latest" "$latest"; RELOAD_HELPER=true
+      if run_installer "$version"; then latest=${version:-$(current_version)}; log "在线更新完成：v$latest"; write_status succeeded "已更新到 v$latest" "$latest"; RELOAD_HELPER=true
       else log '在线更新失败，安装器已执行自动回滚'; write_status failed '更新失败，已保留旧版本和完整数据'; fi
       ;;
     repair-current)
       version=$(current_version)
       write_status running "正在重新下载并深度修复 v$version" "$version"
-      if APPGOG_REPAIR_SOURCE=true run_installer "$version" >> "$LOG_FILE" 2>&1; then log "源码修复完成：v$version"; write_status succeeded "v$version 源码修复完成" "$version"; RELOAD_HELPER=true
+      if APPGOG_REPAIR_SOURCE=true run_installer "$version"; then log "源码修复完成：v$version"; write_status succeeded "v$version 源码修复完成" "$version"; RELOAD_HELPER=true
       else log '源码修复失败，已恢复原版本'; write_status failed '源码修复失败，原版本仍可使用' "$version"; fi
       ;;
     transfer-source|import-target)
@@ -126,7 +125,12 @@ case "${1:-}" in
   *) echo '此脚本由 appgog-update-helper.service 管理。' >&2; exit 1 ;;
 esac
 
-write_status idle '在线更新助手已就绪'
+initial_state=$(jq -r '.state // "idle"' "$STATUS_FILE" 2>/dev/null || echo idle)
+case "$initial_state" in
+  succeeded|failed) write_status "$initial_state" "$(jq -r '.message' "$STATUS_FILE")" ;;
+  running) write_status failed '助手在执行中重启，请检查日志与运行版本后重试' ;;
+  *) write_status idle '在线更新助手已就绪' ;;
+esac
 while :; do
   request=$(find "$REQUEST_DIR" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort | head -n 1 || true)
   if [ -n "$request" ]; then

@@ -65,6 +65,7 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
     });
     return { status: response.status, cookie: response.headers.get('set-cookie'), data: await response.json() };
   };
+  assert.equal((await fetch(`${buildUrl}/health`)).status, 200);
   assert.equal((await fetch(`${buildUrl}/admin`)).status, 404);
   assert.equal((await fetch(`${centerUrl}/build`)).status, 404);
   assert.equal((await send(centerUrl, '/web/customer/overview')).status, 403);

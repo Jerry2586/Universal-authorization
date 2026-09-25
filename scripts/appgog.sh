@@ -26,6 +26,7 @@ OPERATIONS_LOG="$SHARED_DIR/logs/operations.log"
 . "$ROOT_DIR/scripts/lib/dns.sh"
 . "$ROOT_DIR/scripts/lib/lifecycle.sh"
 . "$ROOT_DIR/scripts/lib/manager-migration.sh"
+. "$ROOT_DIR/scripts/lib/signed-update.sh"
 
 [ -f "$DOCKER_SCRIPT" ] && [ -f "$ROOT_DIR/compose.yaml" ] || {
   echo "APPGOG 安装目录无效：$ROOT_DIR" >&2
@@ -71,18 +72,7 @@ run_docker() {
 }
 
 run_signed_installer() {
-  requested=${1:-}; repair=${2:-false}; log_name=${3:-update.log}
-  mkdir -p "$SHARED_DIR/logs"
-  bootstrap=$(mktemp) || return 1
-  cp "$ROOT_DIR/install-docker.sh" "$bootstrap" || { rm -f "$bootstrap"; return 1; }
-  chmod 700 "$bootstrap"
-  if [ -n "$requested" ]; then
-    APPGOG_VERSION="$requested" APPGOG_INSTALL_DIR="$INSTALL_ROOT" APPGOG_REPAIR_SOURCE="$repair" \
-      sh "$bootstrap" --install-dir "$INSTALL_ROOT" --non-interactive --no-menu 2>&1 | tee -a "$SHARED_DIR/logs/$log_name"
-  else
-    APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$bootstrap" --install-dir "$INSTALL_ROOT" --non-interactive --no-menu 2>&1 | tee -a "$SHARED_DIR/logs/$log_name"
-  fi
-  result=$?; rm -f "$bootstrap"; return "$result"
+  appgog_run_signed_update "$ROOT_DIR" "$INSTALL_ROOT" "${1:-}" "${2:-false}" "$SHARED_DIR/logs/${3:-update.log}"
 }
 
 online_update() { run_signed_installer '' false update.log; }
@@ -219,7 +209,7 @@ header() {
   printf '运行状态：%b%s%b\n' "$SERVICE_COLOR" "$SERVICE_STATE" "$RESET"
   printf '授权中心：%bhttps://%s/admin%b\n' "$GREEN" "${auth_domain:-未配置}" "$RESET"
   printf '打包中心：%bhttps://%s/build%b\n' "$GREEN" "${build_domain:-未配置}" "$RESET"
-  printf '更新状态：本地 v%s（安全更新需人工确认）\n' "$version"
+  printf '更新状态：本地 v%s（选 9 检查并更新最新正式版）\n' "$version"
   printf '最近备份：%s\n' "$(latest_backup_name)"
   printf '安全状态：%s；DNS/HTTPS/证书请运行 appgog doctor\n\n' "$(config_security_state)"
 }
@@ -387,7 +377,12 @@ main_menu() {
       6) configure_domains; pause_menu ;;
       7) configure_services; pause_menu ;;
       8) run_docker credentials; pause_menu ;;
-      9) confirm '确认检查签名 Release、完整备份并更新到最新版本？' && online_update; pause_menu ;;
+      9) if online_update; then
+           if [ -f "$INSTALL_ROOT/current/scripts/appgog.sh" ]; then
+             APPGOG_ROOT= exec sh "$INSTALL_ROOT/current/scripts/appgog.sh"
+           fi
+         fi
+         pause_menu ;;
       10) run_docker backup; pause_menu ;;
       11) restore_menu; pause_menu ;;
       12) advanced_menu ;;

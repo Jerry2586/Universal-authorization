@@ -20,8 +20,14 @@ export function loadConfig(overrides = {}) {
   const legacySurface = overrides.surface ?? process.env.APPGOG_SURFACE ?? null;
   const selectedRole = overrides.role ?? process.env.APPGOG_ROLE
     ?? (legacySurface === 'license-center' ? 'license-center' : 'all-in-one');
+  const port = overrides.port ?? Number(process.env.PORT ?? 8787);
+  const buildPort = Number(process.env.BUILD_CENTER_PORT ?? 8788);
+  for (const [name, value] of [['PORT', port], ['BUILD_CENTER_PORT', buildPort]]) {
+    if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error(name + ' 必须为 1–65535 的整数');
+  }
+  const publicBaseUrl = overrides.publicBaseUrl ?? process.env.PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}`;
   const config = {
-    port: integer('PORT', 8787),
+    port,
     role: selectedRole,
     surface: selectedRole === 'all-in-one' ? 'combined' : 'license-center',
     internalServiceToken: process.env.INTERNAL_SERVICE_TOKEN ?? '',
@@ -41,8 +47,9 @@ export function loadConfig(overrides = {}) {
     deliveryEncryptionKey: process.env.DELIVERY_ENCRYPTION_KEY ?? 'development-delivery-key-change-me-now',
     licenseEncryptionKey: process.env.LICENSE_ENCRYPTION_KEY ?? process.env.DELIVERY_ENCRYPTION_KEY ?? 'development-license-key-change-me-now',
     updateControlPath: resolve(cwd, process.env.UPDATE_CONTROL_PATH ?? './var/update-control'),
-    publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'http://127.0.0.1:8787',
-    buildCenterPublicUrl: process.env.BUILD_CENTER_PUBLIC_URL ?? 'http://127.0.0.1:8788/build',
+    publicBaseUrl,
+    buildCenterPublicUrl: process.env.BUILD_CENTER_PUBLIC_URL ?? (selectedRole === 'all-in-one'
+      ? new URL('/build', publicBaseUrl).href : `http://127.0.0.1:${buildPort}/build`),
     artifactRoot: resolve(cwd, process.env.ARTIFACT_ROOT ?? './var/artifacts'),
     uploadRoot: resolve(cwd, process.env.UPLOAD_ROOT ?? './var/uploads'),
     activationTokenTtlSeconds: integer('ACTIVATION_TOKEN_TTL_SECONDS', 604800),
