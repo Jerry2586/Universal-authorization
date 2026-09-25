@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS licenses (
   max_builds_per_day INTEGER NOT NULL DEFAULT 3,
   max_activations INTEGER NOT NULL DEFAULT 1,
   plan_id TEXT REFERENCES license_plans(id),
+  entitlement_capabilities_json TEXT NOT NULL DEFAULT '[]',
+  entitlement_limits_json TEXT NOT NULL DEFAULT '{}',
   generation INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

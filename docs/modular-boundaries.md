@@ -82,6 +82,7 @@ APPGOG 主题 → Activation API → Ed25519 凭证 → 本地验签 SDK
 ## 仍需注意
 
 - 通用服务端授权守卫已位于 `packages/appgog-sdk/src/guard.js`；真实 APPGOG/Xboard 源码不在本仓库中，因此关键设置 API 的逐路由接入仍需目标项目。
+- Entitlement 只在签发或套餐切换时写 License 能力/额度快照；Product、Packaging、Activation 和 UI 只能读取快照或签名 Token，不得动态依赖可变套餐模板作为既有授权的最终边界。
 - `dashboard.blade.php` 的相对静态资源 URL 需要在真实 Xboard 路由上验收；如果路由解析不同，应改为内联运行时或主题的固定资源前缀。
 - SQLite、共享本机成品卷和独立 Worker 适合单机、小规模部署；正式多机商用需完成上面的基础设施迁移。
 - 混淆和随机布局不能代替 Ed25519 签名、服务端状态、域名绑定和审计。

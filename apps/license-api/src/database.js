@@ -33,6 +33,8 @@ const MIGRATIONS = Object.freeze({
     ['max_activations', 'INTEGER NOT NULL DEFAULT 1'],
     ['key_encrypted', 'TEXT'],
     ['plan_id', 'TEXT REFERENCES license_plans(id)'],
+    ['entitlement_capabilities_json', "TEXT NOT NULL DEFAULT '[]'"],
+    ['entitlement_limits_json', "TEXT NOT NULL DEFAULT '{}'"],
   ],
   support_tickets: [
     ['closed_by_type', 'TEXT'],
@@ -159,6 +161,42 @@ function migrate(database) {
     );
     database.prepare(`UPDATE licenses SET plan_id = 'plan_legacy' WHERE plan_id IS NULL`).run();
     database.exec('CREATE INDEX IF NOT EXISTS idx_licenses_plan ON licenses(plan_id)');
+  });
+
+  const entitlementSnapshotVersion = '2026-09-25-v1.2.15-entitlement-snapshots';
+  runMigration(database, entitlementSnapshotVersion, () => {
+    addMissingColumns(database, { licenses: [
+      ['entitlement_capabilities_json', "TEXT NOT NULL DEFAULT '[]'"],
+      ['entitlement_limits_json', "TEXT NOT NULL DEFAULT '{}'"],
+    ] });
+    const licenses = database.prepare(`
+      SELECT licenses.id, licenses.max_builds_per_day, licenses.max_activations,
+        licenses.entitlement_capabilities_json, licenses.entitlement_limits_json,
+        license_plans.capabilities_json
+      FROM licenses
+      LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
+    `).all();
+    const update = database.prepare(`
+      UPDATE licenses
+      SET entitlement_capabilities_json = ?, entitlement_limits_json = ?
+      WHERE id = ?
+    `);
+    const legacyCapabilities = JSON.stringify([
+      'settings:read', 'settings:write', 'theme:enable',
+      'xboard:connect', 'protected:read', 'updates:read',
+    ]);
+    for (const license of licenses) {
+      const capabilities = license.entitlement_capabilities_json === '[]'
+        ? (license.capabilities_json ?? legacyCapabilities)
+        : license.entitlement_capabilities_json;
+      const limits = license.entitlement_limits_json === '{}'
+        ? JSON.stringify({
+          max_builds_per_day: license.max_builds_per_day,
+          max_activations: license.max_activations,
+        })
+        : license.entitlement_limits_json;
+      update.run(capabilities, limits, license.id);
+    }
   });
 
   const installationProofVersion = '2026-09-24-v1.2.10-installation-proof';

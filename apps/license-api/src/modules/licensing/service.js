@@ -39,6 +39,7 @@ export function createLicensingService({
       const plan = repository.planByCode(String(planCode ?? 'legacy').trim().toLowerCase());
       invariant(plan && plan.status === 'active', 'LICENSE_PLAN_INVALID', '授权套餐不存在或已停用');
       const planLimits = parseJsonObject(plan.limits_json, {});
+      const planCapabilities = parseJsonObject(plan.capabilities_json, []);
       const resolvedBuildLimit = maxBuildsPerDay ?? planLimits.max_builds_per_day ?? 3;
       const resolvedActivationLimit = maxActivations ?? planLimits.max_activations ?? 1;
       invariant(customerRef?.trim(), 'CUSTOMER_REQUIRED', '必须提供客户编号');
@@ -63,7 +64,11 @@ export function createLicensingService({
           keyHash: hashSecret(plainKey, config.pepper), keyEncrypted: sealSecret(plainKey, licenseEncryptionKey),
           status: LICENSE_STATUS.ACTIVE, boundDomain: domain ? canonicalizeDomain(domain) : null,
           updateUntil, maxBuildsPerDay: resolvedBuildLimit, maxActivations: resolvedActivationLimit,
-          planId: plan.id, now,
+          planId: plan.id, entitlementCapabilities: planCapabilities,
+          entitlementLimits: {
+            max_builds_per_day: resolvedBuildLimit,
+            max_activations: resolvedActivationLimit,
+          }, now,
         });
         audit.recordLicenseEvent({
           licenseId: created.id, eventType: 'license.issued', actorType: 'admin', actorId,

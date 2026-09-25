@@ -135,6 +135,9 @@ test('完整链路：固定 Key 打包、Install Key 解锁、固定 Key 激活�
 test('免费版能力写入签名激活凭证，SDK 在产品后端强制拒绝付费能力', () => {
   const app = fixture();
   const issued = app.service.issueLicense({ customerRef: 'customer-free', domain: 'free.example.com', planCode: 'free' });
+  app.database.prepare(`UPDATE license_plans SET capabilities_json = ? WHERE code = 'free'`).run(
+    JSON.stringify(['settings:read', 'settings:write', 'updates:read']),
+  );
   const authorization = app.service.authorizeBuild({ licenseKey: issued.licenseKey, version: '1.0.0', domain: 'free.example.com' });
   const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
   const installationId = 'installation_free_123456';
@@ -157,7 +160,39 @@ test('免费版能力写入签名激活凭证，SDK 在产品后端强制拒绝�
   assert.equal(payload.plan, 'free');
   assert.ok(payload.capabilities.includes('settings:read'));
   assert.ok(!payload.capabilities.includes('settings:write'));
+  assert.deepEqual(payload.limits, { max_builds_per_day: 1, max_activations: 1 });
   assert.throws(() => requireActivation({ ...common, capability: 'settings:write' }), (error) => error.code === 'APPGOG_CAPABILITY_DENIED');
+  app.database.close();
+});
+
+test('套餐切换原子更新能力与额度快照，并使旧激活立即失效', () => {
+  const app = fixture();
+  const issued = app.service.issueLicense({ customerRef: 'customer-plan-change', domain: 'plan.example.com', planCode: 'free' });
+  const authorization = app.service.authorizeBuild({
+    licenseKey: issued.licenseKey, version: '1.0.0', domain: 'plan.example.com',
+  });
+  const build = app.service.claimBuild({ buildTicket: authorization.buildTicket });
+  const installationId = 'installation_plan_change';
+  const receipt = app.service.unlockInstall({
+    installKey: build.installKey, buildId: build.buildId, packageProof: build.packageSecret,
+    domain: 'plan.example.com', backendUrl: 'https://panel.example.com', installationId,
+  });
+  const activation = app.service.activate({
+    licenseKey: issued.licenseKey, installReceiptId: receipt.receiptId,
+    installReceiptSecret: receipt.receiptSecret, buildId: build.buildId,
+    packageProof: build.packageSecret, domain: 'plan.example.com',
+    backendUrl: 'https://panel.example.com', installationId,
+  });
+  const changed = app.service.changeLicensePlan({ licenseId: issued.license.id, planCode: 'paid', actorId: 'adm_owner' });
+  assert.equal(changed.plan_code, 'paid');
+  assert.equal(changed.max_builds_per_day, 10);
+  assert.equal(changed.max_activations, 3);
+  assert.ok(JSON.parse(changed.entitlement_capabilities_json).includes('settings:write'));
+  assert.deepEqual(JSON.parse(changed.entitlement_limits_json), { max_builds_per_day: 10, max_activations: 3 });
+  assert.throws(() => app.service.refresh({
+    activationId: activation.activationId, refreshSecret: activation.refreshSecret,
+    domain: 'plan.example.com', backendUrl: 'https://panel.example.com', installationId,
+  }), (error) => ['ACTIVATION_INACTIVE', 'LICENSE_ROTATED'].includes(error.code));
   app.database.close();
 });
 

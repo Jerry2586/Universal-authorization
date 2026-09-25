@@ -13,6 +13,7 @@ export function browserLicenseRuntime(config) {
   const installKey = `appgog_install_${config.p}`;
   let saved;
   let integrityFailure = false;
+  let activePayload = null;
   try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { saved = null; }
   let installationId = localStorage.getItem(installKey);
   if (!installationId) {
@@ -51,6 +52,23 @@ export function browserLicenseRuntime(config) {
   const activationPublicKey = crypto.subtle.importKey('spki', bytes(config.a || config.k), { name: 'Ed25519' }, false, ['verify']);
   const packagePublicKey = crypto.subtle.importKey('spki', bytes(config.q || config.k), { name: 'Ed25519' }, false, ['verify']);
   const notificationPublicKey = crypto.subtle.importKey('spki', bytes(config.n || config.k), { name: 'Ed25519' }, false, ['verify']);
+  const legacyCapabilities = [
+    'settings:read', 'settings:write', 'theme:enable',
+    'xboard:connect', 'protected:read', 'updates:read',
+  ];
+
+  function hasCapability(capability) {
+    if (!activePayload || typeof capability !== 'string' || !capability) return false;
+    const capabilities = activePayload.capabilities === undefined ? legacyCapabilities : activePayload.capabilities;
+    return Array.isArray(capabilities) && capabilities.includes(capability);
+  }
+
+  function requireCapability(capability) {
+    if (hasCapability(capability)) return true;
+    const error = new Error('当前授权不允许执行此操作');
+    error.code = 'APPGOG_CAPABILITY_DENIED';
+    throw error;
+  }
 
   async function signedPayload(token, keyPromise) {
     try {
@@ -125,6 +143,7 @@ export function browserLicenseRuntime(config) {
     if (!saved || saved.denied) return 'locked';
     const payload = await activationPayload(saved.activation_token, saved.backend_origin);
     if (!payload) return 'locked';
+    activePayload = payload;
     if (payload.exp > now() + 300) return 'active';
     try {
       const response = await post('/api/v1/activations/refresh', {
@@ -134,6 +153,7 @@ export function browserLicenseRuntime(config) {
       });
       const refreshed = await activationPayload(response.activation_token, saved.backend_origin);
       if (!refreshed || refreshed.exp <= now()) return 'locked';
+      activePayload = refreshed;
       store({ ...saved, activation_token: response.activation_token });
       return 'active';
     } catch (error) {
@@ -168,6 +188,7 @@ export function browserLicenseRuntime(config) {
 
   async function checkUpdates() {
     try {
+      if (!hasCapability('updates:read')) return;
       // Optional endpoint. A missing feed must never affect the activation state.
       const response = await fetch(`${config.u}/api/v1/releases/latest?product=${encodeURIComponent(config.p)}`);
       if (!response.ok) return;
@@ -180,6 +201,8 @@ export function browserLicenseRuntime(config) {
         || (feed.display_name ?? null) !== (latest.display_name ?? null)
         || (feed.release_notes ?? null) !== (latest.release_notes ?? null)
         || (feed.published_at ?? null) !== (latest.published_at ?? null)
+        || (feed.channel ?? null) !== (latest.channel ?? null)
+        || (feed.release_kind ?? null) !== (latest.release_kind ?? null)
         || !newerVersion(feed.version, config.v)) return;
       const notice = document.createElement('aside');
       notice.id = '__appgog_update';
@@ -267,6 +290,7 @@ export function browserLicenseRuntime(config) {
         });
         const payload = await activationPayload(result.activation_token, saved.backend_origin);
         if (!payload || payload.exp <= now()) throw new Error('激活凭证本地验证失败');
+        activePayload = payload;
         store({ activation_id: result.activation_id, activation_token: result.activation_token,
           refresh_secret: result.refresh_secret, backend_origin: saved.backend_origin });
         fixedInput.value = '';
@@ -281,7 +305,7 @@ export function browserLicenseRuntime(config) {
 
   globalThis.APPGOGLicense = {
     product: config.p, version: config.v, buildId: config.b, packageId: config.i,
-    installationId, status: 'checking', checkUpdates,
+    installationId, status: 'checking', checkUpdates, hasCapability, requireCapability,
   };
   const start = () => { void packageIdentityValid().then((valid) => {
     if (!valid) { integrityFailure = true; showGate(); return; }
@@ -292,7 +316,11 @@ export function browserLicenseRuntime(config) {
 }
 
 function randomizedIdentifiers(source, packageId) {
-  const names = ['integrityFailure', 'signedPayload', 'activationPayload', 'protectedIdentityValid', 'packageIdentityValid', 'checkStoredActivation', 'releasePayload', 'offlineValid'];
+  const names = [
+    'integrityFailure', 'activePayload', 'signedPayload', 'activationPayload', 'protectedIdentityValid',
+    'packageIdentityValid', 'checkStoredActivation', 'releasePayload', 'offlineValid',
+    'hasCapability', 'requireCapability',
+  ];
   let output = source;
   for (const [index, name] of names.entries()) {
     const suffix = createHash('sha256').update(`${packageId}:${index}:${name}`).digest('hex').slice(0, 10);

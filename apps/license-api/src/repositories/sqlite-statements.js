@@ -5,13 +5,17 @@ export function createSqliteStatements(database) {
     planByCode: database.prepare(`SELECT * FROM license_plans WHERE code = ?`),
     listPlans: database.prepare(`SELECT * FROM license_plans WHERE status = 'active' ORDER BY code ASC`),
     insertLicense: database.prepare(`
-      INSERT INTO licenses (id, product_id, customer_ref, key_prefix, key_hash, key_encrypted, status, bound_domain, update_until, max_builds_per_day, max_activations, plan_id, generation, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      INSERT INTO licenses (
+        id, product_id, customer_ref, key_prefix, key_hash, key_encrypted, status, bound_domain,
+        update_until, max_builds_per_day, max_activations, plan_id,
+        entitlement_capabilities_json, entitlement_limits_json, generation, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `),
     licenseByHash: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
         license_plans.code AS plan_code, license_plans.name AS plan_name,
-        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json
+        licenses.entitlement_capabilities_json AS plan_capabilities_json,
+        licenses.entitlement_limits_json AS plan_limits_json
       FROM licenses
       JOIN products ON products.id = licenses.product_id
       LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
@@ -20,7 +24,8 @@ export function createSqliteStatements(database) {
     licenseById: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
         license_plans.code AS plan_code, license_plans.name AS plan_name,
-        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json
+        licenses.entitlement_capabilities_json AS plan_capabilities_json,
+        licenses.entitlement_limits_json AS plan_limits_json
       FROM licenses
       JOIN products ON products.id = licenses.product_id
       LEFT JOIN license_plans ON license_plans.id = licenses.plan_id
@@ -113,7 +118,8 @@ export function createSqliteStatements(database) {
       SELECT activations.*, licenses.status AS license_status, licenses.generation AS license_generation,
         licenses.bound_domain, licenses.plan_id, builds.package_id, builds.version, builds.status AS build_status,
         products.code AS product_code, license_plans.code AS plan_code,
-        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json
+        licenses.entitlement_capabilities_json AS plan_capabilities_json,
+        licenses.entitlement_limits_json AS plan_limits_json
       FROM activations
       JOIN licenses ON licenses.id = activations.license_id
       JOIN builds ON builds.id = activations.build_id
@@ -333,7 +339,8 @@ export function createSqliteStatements(database) {
     listLicenses: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
         license_plans.code AS plan_code, license_plans.name AS plan_name,
-        license_plans.capabilities_json AS plan_capabilities_json, license_plans.limits_json AS plan_limits_json,
+        licenses.entitlement_capabilities_json AS plan_capabilities_json,
+        licenses.entitlement_limits_json AS plan_limits_json,
         (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id) AS build_count,
         (SELECT COUNT(*) FROM activations WHERE activations.license_id = licenses.id AND activations.status = 'active') AS active_activation_count
       FROM licenses
@@ -484,7 +491,12 @@ export function createSqliteStatements(database) {
       UPDATE licenses SET bound_domain = ?, generation = generation + 1, updated_at = ? WHERE id = ?
     `),
     changeLicenseStatus: database.prepare(`UPDATE licenses SET status = ?, updated_at = ? WHERE id = ?`),
-    changeLicensePlan: database.prepare(`UPDATE licenses SET plan_id = ?, generation = generation + 1, updated_at = ? WHERE id = ?`),
+    changeLicensePlan: database.prepare(`
+      UPDATE licenses
+      SET plan_id = ?, entitlement_capabilities_json = ?, entitlement_limits_json = ?,
+        max_builds_per_day = ?, max_activations = ?, generation = generation + 1, updated_at = ?
+      WHERE id = ?
+    `),
     markLicenseDeleting: database.prepare(`UPDATE licenses SET status = 'deleting', generation = generation + 1, updated_at = ? WHERE id = ? AND status <> 'deleting'`),
     licenseFileRefs: database.prepare(`
       SELECT artifact_ref AS storage_ref FROM build_jobs WHERE license_id = ? AND artifact_ref IS NOT NULL

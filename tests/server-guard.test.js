@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
-import { requireActivation } from '../packages/appgog-sdk/src/guard.js';
+import { hasCapability, requireActivation, requireCapability } from '../packages/appgog-sdk/src/guard.js';
 import { signCompactToken } from '../packages/core/src/signing.js';
 
 function fixture() {
@@ -29,4 +29,12 @@ test('服务端授权守卫拒绝未激活、错误环境和缺少能力的请�
   assert.throws(() => requireActivation({ ...base, token: app.token, capability: 'theme:enable' }), (error) => error.code === 'APPGOG_CAPABILITY_DENIED');
   const payload = requireActivation({ ...base, headers: { authorization: `Bearer ${app.token}` }, capability: 'settings:write' });
   assert.equal(payload.package_id, 'pkg_guard');
+  assert.equal(hasCapability(payload, 'settings:read'), true);
+  assert.equal(hasCapability(payload, 'theme:enable'), false);
+  assert.throws(() => requireCapability(payload, 'theme:enable'), (error) => error.code === 'APPGOG_CAPABILITY_DENIED');
+});
+
+test('旧版已签名激活凭证未携带 capabilities 时保持历史兼容能力', () => {
+  assert.equal(hasCapability({ typ: 'activation' }, 'settings:write'), true);
+  assert.equal(hasCapability({ typ: 'activation', capabilities: [] }, 'settings:write'), false);
 });

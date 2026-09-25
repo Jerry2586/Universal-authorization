@@ -113,6 +113,15 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
         option.selected = plan.code === license.plan_code; select.append(option);
       }
       label.append(select); form.append(label);
+      const summary = element('div', null, 'notice notice-info');
+      const renderSummary = () => {
+        const plan = plans.find((item) => item.code === select.value);
+        if (!plan) { summary.textContent = '未找到套餐配置'; return; }
+        const buildLimit = plan.limits?.max_builds_per_day ?? license.max_builds_per_day;
+        const activationLimit = plan.limits?.max_activations ?? license.max_activations;
+        summary.textContent = `能力：${(plan.capabilities ?? []).join('、') || '无'} · 每日构建 ${buildLimit} 次 · 激活 ${activationLimit} 个环境`;
+      };
+      select.addEventListener('change', renderSummary); renderSummary(); form.append(summary);
       const row = element('div', null, 'dialog-actions'); row.append(button('取消', close, 'button button-secondary'));
       const submit = element('button', '确认切换', 'button button-primary'); submit.type = 'submit'; row.append(submit); form.append(row);
       form.addEventListener('submit', async (event) => {

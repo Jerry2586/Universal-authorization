@@ -1,4 +1,4 @@
-# APPGOG打包授权系统 v1.2.14
+# APPGOG打包授权系统 v1.2.15
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
@@ -119,7 +119,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.14 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.15 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
@@ -146,7 +146,8 @@ npm run cms:package
 - 每次构建独立身份和一次性 Install Key，Install Key 完成安装解锁后立即作废；正式激活另行使用固定 License Key。
 - 激活凭证绑定域名、Xboard 后台 Origin、服务器安装公钥指纹、Installation ID、Build 和 Package；安装、刷新和产品迁机使用一次性 Challenge Proof。
 - Activation、Package 和 Notification 使用三套独立 Ed25519 密钥；固定 Key、安装 Key、刷新 Secret 等只保存 HMAC 摘要。
-- 免费版、付费版和历史兼容版能力写入签名 Activation Token，并由 SDK 服务端 Guard 执行，不能通过修改前端按钮绕过。
+- 免费版、付费版和历史兼容版在签发或切换时固化能力与额度快照；授权中心额度、客户包运行时、SDK 和服务端 Guard 四层执行，不能通过修改套餐模板或前端按钮绕过。
+- 客户包提供 `APPGOGLicense.hasCapability()` 与 `requireCapability()`；只有签名激活凭证含 `updates:read` 时才查询并展示签名版本通知。
 - 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；首次管理员密码和新建管理员密码均为六位数字，管理员可在用户中心自行改密；普通管理员可软删除，所有者和当前账号受保护。
 - 客户打包站只接收固定 Key，不暴露内部客户编号、订单号或授权记录 ID；授权中心可审计成员操作。
 - 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。

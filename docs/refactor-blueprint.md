@@ -1,7 +1,7 @@
 # APPGOG 公司级重构蓝图
 
 日期：2026-09-24  
-状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2，v1.2.13 已完成 Phase 3，v1.2.14 已完成 Phase 4
+状态：强制执行；v1.2.11 已完成 Phase 1，v1.2.12 已完成 Phase 2，v1.2.13 已完成 Phase 3，v1.2.14 已完成 Phase 4，v1.2.15 已完成 Phase 5
 适用范围：授权中心、客户打包中心、构建 Worker、产品 SDK、Docker 安装器、在线更新助手和服务器迁移能力。
 
 ## 1. 目标与非目标
@@ -210,6 +210,8 @@ action result reason_code duration_ms
 - 建立免费/付费能力快照；
 - 后端、构建包、SDK 和服务端 Guard 四层执行；
 - 产品构建写入版本通知和兼容更新通道。
+
+完成状态（v1.2.15）：License 在签发与套餐切换时固化能力和有效额度快照，后续修改套餐模板不会改变既有授权；切换套餐原子更新快照与额度、增加 generation、撤销旧激活并记录审计。授权中心按快照执行构建/激活额度，Activation Token 携带签名能力与额度，客户包运行时公开 `hasCapability/requireCapability`，SDK 与服务端 Guard 使用同一拒绝码；缺少 `updates:read` 的激活不请求版本 Feed，版本、名称、说明、时间、通道、发布类型和打包地址均受独立 Notification 签名约束。真实 APPGOG/Xboard 服务端的逐路由 Guard 接入仍须在取得目标产品源码后完成。
 
 ### Phase 6：服务器迁移
 

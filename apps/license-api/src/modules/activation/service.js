@@ -45,6 +45,7 @@ export function createActivationService({
       exp: Math.floor(nowDate.getTime() / 1000) + config.activationTokenTtlSeconds,
       offline_until: Math.floor(nowDate.getTime() / 1000) + config.activationTokenTtlSeconds + (config.offlineGraceSeconds ?? 2592000),
       plan: activation.plan_code ?? 'legacy', capabilities: capabilitiesFor(activation),
+      limits: JSON.parse(activation.plan_limits_json ?? '{}'),
     };
   }
 

@@ -1043,3 +1043,51 @@ test('已经记录旧基线迁移但缺少后续列的生产数据库会安全�
     } finally { upgraded.close(); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('旧授权数据库升级会生成不可漂移的能力与额度快照并保留原额度', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-v1215-entitlement-test-'));
+  const path = join(root, 'legacy-entitlement.sqlite');
+  try {
+    const old = new DatabaseSync(path);
+    old.exec(`
+      CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO schema_migrations VALUES ('2026-09-23-v1.0.0-baseline', '2026-09-23T00:00:00.000Z');
+      CREATE TABLE products (
+        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL
+      );
+      INSERT INTO products VALUES ('prd_legacy', 'appgog', 'APPGOG', 'active', '2025-01-01');
+      CREATE TABLE licenses (
+        id TEXT PRIMARY KEY, product_id TEXT NOT NULL, customer_ref TEXT NOT NULL,
+        key_prefix TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL,
+        bound_domain TEXT, update_until TEXT, max_builds_per_day INTEGER NOT NULL DEFAULT 3,
+        max_activations INTEGER NOT NULL DEFAULT 1, generation INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO licenses VALUES (
+        'lic_legacy', 'prd_legacy', 'legacy-customer', 'APPGOG-LEGACY', 'legacy-hash', 'active',
+        'legacy.example.com', NULL, 7, 4, 1, '2025-01-01', '2025-01-01'
+      );
+    `);
+    old.close();
+
+    const upgraded = openDatabase(path);
+    try {
+      const license = upgraded.prepare(`
+        SELECT max_builds_per_day, max_activations, plan_id,
+          entitlement_capabilities_json, entitlement_limits_json
+        FROM licenses WHERE id = 'lic_legacy'
+      `).get();
+      assert.equal(license.plan_id, 'plan_legacy');
+      assert.equal(license.max_builds_per_day, 7);
+      assert.equal(license.max_activations, 4);
+      assert.ok(JSON.parse(license.entitlement_capabilities_json).includes('settings:write'));
+      assert.deepEqual(JSON.parse(license.entitlement_limits_json), {
+        max_builds_per_day: 7, max_activations: 4,
+      });
+      assert.ok(upgraded.prepare(
+        "SELECT applied_at FROM schema_migrations WHERE version = '2026-09-25-v1.2.15-entitlement-snapshots'",
+      ).get());
+    } finally { upgraded.close(); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -7,6 +7,23 @@ function bearerToken(headers = {}) {
   return match?.[1] ?? null;
 }
 
+const LEGACY_CAPABILITIES = Object.freeze([
+  'settings:read', 'settings:write', 'theme:enable',
+  'xboard:connect', 'protected:read', 'updates:read',
+]);
+
+export function hasCapability(payload, capability) {
+  if (!payload || typeof capability !== 'string' || !capability) return false;
+  const capabilities = payload.capabilities === undefined ? LEGACY_CAPABILITIES : payload.capabilities;
+  return Array.isArray(capabilities) && capabilities.includes(capability);
+}
+
+export function requireCapability(payload, capability) {
+  invariant(hasCapability(payload, capability),
+    'APPGOG_CAPABILITY_DENIED', '当前授权不允许执行此操作', 403);
+  return payload;
+}
+
 export function requireActivation({
   token,
   headers,
@@ -27,10 +44,7 @@ export function requireActivation({
     token: activationToken, publicKey, product, domain, backendUrl,
     installationId, buildId, packageId, now, allowOffline,
   });
-  if (capability) {
-    invariant(Array.isArray(payload.capabilities) && payload.capabilities.includes(capability),
-      'APPGOG_CAPABILITY_DENIED', '当前授权不允许执行此操作', 403);
-  }
+  if (capability) requireCapability(payload, capability);
   return payload;
 }
 

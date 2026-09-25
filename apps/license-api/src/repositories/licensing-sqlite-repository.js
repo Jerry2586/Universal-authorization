@@ -6,7 +6,9 @@ export function createLicensingSqliteRepository(queries) {
       queries.insertLicense.run(
         values.id, values.productId, values.customerRef, values.keyPrefix, values.keyHash, values.keyEncrypted ?? null,
         values.status, values.boundDomain ?? null, values.updateUntil ?? null,
-        values.maxBuildsPerDay, values.maxActivations, values.planId ?? null, values.now, values.now,
+        values.maxBuildsPerDay, values.maxActivations, values.planId ?? null,
+        JSON.stringify(values.entitlementCapabilities ?? []), JSON.stringify(values.entitlementLimits ?? {}),
+        values.now, values.now,
       );
       return queries.licenseById.get(values.id);
     },

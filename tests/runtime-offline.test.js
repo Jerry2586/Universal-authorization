@@ -151,6 +151,33 @@ test('成功刷新会验签并更新本地凭证', async () => {
   } finally { browser.restore(); }
 });
 
+test('浏览器运行时只信任签名能力快照并阻止无更新权益的版本检查', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  let requests = 0;
+  const browser = installBrowser({
+    token: activation(privateKey, {
+      capabilities: ['settings:read', 'protected:read'],
+      exp: Math.floor(FIXED_NOW / 1000) + 86400,
+      offline_until: Math.floor(FIXED_NOW / 1000) + 172800,
+    }),
+    publicKey,
+    manifestToken: packageManifest(privateKey),
+    fetchImpl: async () => { requests += 1; throw new Error('unexpected request'); },
+  });
+  try {
+    await browser.settle();
+    assert.equal(globalThis.APPGOGLicense.hasCapability('settings:read'), true);
+    assert.equal(globalThis.APPGOGLicense.hasCapability('updates:read'), false);
+    assert.throws(
+      () => globalThis.APPGOGLicense.requireCapability('settings:write'),
+      (error) => error.code === 'APPGOG_CAPABILITY_DENIED',
+    );
+    await globalThis.APPGOGLicense.checkUpdates();
+    assert.equal(requests, 0);
+    assert.equal(browser.elements.some((element) => element.id === '__appgog_update'), false);
+  } finally { browser.restore(); }
+});
+
 test('版本通知只接受与 release_token 完全一致的签名字段', async () => {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const active = activation(privateKey, {
