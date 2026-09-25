@@ -7,6 +7,7 @@ function publicKeyDer(pem) {
 // This function is serialized into the installed theme. Keep it self-contained: it has no Node dependencies.
 export function browserLicenseRuntime(config) {
   const root = document.documentElement;
+  root.classList.remove('__appgog_unlocked');
   root.classList.add('__appgog_locked');
   const runtimeSource = document.currentScript?.src || location.href;
   const storageKey = `appgog_license_${config.i}`;
@@ -203,10 +204,14 @@ export function browserLicenseRuntime(config) {
       const response = await fetch(bridgeUrl('/health'), {
         headers: token ? { authorization: token } : {}, credentials: 'same-origin', cache: 'no-store',
       });
+      if (response.status === 429) throw new Error('授权桥请求过于频繁，请稍后刷新重试');
+      if (response.status >= 500) throw new Error('授权桥服务暂时不可用，请稍后刷新重试');
       if (!response.ok) return null;
       const health = await response.json();
       return health?.ok && health?.code === config.gc ? health : null;
-    } catch { return null; }
+    } catch (error) {
+      throw new Error(error?.message || '授权桥暂时无法连接，请稍后刷新重试');
+    }
   }
 
   async function findAdminPath() {
@@ -262,8 +267,13 @@ export function browserLicenseRuntime(config) {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.gc }),
         });
       }
-      health = await bridgeHealth();
-      if (!health || versionLessThan(health.version, config.gv)) throw new Error('APPGOG 授权桥版本尚未生效，请完成插件更新后重试');
+      // Only poll reads while the upgraded PHP workers reload; never replay upload/install.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        health = await bridgeHealth();
+        if (health && !versionLessThan(health.version, config.gv)) break;
+        if (attempt < 7) await new Promise(resolve => setTimeout(resolve, 750));
+      }
+      if (!health || versionLessThan(health.version, config.gv)) throw new Error('APPGOG 授权桥版本尚未生效，请重载 Xboard 应用服务后重试；安装身份与授权数据会保留');
     }
     if (!xboardAdminPath && adminToken()) {
       try { await findAdminPath(); } catch { /* Existing bridge can still report its identity. */ }
@@ -434,6 +444,7 @@ export function browserLicenseRuntime(config) {
   }
 
   function unlock(state) {
+    root.classList.add('__appgog_unlocked');
     root.classList.remove('__appgog_locked');
     document.getElementById('__appgog_gate')?.remove();
     globalThis.APPGOGLicense.status = state;
@@ -556,8 +567,11 @@ export function browserLicenseRuntime(config) {
             backend_url: backendOrigin, installation_id: installationId,
             install_window_id: saved.install_window_id, install_window_token: saved.install_window_token,
           });
-          store({ install_receipt_id: receipt.install_receipt_id,
-            install_receipt_secret: receipt.install_receipt_secret, backend_origin: backendOrigin });
+          const backendPath = new URL(backendInput.value.trim()).pathname.split('/').filter(Boolean)[0];
+          store({ ...(saved || {}), install_receipt_id: receipt.install_receipt_id,
+            install_receipt_secret: receipt.install_receipt_secret, backend_origin: backendOrigin,
+            xboard_admin_path: backendOrigin === location.origin && /^[A-Za-z0-9_-]{1,128}$/.test(backendPath || '')
+              ? backendPath : xboardAdminPath || saved?.xboard_admin_path });
           await persistBridgeState();
           installInput.value = '';
           location.reload();
@@ -583,8 +597,9 @@ export function browserLicenseRuntime(config) {
         const activatedState = { activation_id: result.activation_id, activation_token: result.activation_token,
           refresh_secret: result.refresh_secret, backend_origin: saved.backend_origin, denied: false };
         await persistBridgeState(activatedState);
+        const { refresh_secret, install_receipt_secret, install_window_token, ...safeState } = saved || {};
         store(config.gc
-          ? { activation_id: result.activation_id, activation_token: result.activation_token,
+          ? { ...safeState, activation_id: result.activation_id, activation_token: result.activation_token,
             backend_origin: saved.backend_origin, denied: false }
           : activatedState);
         fixedInput.value = '';

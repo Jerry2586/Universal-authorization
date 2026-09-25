@@ -183,6 +183,10 @@ function themeDescriptor(files, root) {
 
 function injectRuntime(html, runtimeSrc, marker) {
   invariant(!html.includes('data-appgog-license-runtime'), 'SOURCE_ALREADY_PROTECTED', '主题包已经包含 APPGOG 授权运行时', 409);
+  // Lock before external scripts/network checks can expose the original editor.
+  const initialLock = '<style data-appgog-initial-lock>html:not(.__appgog_unlocked) body>*:not(#__appgog_gate){visibility:hidden!important}html:not(.__appgog_unlocked) body::before{content:"正在验证 APPGOG 授权…";position:fixed;inset:0;display:grid;place-items:center;background:#f6f7fb;color:#72788a;font:14px system-ui}</style>';
+  if (/<head(?:\s[^>]*)?>/i.test(html)) html = html.replace(/<head(?:\s[^>]*)?>/i, (match) => match + initialLock);
+  else html = initialLock + html;
   const tag = `<script data-appgog-license-runtime="${marker}" src="${runtimeSrc}"></script>`;
   if (/<\/head\s*>/i.test(html)) return html.replace(/<\/head\s*>/i, `${tag}</head>`);
   if (/<body(?:\s[^>]*)?>/i.test(html)) return html.replace(/<body(?:\s[^>]*)?>/i, (match) => `${tag}${match}`);

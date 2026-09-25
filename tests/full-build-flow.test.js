@@ -124,6 +124,10 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   assert.match(index, /data-appgog-license-runtime/);
   assert.match(editor, /data-appgog-license-runtime/);
   assert.match(dashboard, /data-appgog-license-runtime/);
+  for (const entry of [index, editor, dashboard]) {
+    assert.match(entry, /html:not\(\.__appgog_unlocked\)/);
+    assert.ok(entry.indexOf("data-appgog-initial-lock") < entry.indexOf("data-appgog-license-runtime"));
+  }
   const runtimeName = [...output.keys()].find((name) => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(name));
   assert.ok(runtimeName);
   const runtime = output.get(runtimeName).toString('utf8');

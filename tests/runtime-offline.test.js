@@ -49,7 +49,7 @@ function installBrowser({
 }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
-    location: globalThis.location, fetch: globalThis.fetch, DateNow: Date.now,
+    location: globalThis.location, fetch: globalThis.fetch, DateNow: Date.now, setInterval: globalThis.setInterval,
   };
   const values = initialValues ?? new Map([
     ['appgog_install_appgog', 'installation_runtime_123'],
@@ -58,6 +58,8 @@ function installBrowser({
       backend_origin: 'https://demo.example.com',
     })],
   ]);
+  const intervals = [];
+  globalThis.setInterval = (...args) => { const timer = original.setInterval(...args); intervals.push(timer); return timer; };
   const elements = [];
   const classes = new Set();
   globalThis.localStorage = {
@@ -86,13 +88,14 @@ function installBrowser({
   return {
     values, elements, classes,
     async settle(predicate = () => globalThis.APPGOGLicense.status !== 'checking' || elements.some(element => element.id === '__appgog_gate')) {
-      const deadline = performance.now() + 3000;
+      const deadline = performance.now() + 10000;
       while (!predicate()) {
-        if (performance.now() >= deadline) throw new Error('Browser runtime did not finish within 3 seconds');
+        if (performance.now() >= deadline) throw new Error('Browser runtime did not finish within 10 seconds');
         await new Promise(resolve => setTimeout(resolve, 10));
       }
     },
     restore() {
+      intervals.forEach(clearInterval); globalThis.setInterval = original.setInterval;
       globalThis.document = original.document;
       globalThis.localStorage = original.localStorage; globalThis.location = original.location;
       globalThis.fetch = original.fetch; Date.now = original.DateNow;
@@ -418,7 +421,7 @@ for (const outdated of [false, true]) {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
     const pluginZip = Buffer.from('fixture-bridge-zip');
     const requests = [];
-    let uploaded = false, installed = true, enabled = true;
+    let uploaded = false, installed = true, enabled = true, healthReadsAfterUpload = 0;
     const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
     const browser = installBrowser({
       token: null, publicKey, manifestToken: packageManifest(privateKey),
@@ -429,7 +432,7 @@ for (const outdated of [false, true]) {
       fetchImpl: async (url, options = {}) => {
         const path = new URL(url, 'https://demo.example.com').pathname;
         requests.push(path);
-        if (path.endsWith('/health')) return new Response(JSON.stringify(enabled ? { ok: true, code: 'appgog_license_bridge', version: uploaded && outdated ? '1.0.1' : '1.0.0', identity } : {}), { status: enabled ? 200 : 404 });
+        if (path.endsWith('/health')) return new Response(JSON.stringify(enabled ? { ok: true, code: 'appgog_license_bridge', version: uploaded && outdated && ++healthReadsAfterUpload >= 3 ? '1.0.1' : '1.0.0', identity } : {}), { status: enabled ? 200 : 404 });
         if (path === '/bridge.zip') return new Response(pluginZip);
         if (path === '/api/v2/secure_test/plugin/getPlugins') return new Response(JSON.stringify({ data: [{ code: 'appgog_license_bridge', version: uploaded ? '1.0.1' : '1.0.0', is_installed: installed, is_enabled: enabled }] }));
         if (path === '/api/v2/secure_test/plugin/upload') {
@@ -462,3 +465,76 @@ for (const outdated of [false, true]) {
     } finally { browser.restore(); }
   });
 }
+
+for (const status of [429, 503]) {
+  test('授权桥 HTTP ' + status + ' 不误判缺失或重装', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const requests = [];
+    const browser = installBrowser({
+      token: null, publicKey, manifestToken: packageManifest(privateKey),
+      bridge: { gc: 'appgog_license_bridge', gv: '1.0.2' },
+      initialValues: new Map([['XBOARD_ACCESS_TOKEN', JSON.stringify({ value: 'fixture-admin-token' })]]),
+      fetchImpl: async url => { requests.push(new URL(url).pathname); return new Response('{}', { status }); },
+    });
+    try {
+      await browser.settle();
+      assert.deepEqual(requests, ['/api/v1/appgog-license-bridge/health']);
+      assert.equal(browser.classes.has('__appgog_locked'), true);
+      assert.match(elementText(browser.elements.find(e => e.id === '__appgog_gate')), /稍后刷新重试/);
+    } finally { browser.restore(); }
+  });
+}
+
+test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口，激活后清理浏览器敏感字段', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const key = 'appgog_license_pkg_runtime';
+  const initial = { install_window_id: 'window-real', install_window_token: 'window-proof',
+    install_window_expires_at: new Date(FIXED_NOW + 3600000).toISOString(),
+    installation_id: 'installation_runtime_123', xboard_admin_path: 'secure_test' };
+  const values = new Map([[key, JSON.stringify(initial)], ['XBOARD_ACCESS_TOKEN', JSON.stringify({value:'fixture-admin-token'})]]);
+  const writes = [];
+  const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
+  let serverState = { ...initial };
+  const fetchImpl = async (url, options={}) => {
+    const path = new URL(url, 'https://demo.example.com').pathname;
+    if (path.endsWith('/health')) return Response.json({ok:true,code:'appgog_license_bridge',version:'1.0.2',identity});
+    if (path === '/api/v2/secure_test/plugin/getPlugins') return Response.json({data:[]});
+    if (path.endsWith('/register')) return Response.json(identity);
+    if (path.endsWith('/state/runtime') || path.endsWith('/state/read')) return Response.json({state:serverState});
+    if (path.endsWith('/state/write')) { const state = JSON.parse(options.body).state; writes.push(state); serverState={...serverState,...state}; return Response.json({saved:true}); }
+    if (path === '/api/v2/install-unlocks') return Response.json({install_receipt_id:'receipt',install_receipt_secret:'receipt-secret'});
+    if (path === '/api/v1/installation-challenges') return Response.json({challenge_id:'challenge'});
+    if (path.endsWith('/sign-challenge')) return Response.json({installation_public_key:identity.installation_public_key,challenge_id:'challenge',challenge_signature:'signature'});
+    if (path === '/api/v1/activations') return Response.json({activation_id:'activation',activation_token:activation(privateKey,{exp:Math.floor(FIXED_NOW/1000)+3600}),refresh_secret:'refresh-secret'});
+    throw new Error('Unexpected request '+path);
+  };
+  const boot = () => installBrowser({token:null,publicKey,manifestToken:packageManifest(privateKey),initialValues:values,
+    bridge:{gc:'appgog_license_bridge',gv:'1.0.2',gt:'APPGOG'},fetchImpl});
+  const descend = element => [element,...(element.children||[]).flatMap(descend)];
+  let browser = boot();
+  try {
+    await browser.settle();
+    let nodes = descend(browser.elements.find(e=>e.id==='__appgog_gate'));
+    nodes.find(e=>e.placeholder==='INS-XXXX-XXXX-XXXX').value='fixture-install-key';
+    nodes.find(e=>e.type==='url').value='https://demo.example.com/secure_test';
+    await nodes.find(e=>e.tagName==='form').onsubmit({preventDefault(){}});
+    const receiptState = JSON.parse(values.get(key));
+    for (const field of Object.keys(initial)) assert.equal(receiptState[field],initial[field]);
+    assert.equal(receiptState.install_receipt_id,'receipt');
+    assert.equal(writes.at(-1).install_window_token,'window-proof');
+  } finally { browser.restore(); }
+  browser=boot();
+  try {
+    await browser.settle();
+    const nodes=descend(browser.elements.find(e=>e.id==='__appgog_gate'));
+    nodes.find(e=>e.placeholder==='APPGOG-XXXX-XXXX-XXXX-XXXX').value='fixture-license-key';
+    await nodes.find(e=>e.tagName==='form').onsubmit({preventDefault(){}});
+    const activated=JSON.parse(values.get(key));
+    assert.equal(activated.activation_id,'activation');
+    assert.equal(activated.xboard_admin_path,'secure_test');
+    assert.equal(activated.installation_id,initial.installation_id);
+    for(const field of ['install_window_token','install_receipt_secret','refresh_secret']) assert.equal(activated[field],undefined);
+    assert.equal(serverState.refresh_secret,'refresh-secret');
+    assert.equal(serverState.install_window_token,'window-proof');
+  } finally { browser.restore(); }
+});
