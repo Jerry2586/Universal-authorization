@@ -12,7 +12,7 @@ use RuntimeException;
 
 class BridgeState
 {
-    private const VERSION = '1.0.8';
+    private const VERSION = '1.1.0';
     private const SPKI_PREFIX_HEX = '302a300506032b6570032100';
     private const PURPOSES = [
         'activation', 'refresh', 'migration_issue', 'migration_accept',
@@ -114,6 +114,9 @@ class BridgeState
         } else {
             $this->atomicJson($path, $record);
         }
+        if (!class_exists(\Appgog\Host\Guard::class, false)) require_once dirname(__DIR__) . '/Host/Guard.php';
+        $manifest = \Appgog\Host\Guard::manifest($record['theme_name']);
+        if (isset($manifest['verification_keys'])) \Appgog\Host\Guard::enroll($record['theme_name'], $manifest);
         return [
             'registered' => true,
             'bridge_version' => self::VERSION,
@@ -168,14 +171,28 @@ class BridgeState
 
     public function writePackageState(string $packageId, string $packageProof, array $state): void
     {
-        $this->assertPackage($packageId, $packageProof);
+        $record = $this->assertPackage($packageId, $packageProof);
         $allowed = array_intersect_key($state, array_flip([
             'install_window_id', 'install_window_token', 'install_window_expires_at',
             'install_receipt_id', 'install_receipt_secret', 'backend_origin',
             'activation_id', 'activation_token', 'refresh_secret', 'denied',
         ]));
         $existing = $this->readEncryptedState($packageId) ?? [];
-        $this->saveEncryptedState($packageId, array_merge($existing, $allowed));
+        $merged = array_merge($existing, $allowed);
+        if (!empty($merged['activation_token'])) {
+            if (!class_exists(\Appgog\Host\Guard::class, false)) require_once dirname(__DIR__) . '/Host/Guard.php';
+            $manifest = \Appgog\Host\Guard::manifest($record['theme_name']);
+            if (isset($manifest['verification_keys']['activation'])) {
+                $payload = \Appgog\Host\Guard::payload($merged['activation_token'], $manifest['verification_keys']['activation']);
+                if (!$payload || ($payload['typ'] ?? '') !== 'activation' || ($payload['installation_id'] ?? '') !== $this->publicIdentity()['installation_id']
+                    || ($payload['package_id'] ?? '') !== $packageId || ($payload['build_id'] ?? '') !== $record['build_id']
+                    || ($payload['domain'] ?? '') !== $record['domain'] || ($payload['backend_origin'] ?? '') !== ($merged['backend_origin'] ?? '')
+                    || !is_int($payload['offline_until'] ?? null) || $payload['offline_until'] <= time()) {
+                    throw ValidationException::withMessages(['activation' => '激活凭证签名或安装身份无效']);
+                }
+            }
+        }
+        $this->saveEncryptedState($packageId, $merged);
     }
 
     public function runtimePackageState(string $packageId, string $packageProof): ?array
@@ -219,7 +236,7 @@ class BridgeState
             throw new RuntimeException('APPGOG 授权服务器暂时无法连接', 0, $error);
         }
         if (!$challengeResponse->successful()) {
-            if ($challengeResponse->serverError()) {
+            if ($challengeResponse->serverError() || $challengeResponse->status() === 429) {
                 throw new RuntimeException('APPGOG 授权服务器暂时不可用');
             }
             $state['denied'] = true;
@@ -247,7 +264,7 @@ class BridgeState
             throw new RuntimeException('APPGOG 授权服务器暂时无法连接', 0, $error);
         }
         if (!$refreshResponse->successful()) {
-            if ($refreshResponse->serverError()) {
+            if ($refreshResponse->serverError() || $refreshResponse->status() === 429) {
                 throw new RuntimeException('APPGOG 授权服务器暂时不可用');
             }
             $state['denied'] = true;

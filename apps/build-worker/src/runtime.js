@@ -23,6 +23,10 @@ export function browserLicenseRuntime(config, mountPage = null) {
   let activationAdminRequired = false;
   let setupMessage = '页面加载中…';
   let prefetchedBridge = null;
+  const nativeFetch = globalThis.fetch.bind(globalThis);
+  let recheckFlight = null, bridgeRetryAt = 0, monitorStarted = false, preparationReady = false;
+  const setupMode = new URL(location.href).searchParams.get('appgog_setup');
+  const localDialog = new URL(location.href).searchParams.get('appgog_install') === '1';
   const domReady = document.readyState === 'loading'
     ? new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }))
     : Promise.resolve();
@@ -111,7 +115,12 @@ export function browserLicenseRuntime(config, mountPage = null) {
     } catch { /* Error classification below must still use the HTTP status. */ }
     if (!response.ok) {
       const error = new Error(value?.message || value?.error?.message || fallback);
-      if (response.status >= 500) error.unavailable = true;
+      if (response.status === 429) {
+        const delay = Math.min(300, Math.max(5, Number(response.headers?.get?.('retry-after')) || 60));
+        bridgeRetryAt = Date.now() + delay * 1000;
+        error.message = '请求过于频繁，请在 ' + delay + ' 秒后重试（稍后刷新重试）'; error.rateLimited = true;
+      }
+      if (response.status >= 500 || response.status === 429) error.unavailable = true;
       else error.denied = true;
       throw error;
     }
@@ -238,7 +247,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
       const response = await fetch(bridgeUrl('/health'), {
         headers: token ? { authorization: token } : {}, credentials: 'same-origin', cache: 'no-store',
       });
-      if (response.status === 429) throw new Error('授权桥请求过于频繁，请稍后刷新重试');
+      if (response.status === 429) return responseJson(response, '授权桥请求过于频繁');
       if (response.status >= 500) throw new Error('授权桥服务暂时不可用，请稍后刷新重试');
       if (!response.ok) return null;
       const health = await response.json();
@@ -253,14 +262,14 @@ export function browserLicenseRuntime(config, mountPage = null) {
       try {
         const context = await bridgeRequest('/admin-context', null, true);
         if (/^[A-Za-z0-9_-]{1,128}$/.test(context.admin_path || '')) rememberAdminPath(context.admin_path);
-      } catch { /* Older bridge versions still use verified candidate discovery. */ }
+      } catch (error) { if (error.rateLimited) throw error; }
     }
     for (const candidate of adminPathCandidates()) {
       xboardAdminPath = candidate;
       try {
         const result = await xboardAdminRequest('/plugin/getPlugins');
         if (Array.isArray(result?.data)) { rememberAdminPath(candidate); return result.data; }
-      } catch { /* Try the next safe candidate. */ }
+      } catch (error) { if (error.rateLimited || error.unavailable) throw error; }
     }
     xboardAdminPath = null;
     throw new Error('无法识别 Xboard 管理路径；请从已登录的管理后台进入当前主题');
@@ -286,6 +295,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
       return;
     }
     progress('正在检查授权组件…');
+    if (Date.now() < bridgeRetryAt) throw new Error('请求冷却中，请稍后重试');
     const initialHealth = prefetchedBridge ? await prefetchedBridge.health : null;
     if (initialHealth?.error) throw initialHealth.error;
     let health = initialHealth ? initialHealth.value : await bridgeHealth();
@@ -414,6 +424,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       });
     } catch { throw Object.assign(new Error('授权服务器暂时无法连接'), { unavailable: true }); }
+    if (response.status === 429) return responseJson(response, '授权服务器请求过于频繁');
     if (response.status >= 500) throw Object.assign(new Error('授权服务器暂时不可用'), { unavailable: true });
     if (!response.ok) {
       let reason;
@@ -535,7 +546,9 @@ export function browserLicenseRuntime(config, mountPage = null) {
     document.getElementById('__appgog_gate')?.remove();
     globalThis.APPGOGLicense.status = state;
     if (state === 'offline' && document.getElementById('editorTabs')) showOffline();
+    const studio=document.getElementById('studio');if(studio)studio.inert=false;
     installActivationEntry();
+    startMonitor();
     if (typeof globalThis.dispatchEvent === 'function' && typeof CustomEvent === 'function') globalThis.dispatchEvent(new CustomEvent('appgog-license-ready'));
     if (document.getElementById('editorTabs')) void checkUpdates();
   }
@@ -553,16 +566,27 @@ export function browserLicenseRuntime(config, mountPage = null) {
     const nav = document.getElementById('editorTabs');
     if (!nav || document.getElementById('__appgog_activation_entry')) return;
     const entry = document.createElement('button'); entry.type = 'button';
-    entry.id = '__appgog_activation_entry'; entry.textContent = '◇ 授权与更新';
+    entry.id = '__appgog_activation_entry'; entry.innerHTML = '◇ <span>授权与更新</span>';
+    // Use the editor's existing nav button/span rules for typography and spacing.
+    let section = null, previousTitle = '', hidden = [];
+    const closePage = () => {
+      section?.dispose?.(); section?.remove(); section = null;
+      for (const [node,value] of hidden) node.hidden=value; hidden=[];
+      const heading=document.getElementById('editorTitle');if(heading && previousTitle)heading.textContent=previousTitle;
+      entry.classList.remove('active');
+    };
+    nav.addEventListener('click',event=>{if(event.target.closest?.('[data-tab]'))closePage();});
+    document.getElementById('logout')?.addEventListener('click',closePage);
     entry.addEventListener('click', () => {
-      const existing = document.getElementById('__appgog_activation_detail');
-      if (existing) return;
-      const panel = document.createElement('dialog'); panel.id = '__appgog_activation_detail';
-      document.body.append(panel);
-      panel.setAttribute('aria-label', '授权与更新');
-      const page = mountAuthorizedPage(panel, { close: () => panel.close() });
-      panel.addEventListener('close', () => { page?.dispose?.(); panel.remove(); entry.focus?.(); });
-      panel.showModal();
+      if (section) return;
+      const main=document.querySelector('#studio .ed-main');if(!main)return;
+      const heading=document.getElementById('editorTitle');previousTitle=heading?.textContent||'';
+      if(heading)heading.textContent='授权与更新';
+      for(const node of main.querySelectorAll('.ed-workspace,.ed-actions,#editorNotice,#siteDefaults')){hidden.push([node,node.hidden]);node.hidden=true;}
+      nav.querySelectorAll('button').forEach(node=>node.classList.remove('active'));entry.classList.add('active');
+      section=document.createElement('section');section.id='__appgog_activation_detail';section.className='appgog-license-section';main.append(section);
+      const page=mountAuthorizedPage(section);section.dispose=()=>page?.dispose?.();
+      void checkUpdates();
     });
     nav.append(entry);
   }
@@ -586,7 +610,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
     const domainMismatch = integrityFailure?.reason === 'domain';
     title.textContent = domainMismatch ? 'APPGOG 授权域名不匹配'
       : (integrityFailure ? 'APPGOG 安装包完整性验证失败'
-      : (bridgeFailure ? 'APPGOG 授权组件未就绪'
+      : (bridgeFailure ? (preparationReady ? '授权组件已准备就绪' : 'APPGOG 授权组件未就绪')
       : (activationAdminRequired ? '请登录 Xboard 管理后台'
       : (hasInstallReceipt ? '在线激活 APPGOG' : (hasInstallWindow ? '输入一次性安装 Key' : '激活 APPGOG')))));
     const description = document.createElement('p');
@@ -630,6 +654,9 @@ export function browserLicenseRuntime(config, mountPage = null) {
       renderCountdown();
       if (!installWindowExpired) countdownTimer = setInterval(renderCountdown, 1000);
     }
+    if (preparationReady) {
+      card.append(title, description, metadata); gate.append(card); document.body.append(gate); return;
+    }
     if (!integrityFailure && (bridgeFailure || activationAdminRequired)) {
       const pathLabel = document.createElement('label'); pathLabel.textContent = 'Xboard 后台地址（仅首次无法识别时填写）';
       const pathInput = document.createElement('input'); pathInput.type = 'text'; pathInput.autocomplete = 'off';
@@ -650,7 +677,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
         try {
           if (pathInput.value.trim()) rememberAdminPath(selectedPath());
           progress('正在重试，请稍候…');
-          await ensureBridge(); bridgeFailure = null; location.reload();
+          prefetchedBridge = null; await ensureBridge(); bridgeFailure = null; location.reload();
         } catch (failure) { error.textContent = failure.message; }
         finally { retry.disabled = false; }
       });
@@ -722,7 +749,8 @@ export function browserLicenseRuntime(config, mountPage = null) {
           installInput.value = '';
           const editor = new URL('/theme/' + encodeURIComponent(config.gt || 'APPGOG') + '/editor.html', location.origin);
           if (xboardAdminPath) editor.searchParams.set('appgog_admin_path', xboardAdminPath);
-          location.assign(editor.href);
+          if (localDialog && globalThis.parent !== globalThis) globalThis.parent.postMessage({type:'appgog-local-activated',theme:config.gt},location.origin);
+          else location.assign(editor.href);
           return;
         }
         const proof = config.gc ? await installationProof('activation', {
@@ -751,6 +779,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
             backend_origin: saved.backend_origin, denied: false }
           : activatedState);
         fixedInput.value = '';
+        if (config.gc && xboardAdminPath) await xboardAdminRequest('/config/save', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frontend_theme:config.gt})});
         location.reload();
       } catch (failure) {
         error.textContent = failure.message || (hasInstallReceipt ? '激活失败' : '安装解锁失败');
@@ -778,6 +807,45 @@ export function browserLicenseRuntime(config, mountPage = null) {
     product: config.p, version: config.v, buildId: config.b, packageId: config.i,
     installationId, status: 'checking', checkUpdates, hasCapability, requireCapability,
   };
+  function lockRuntime(message) {
+    activePayload=null; globalThis.APPGOGLicense.status='locked';
+    root.classList.remove('__appgog_unlocked');root.classList.add('__appgog_locked');
+    bridgeFailure=message; document.getElementById('__appgog_gate')?.remove();
+    for (const dialog of document.querySelectorAll?.('dialog[open]') || []) dialog.close?.();
+    const studio=document.getElementById('studio');if(studio)studio.inert=true;
+    const preview=document.getElementById('themePreview');if(preview)preview.src='about:blank';
+    showGate();
+  }
+  async function verifyServerState() {
+    if (!config.gc) return ['active','offline'].includes(globalThis.APPGOGLicense.status);
+    if (recheckFlight) return recheckFlight;
+    if (Date.now()<bridgeRetryAt) return false;
+    recheckFlight=(async()=>{
+      try {
+        const runtime=await bridgeRequest('/state/runtime',{package_id:config.i,package_proof:packageProof()});
+        const state=runtime?.state;
+        const payload=state&&!state.denied&&state.activation_id&&await activationPayload(state.activation_token,state.backend_origin);
+        if(!payload||payload.offline_until<=now())throw new Error('授权未激活或已失效，请恢复授权后重试');
+        store({...saved,...state});activePayload=payload;return true;
+      }catch(error){lockRuntime(error.message||'授权组件不可用，请修复后重试');return false;}
+      finally{recheckFlight=null;}
+    })();return recheckFlight;
+  }
+  function startMonitor() {
+    if (!config.gc || monitorStarted) return;monitorStarted=true;
+    setInterval(()=>{if(document.visibilityState!=='hidden')void verifyServerState();},30000);
+    globalThis.addEventListener?.('focus',()=>void verifyServerState());
+    document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')void verifyServerState();});
+    // Protect in-flight editor operations as well as the visible page. The host guard
+    // independently enforces these endpoints even if this script is removed.
+    globalThis.fetch=async function(input,options){
+      const url=new URL(typeof input==='string'?input:input.url||String(input),location.href);
+      if(url.origin===location.origin && /\/theme\/(?:getThemeConfig|saveThemeConfig)$/.test(url.pathname) && document.getElementById('editorTabs')) {
+        if(!await verifyServerState())return new Response(JSON.stringify({message:'授权组件未就绪，操作已阻止'}),{status:423,headers:{'content-type':'application/json'}});
+      }
+      return nativeFetch(input,options);
+    };
+  }
   const start = () => { void packageIdentityValid().then(async (result) => {
     if (!result.ok) { integrityFailure = result; await domReady; showGate(); return; }
     try {
@@ -794,6 +862,12 @@ export function browserLicenseRuntime(config, mountPage = null) {
       await domReady;
       showGate();
       return;
+    }
+    if (setupMode === 'prepare') {
+      await domReady;preparationReady=true;bridgeFailure='安装完成，尚未启用主题。关闭此窗口后，点击主题卡片的激活按钮，输入本地安装 Key。';showGate();return;
+    }
+    if (localDialog && globalThis.parent !== globalThis && (saved?.install_receipt_id || saved?.activation_id)) {
+      globalThis.parent?.postMessage({type:'appgog-local-activated',theme:config.gt},location.origin);return;
     }
     const state = await checkStoredActivation();
     await domReady;

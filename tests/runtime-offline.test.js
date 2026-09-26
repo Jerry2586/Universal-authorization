@@ -59,7 +59,8 @@ function installBrowser({
     })],
   ]);
   const intervals = [];
-  globalThis.setInterval = (...args) => { const timer = original.setInterval(...args); intervals.push(timer); return timer; };
+  const intervalCallbacks = [];
+  globalThis.setInterval = (...args) => { intervalCallbacks.push(args); const timer = original.setInterval(...args); intervals.push(timer); return timer; };
   const elements = [];
   if (editor) { const nav = fakeElement('nav'); nav.id = 'editorTabs'; elements.push(nav); }
   const classes = new Set();
@@ -88,6 +89,7 @@ function installBrowser({
   });
   return {
     values, elements, classes,
+    async tickMonitor() { for (const [callback, delay] of intervalCallbacks) if (delay === 30000) await callback(); },
     async settle(predicate = () => globalThis.APPGOGLicense.status !== 'checking' || elements.some(element => element.id === '__appgog_gate')) {
       const deadline = performance.now() + 10000;
       while (!predicate()) {
@@ -291,6 +293,7 @@ test('版本通知只接受与 release_token 完全一致的签名字段', async
   });
   try {
     await browser.settle();
+    await globalThis.APPGOGLicense.checkUpdates();
     assert.equal(browser.elements.some((element) => element.id === '__appgog_update'), false);
     tampered = false;
     await globalThis.APPGOGLicense.checkUpdates();
@@ -494,6 +497,7 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     installation_id: 'installation_runtime_123', xboard_admin_path: 'secure_test' };
   const values = new Map([[key, JSON.stringify(initial)], ['XBOARD_ACCESS_TOKEN', JSON.stringify({value:'fixture-admin-token'})]]);
   const writes = [];
+  const activationOrder = [];
   const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
   let serverState = { ...initial };
   let adminReads = 0;
@@ -505,6 +509,8 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     if (path.endsWith('/state/runtime')) return Response.json({state:Object.fromEntries(Object.entries(serverState).filter(([field])=>['install_window_id','install_window_expires_at','backend_origin','activation_id','activation_token','denied'].includes(field)))});
     if (path.endsWith('/state/read')) { adminReads += 1; return Response.json({state:serverState}); }
     if (path.endsWith('/state/write')) { const state = JSON.parse(options.body).state; writes.push(state); serverState={...serverState,...state}; return Response.json({saved:true}); }
+    if (['/api/v2/install-unlocks', '/api/v1/activations', '/api/v2/secure_test/config/save'].includes(path)) activationOrder.push(path);
+    if (path === '/api/v2/secure_test/config/save') { assert.ok(serverState.activation_token, 'must persist signed activation before enabling theme'); return Response.json({data:true}); }
     if (path === '/api/v2/install-unlocks') return Response.json({install_receipt_id:'receipt',install_receipt_secret:'receipt-secret'});
     if (path === '/api/v1/installation-challenges') return Response.json({challenge_id:'challenge'});
     if (path.endsWith('/sign-challenge')) return Response.json({installation_public_key:identity.installation_public_key,challenge_id:'challenge',challenge_signature:'signature'});
@@ -526,6 +532,7 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     assert.equal(receiptState.install_receipt_id,'receipt');
     assert.match(globalThis.location.assigned, /theme\/APPGOG\/editor.html\?appgog_admin_path=secure_test/);
     assert.equal(writes.at(-1).install_window_token,'window-proof');
+    assert.deepEqual(activationOrder, ['/api/v2/install-unlocks']);
   } finally { browser.restore(); }
   browser=boot();
   try {
@@ -540,6 +547,7 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     for(const field of ['install_window_token','install_receipt_secret','refresh_secret']) assert.equal(activated[field],undefined);
     assert.equal(serverState.refresh_secret,'refresh-secret');
     assert.equal(serverState.install_window_token,'window-proof');
+    assert.deepEqual(activationOrder, ['/api/v2/install-unlocks', '/api/v1/activations', '/api/v2/secure_test/config/save']);
   } finally { browser.restore(); }
   // Real reload used to repopulate secrets through the admin state endpoint.
   const readsBeforeReload = adminReads;
@@ -647,3 +655,34 @@ for (const kind of ['current','available','stale','unavailable','tampered']) {
 }
 
 test('user pages keep license enforcement without owner UI or update feed requests', async()=>{const {privateKey,publicKey}=generateKeyPairSync('ed25519');let calls=0;const browser=installBrowser({editor:false,token:activation(privateKey),publicKey,manifestToken:packageManifest(privateKey),fetchImpl:async()=>{calls++;throw Error('offline');}});try{await browser.settle();const before=calls;assert.equal(globalThis.APPGOGLicense.mount,undefined);assert.equal((await globalThis.APPGOGLicense.checkUpdates()).status,'restricted');assert.equal(calls,before);assert.equal(globalThis.APPGOGLicense.status,'offline');assert.ok(!browser.elements.some(e=>['__appgog_offline','__appgog_update','__appgog_activation_entry'].includes(e.id)));}finally{browser.restore();}});
+
+for (const failure of ['deleted','disabled','revoked','tampered','rate-limit','server-error']) {
+  test('already open editor blocks reads and writes after '+failure, async () => {
+    const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+    const token=activation(privateKey,{exp:Math.floor(FIXED_NOW/1000)+3600});
+    let failed=false,editorRequests=0,stateRequests=0;
+    const browser=installBrowser({token,publicKey,manifestToken:packageManifest(privateKey),
+      bridge:{gc:'appgog_license_bridge',gv:'1.0.2',gt:'APPGOG'},fetchImpl:async url=>{
+        const path=new URL(url,'https://demo.example.com').pathname;
+        if(path.endsWith('/health'))return Response.json({ok:true,code:'appgog_license_bridge',version:'1.1.0',identity:{installation_id:'installation_runtime_123',installation_public_key:'fixture-public'}});
+        if(path.endsWith('/state/runtime')) {
+          stateRequests++;
+          if(failed && ['deleted','disabled','rate-limit','server-error'].includes(failure))return Response.json({message:'component unavailable'}, {status:({deleted:404,disabled:403,'rate-limit':429,'server-error':500})[failure]});
+          return Response.json({state:{activation_id:'act',activation_token:failed&&failure==='tampered'?token+'x':token,backend_origin:'https://demo.example.com',denied:failed&&failure==='revoked'}});
+        }
+        if(path.endsWith('/saveThemeConfig')||path.endsWith('/getThemeConfig')){editorRequests++;return Response.json({data:true});}
+        return Response.json({}, {status:404});
+      }});
+    try {
+      await browser.settle();assert.equal(globalThis.APPGOGLicense.status,'active');
+      const studio=fakeElement('main');studio.id='studio';const preview=fakeElement('iframe');preview.id='themePreview';preview.src='https://demo.example.com';browser.elements.push(studio,preview);
+      failed=true;
+      const response=await globalThis.fetch('/api/v2/secure/theme/saveThemeConfig',{method:'POST'});
+      assert.equal(response.status,423);assert.equal(editorRequests,0);
+      assert.equal(globalThis.APPGOGLicense.status,'locked');assert.equal(studio.inert,true);assert.equal(preview.src,'about:blank');assert.equal(browser.classes.has('__appgog_locked'),true);
+      const readsBefore=stateRequests;
+      const read=await globalThis.fetch('/api/v2/secure/theme/getThemeConfig');assert.equal(read.status,423);
+      if(failure==='rate-limit')assert.equal(stateRequests,readsBefore,'Retry-After must suppress repeated bridge calls');
+    }finally{browser.restore();}
+  });
+}

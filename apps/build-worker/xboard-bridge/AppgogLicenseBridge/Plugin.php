@@ -12,6 +12,7 @@ class Plugin extends AbstractPlugin
         if (!extension_loaded('sodium')) {
             throw new \RuntimeException('APPGOG License Bridge requires the PHP sodium extension');
         }
+        \Plugin\AppgogLicenseBridge\Services\HostIntegration::install();
         $bridge = new BridgeState();
         $bridge->rememberThemeBeforeAppgog();
         $bridge->identity();
@@ -28,7 +29,7 @@ class Plugin extends AbstractPlugin
         $this->filter('guest_comm_config', function (array $config): array {
             $config['appgog_license_bridge'] = [
                 'installed' => true,
-                'version' => '1.0.8',
+                'version' => '1.1.0',
             ];
             return $config;
         });

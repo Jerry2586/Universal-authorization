@@ -352,6 +352,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       watermark,
       license_server: this.publicBaseUrl,
       package_manifest_token: packageManifestToken,
+      verification_keys: { activation: this.activationPublicKey, package: this.packagePublicKey },
       protection: {
         profile: 'appgog-v1',
         identity_algorithm: 'AES-256-GCM',
