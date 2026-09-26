@@ -38,6 +38,7 @@ const MIGRATIONS = Object.freeze({
     ['entitlement_capabilities_json', "TEXT NOT NULL DEFAULT '[]'"],
     ['entitlement_limits_json', "TEXT NOT NULL DEFAULT '{}'"],
   ],
+  support_messages: [['sequence', 'INTEGER']],
   support_tickets: [
     ['closed_by_type', 'TEXT'],
     ['closed_by_id', 'TEXT'],
@@ -92,6 +93,11 @@ function runMigration(database, version, operation) {
 }
 
 function migrate(database) {
+  runMigration(database, '2026-09-26-v1.2.33-support-read-cursors', () => {
+    addMissingColumns(database, { support_messages: [['sequence', 'INTEGER']] });
+    database.exec('UPDATE support_messages SET sequence = rowid WHERE sequence IS NULL');
+    database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_support_message_sequence ON support_messages(sequence)');
+  });
   const baselineVersion = '2026-09-23-v1.0.0-baseline';
   runMigration(database, baselineVersion, () => {
     addMissingColumns(database);

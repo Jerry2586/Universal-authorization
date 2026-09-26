@@ -20,6 +20,23 @@ export function browserLicenseRuntime(config) {
   let installationPublicKey = null;
   let xboardAdminPath = null;
   let activationAdminRequired = false;
+  let setupMessage = '正在检查授权组件…';
+  function progress(message) {
+    setupMessage = message;
+    root.style?.setProperty?.('--appgog-loading-message', JSON.stringify(message));
+    const element = document.getElementById('__appgog_setup_progress');
+    if (element) element.textContent = message;
+  }
+  function connectionPath() {
+    try { return JSON.parse(localStorage.getItem('appgog_studio_connection_v1') || 'null')?.admin_path; } catch { return null; }
+  }
+  function rememberAdminPath(value) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(value || '')) return;
+    xboardAdminPath = value;
+    localStorage.setItem('appgog_xboard_admin_path', value);
+    localStorage.setItem('appgog_studio_connection_v1', JSON.stringify({admin_path:value, api_version:'v2'}));
+    store({ ...(saved || {}), xboard_admin_path: value });
+  }
   try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch { saved = null; }
 
   const now = () => Math.floor(Date.now() / 1000);
@@ -67,7 +84,12 @@ export function browserLicenseRuntime(config) {
   };
 
   function adminPathCandidates() {
-    const values = [saved?.xboard_admin_path, globalThis.settings?.secure_path];
+    const values = [saved?.xboard_admin_path, globalThis.settings?.secure_path,
+      localStorage.getItem('appgog_xboard_admin_path'), connectionPath()];
+    try {
+      values.unshift(new URL(location.href).searchParams.get('appgog_admin_path'));
+      if (globalThis.parent !== globalThis && globalThis.parent?.location?.origin === location.origin) values.unshift(globalThis.parent.settings?.secure_path);
+    } catch { /* Cross-origin parents are never read. */ }
     try {
       const referrer = new URL(document.referrer);
       if (referrer.origin === location.origin) values.push(referrer.pathname.split('/').filter(Boolean)[0]);
@@ -215,11 +237,17 @@ export function browserLicenseRuntime(config) {
   }
 
   async function findAdminPath() {
+    if (adminToken()) {
+      try {
+        const context = await bridgeRequest('/admin-context', null, true);
+        if (/^[A-Za-z0-9_-]{1,128}$/.test(context.admin_path || '')) rememberAdminPath(context.admin_path);
+      } catch { /* Older bridge versions still use verified candidate discovery. */ }
+    }
     for (const candidate of adminPathCandidates()) {
       xboardAdminPath = candidate;
       try {
         const result = await xboardAdminRequest('/plugin/getPlugins');
-        if (Array.isArray(result?.data)) return result.data;
+        if (Array.isArray(result?.data)) { rememberAdminPath(candidate); return result.data; }
       } catch { /* Try the next safe candidate. */ }
     }
     xboardAdminPath = null;
@@ -245,12 +273,15 @@ export function browserLicenseRuntime(config) {
       }
       return;
     }
+    progress('正在检查授权组件…');
     let health = await bridgeHealth();
     let plugins = null;
     if (!health || versionLessThan(health.version, config.gv)) {
+      progress('正在连接 Xboard 插件中心…');
       plugins = await findAdminPath();
       let plugin = plugins.find((item) => item.code === config.gc);
       if (!plugin || versionLessThan(plugin.version, config.gv)) {
+        progress('正在校验并上传授权插件…');
         await uploadBridgePackage();
         plugins = await xboardAdminRequest('/plugin/getPlugins');
         if (!Array.isArray(plugins?.data)) throw new Error('Xboard 插件列表响应无效，请刷新管理后台后重试');
@@ -258,11 +289,13 @@ export function browserLicenseRuntime(config) {
       }
       if (!plugin) throw new Error('Xboard 未识别 APPGOG 授权桥插件包');
       if (!plugin.is_installed) {
+        progress('正在安装授权插件…');
         await xboardAdminRequest('/plugin/install', {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.gc }),
         });
       }
       if (!plugin.is_enabled) {
+        progress('正在启用授权插件…');
         await xboardAdminRequest('/plugin/enable', {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.gc }),
         });
@@ -275,6 +308,7 @@ export function browserLicenseRuntime(config) {
       }
       if (!health || versionLessThan(health.version, config.gv)) throw new Error('APPGOG 授权桥版本尚未生效，请重载 Xboard 应用服务后重试；安装身份与授权数据会保留');
     }
+    progress('正在验证插件与安装身份…');
     if (!xboardAdminPath && adminToken()) {
       try { await findAdminPath(); } catch { /* Existing bridge can still report its identity. */ }
     }
@@ -451,7 +485,38 @@ export function browserLicenseRuntime(config) {
     document.getElementById('__appgog_gate')?.remove();
     globalThis.APPGOGLicense.status = state;
     if (state === 'offline') showOffline();
+    installActivationEntry();
     void checkUpdates();
+  }
+
+  function installActivationEntry() {
+    // The protected editor owns the entry. No customer homepage button is injected.
+    const pathInput = document.getElementById('loginPath');
+    if (pathInput && xboardAdminPath) {
+      pathInput.value = xboardAdminPath;
+      const versionInput = document.getElementById('loginVersion');
+      if (versionInput) versionInput.value = 'v2';
+      const connection = document.querySelector?.('.ed-login-connection');
+      if (connection) { connection.hidden = true; connection.open = false; }
+    }
+    const nav = document.getElementById('editorTabs');
+    if (!nav || document.getElementById('__appgog_activation_entry')) return;
+    const entry = document.createElement('button'); entry.type = 'button';
+    entry.id = '__appgog_activation_entry'; entry.textContent = '◇ 授权与激活';
+    entry.addEventListener('click', () => {
+      const existing = document.getElementById('__appgog_activation_detail');
+      if (existing) return;
+      const panel = document.createElement('dialog'); panel.id = '__appgog_activation_detail';
+      panel.style.cssText = 'border:1px solid #e5e7ef;border-radius:20px;padding:32px;max-width:520px;width:calc(100% - 48px);color:#25304a;background:#fff';
+      const title = document.createElement('h2'); title.textContent = 'APPGOG 授权与激活';
+      const detail = document.createElement('p'); detail.textContent = '状态：' + (globalThis.APPGOGLicense.status === 'offline' ? '已激活（离线宽限期）' : '已激活') + ' · 版本：' + config.v;
+      const binding = document.createElement('p'); binding.textContent = '绑定域名：' + domain();
+      const expiry = document.createElement('p'); expiry.textContent = '本次签名凭证有效至：' + new Date(activePayload.exp * 1000).toLocaleString();
+      const close = document.createElement('button'); close.textContent = '关闭'; close.type = 'button'; close.addEventListener('click', () => panel.close());
+      panel.addEventListener('close', () => panel.remove());
+      panel.append(title, detail, binding, expiry, close); document.body.append(panel); panel.showModal();
+    });
+    nav.append(entry);
   }
 
   function showGate() {
@@ -517,6 +582,37 @@ export function browserLicenseRuntime(config) {
       renderCountdown();
       if (!installWindowExpired) countdownTimer = setInterval(renderCountdown, 1000);
     }
+    if (!integrityFailure && (bridgeFailure || activationAdminRequired)) {
+      const pathLabel = document.createElement('label'); pathLabel.textContent = 'Xboard 后台地址（仅首次无法识别时填写）';
+      const pathInput = document.createElement('input'); pathInput.type = 'text'; pathInput.autocomplete = 'off';
+      pathInput.placeholder = '/后台安全路径'; pathInput.value = xboardAdminPath || saved?.xboard_admin_path || connectionPath() || '';
+      pathLabel.append(pathInput);
+      const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重新检查并准备插件';
+      const login = document.createElement('button'); login.type = 'button'; login.textContent = '前往 Xboard 后台登录';
+      const selectedPath = () => {
+        const value = pathInput.value.trim();
+        if (!value) throw new Error('请填写本站 Xboard 后台路径');
+        const url = new URL(value.startsWith('/') || /^https?:/.test(value) ? value : '/' + value, location.origin);
+        const path = url.pathname.replace(/^\/+|\/+$/g, '');
+        if (url.origin !== location.origin || url.username || url.password || !/^[A-Za-z0-9_-]{1,128}$/.test(path)) throw new Error('请输入本站有效后台路径');
+        return path;
+      };
+      retry.addEventListener('click', async () => {
+        retry.disabled = true; error.textContent = '';
+        try {
+          if (pathInput.value.trim()) rememberAdminPath(selectedPath());
+          progress('正在重试，请稍候…');
+          await ensureBridge(); bridgeFailure = null; location.reload();
+        } catch (failure) { error.textContent = failure.message; }
+        finally { retry.disabled = false; }
+      });
+      login.addEventListener('click', () => {
+        try { const path = selectedPath(); rememberAdminPath(path); location.assign('/' + path); }
+        catch (failure) { error.textContent = failure.message; }
+      });
+      const status = document.createElement('p'); status.id = '__appgog_setup_progress'; status.setAttribute('role','status'); status.textContent = setupMessage;
+      form.append(pathLabel, retry, login, status);
+    }
     if (integrityFailure || bridgeFailure || activationAdminRequired) {
       button.disabled = true;
       button.textContent = integrityFailure ? '请重新安装完整授权包'
@@ -524,7 +620,7 @@ export function browserLicenseRuntime(config) {
       form.append(button, error);
     } else if (hasInstallReceipt) form.append(fixedLabel, button, error);
     else if (!hasInstallWindow || installWindowExpired) form.append(button, error);
-    else form.append(installLabel, backendLabel, button, error);
+    else form.append(installLabel, button, error);
     card.append(title, description, form, metadata); gate.append(card); document.body.append(gate);
     form.addEventListener('submit', async (event) => {
       event.preventDefault(); button.disabled = true; button.textContent = '正在验证…'; error.textContent = '';
@@ -576,7 +672,9 @@ export function browserLicenseRuntime(config) {
               ? backendPath : xboardAdminPath || saved?.xboard_admin_path });
           await persistBridgeState();
           installInput.value = '';
-          location.reload();
+          const editor = new URL('/theme/' + encodeURIComponent(config.gt || 'APPGOG') + '/editor.html', location.origin);
+          if (xboardAdminPath) editor.searchParams.set('appgog_admin_path', xboardAdminPath);
+          location.assign(editor.href);
           return;
         }
         const proof = config.gc ? await installationProof('activation', {

@@ -341,6 +341,18 @@ export function createSqliteStatements(database) {
         status, progress, status_message, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?)
     `),
+    buildDeliveryById: database.prepare(`
+      SELECT b.status AS build_status, b.activated_at, ik.status AS install_key_status, ik.consumed_at,
+        ik.expires_at AS install_key_expires_at, r.status AS receipt_status,
+        a.status AS activation_status, a.domain, a.backend_origin, a.created_at AS activation_created_at,
+        a.last_seen_at, l.status AS license_status, a.generation AS activation_generation, l.generation AS license_generation
+      FROM builds b JOIN licenses l ON l.id = b.license_id
+      LEFT JOIN install_keys ik ON ik.build_id = b.id
+      LEFT JOIN install_receipts r ON r.build_id = b.id
+      LEFT JOIN activations a ON a.id = (SELECT id FROM activations WHERE build_id = b.id
+        ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1)
+      WHERE b.id = ?
+    `),
     buildJobById: database.prepare(`
       SELECT build_jobs.*, licenses.customer_ref, licenses.bound_domain, products.code AS product_code
       FROM build_jobs
@@ -526,16 +538,21 @@ export function createSqliteStatements(database) {
         CASE support_tickets.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
         support_tickets.updated_at DESC LIMIT ?
     `),
+    supportRead: database.prepare('SELECT message_sequence FROM support_reads WHERE ticket_id = ? AND actor_type = ? AND actor_id = ?'),
+    markSupportRead: database.prepare(`
+      INSERT INTO support_reads (ticket_id, actor_type, actor_id, message_sequence) VALUES (?, ?, ?, ?)
+      ON CONFLICT(ticket_id, actor_type, actor_id) DO UPDATE SET message_sequence = MAX(support_reads.message_sequence, excluded.message_sequence)
+    `),
     insertSupportMessage: database.prepare(`
-      INSERT INTO support_messages (id, ticket_id, actor_type, actor_id, body, visibility, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO support_messages (id, ticket_id, actor_type, actor_id, body, visibility, created_at, sequence)
+      VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM support_messages))
     `),
     listSupportMessages: database.prepare(`
-      SELECT support_messages.*, admin_users.display_name AS admin_name
+      SELECT support_messages.*, support_messages.sequence AS message_sequence, admin_users.display_name AS admin_name
       FROM support_messages
       LEFT JOIN admin_users ON support_messages.actor_type = 'admin' AND admin_users.id = support_messages.actor_id
       WHERE support_messages.ticket_id = ?
-      ORDER BY support_messages.created_at ASC
+      ORDER BY support_messages.sequence ASC
     `),
     touchSupportTicket: database.prepare(`UPDATE support_tickets SET updated_at = ? WHERE id = ?`),
     updateSupportTicketStatus: database.prepare(`

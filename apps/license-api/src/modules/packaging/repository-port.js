@@ -1,5 +1,6 @@
 export function createPackagingRepositoryPort(repository) {
   return Object.freeze({
+    buildDeliveryById: repository.buildDeliveryById,
     reusableBuildJob: repository.reusableBuildJob,
     expiredBuildJobs: repository.expiredBuildJobs,
     failBuildJob: repository.failBuildJob,

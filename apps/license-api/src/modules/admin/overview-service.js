@@ -11,7 +11,7 @@ export function createAdminOverviewService({ repository, licensing, operations, 
       };
     },
 
-    adminOverview() {
+    adminOverview(actorId) {
       const start = new Date(clock());
       start.setHours(0, 0, 0, 0);
       const rollingDay = startOfRollingDay(clock());
@@ -62,7 +62,7 @@ export function createAdminOverviewService({ repository, licensing, operations, 
           status: admin.status, is_owner: Boolean(admin.is_owner), last_login_at: admin.last_login_at,
           last_login_ip: admin.last_login_ip, created_at: admin.created_at,
         })),
-        tickets: support.listAdminTickets(),
+        tickets: support.listAdminTickets(actorId),
         cms: operations.cmsSettings(),
       };
     },

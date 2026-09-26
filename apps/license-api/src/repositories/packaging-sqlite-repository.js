@@ -1,5 +1,6 @@
 export function createPackagingSqliteRepository(queries) {
   return Object.freeze({
+    buildDeliveryById: id => queries.buildDeliveryById.get(id),
     createTicket(values) {
       queries.insertTicket.run(values.id, values.licenseId, values.tokenHash, values.version, values.domain, values.expiresAt, values.now);
       return values.id;

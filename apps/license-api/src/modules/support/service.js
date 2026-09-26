@@ -32,9 +32,10 @@ export function createSupportService({ database, repository, artifactStore, cloc
     invariant(reason.length >= 2 && reason.length <= 500, 'TICKET_CLOSE_REASON_INVALID', '关闭原因需为 2 到 500 个字符');
     return reason;
   }
-  function view(ticket, includeInternal = false) {
+  function view(ticket, includeInternal = false, readerId = null) {
     if (!ticket) return null;
-    const messages = repository.listSupportMessages(ticket.id)
+    const rawMessages = repository.listSupportMessages(ticket.id);
+    const messages = rawMessages
       .filter((message) => includeInternal || message.visibility === 'public')
       .map((message) => ({
         id: message.id, actor_type: message.actor_type,
@@ -58,14 +59,29 @@ export function createSupportService({ database, repository, artifactStore, cloc
       resolved_at: ticket.resolved_at, closed_at: ticket.closed_at,
       closed_by_type: ticket.closed_by_type, close_reason: ticket.close_reason,
       reopened_at: ticket.reopened_at, messages, attachments,
+      unread_count: readerId ? rawMessages.filter(message => message.visibility === 'public'
+        && message.actor_type === (includeInternal ? 'customer' : 'admin')
+        && message.message_sequence > repository.supportRead(ticket.id, includeInternal ? 'admin' : 'customer', readerId)).length : 0,
     };
   }
   const service = {
     listCustomerTickets(licenseId) {
-      return repository.listSupportTicketsByLicense(licenseId, 100).map((ticket) => view(ticket));
+      return repository.listSupportTicketsByLicense(licenseId, 100).map((ticket) => view(ticket, false, licenseId));
     },
-    listAdminTickets() {
-      return repository.listSupportTickets(200).map((ticket) => view(ticket, true));
+    listAdminTickets(actorId) {
+      return repository.listSupportTickets(200).map((ticket) => view(ticket, true, actorId));
+    },
+    markTicketRead(session, id, { through_message_id: messageId } = {}) {
+      const admin = session.actor_type === 'admin';
+      const license = admin ? null : customerLicense(session);
+      const ticket = repository.supportTicketById(id);
+      invariant(ticket && (admin || ticket.license_id === license.id), 'TICKET_NOT_FOUND', '工单不存在', 404);
+      const message = repository.listSupportMessages(id).find(item => item.id === messageId);
+      invariant(message && (admin || message.visibility === 'public'), 'TICKET_MESSAGE_INVALID', '消息不存在', 400);
+      return transaction(database, () => {
+        repository.markSupportRead(id, admin ? 'admin' : 'customer', session.actor_id, message.message_sequence);
+        return view(ticket, admin, session.actor_id);
+      });
     },
     createCustomerTicket(session, input) {
       const license = customerLicense(session);

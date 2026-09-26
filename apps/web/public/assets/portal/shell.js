@@ -72,6 +72,7 @@ export function createPortalShell(actor) {
       state.data = data;
       applyBranding(actor === 'admin' ? data.cms : data);
       controller.render(data);
+      updateUnreadBadge();
     } catch (error) { notify(error.message, true); }
     finally { state.loading = false; }
   }
@@ -84,7 +85,22 @@ export function createPortalShell(actor) {
     showSecretDialog({ title, secret, description, downloadHref, notify });
   }
 
+  function updateUnreadBadge() {
+    const nav = document.querySelector('.nav-item[data-view="tickets"]');
+    if (!nav) return;
+    let badge = nav.querySelector('.ticket-unread-badge');
+    if (!badge) { badge = document.createElement('span'); badge.className = 'ticket-unread-badge'; nav.append(badge); }
+    const count = (state.data?.tickets || []).reduce((sum, ticket) => sum + (ticket.unread_count || 0), 0);
+    badge.hidden = count === 0;
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.setAttribute('aria-label', count + ' 条未读消息');
+  }
+
   function bindChrome() {
+    document.addEventListener('appgog:unread-changed', updateUnreadBadge);
+    setInterval(() => {
+      if (!document.hidden && state.csrf && ![...document.querySelectorAll('.ticket-reply-form textarea, .ticket-reply-form input[type=file]')].some(field => field.value || field === document.activeElement)) void refresh();
+    }, 15000);
     document.querySelectorAll('[data-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.view)));
     document.querySelectorAll('[data-go-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.goView)));
     document.querySelector('.mobile-menu')?.addEventListener('click', () => $('dashboard-view')?.classList.toggle('nav-open'));

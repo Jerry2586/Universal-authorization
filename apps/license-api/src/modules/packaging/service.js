@@ -1,6 +1,7 @@
 import { transaction } from '../../database.js';
 import { createHash } from 'node:crypto';
 import { canonicalizeDomain } from '../../../../../packages/core/src/canonicalize.js';
+import { buildDeliveryView } from './delivery-view.js';
 import { invariant } from '../../../../../packages/core/src/errors.js';
 import { newId } from '../../../../../packages/core/src/identifiers.js';
 import { openSecret, sealSecret } from '../../../../../packages/core/src/secret-box.js';
@@ -90,6 +91,7 @@ export function createPackagingService({
         && (!key.expires_at || key.expires_at > clock().toISOString());
       return {
         ...publicBuildJob(job),
+        ...buildDeliveryView(repository, job, clock().toISOString()),
         can_void: job.status === 'queued' || job.status === 'succeeded' && build?.status === 'ready' && key?.status === 'available',
         install_key: job.status === 'succeeded' && available && job.install_key_encrypted
           ? openSecret(job.install_key_encrypted, config.deliveryEncryptionKey)

@@ -16,6 +16,14 @@ export async function handleSupportHttp({
     return true;
   }
 
+  const readMatch = url.pathname.match(/^\/web\/(admin|customer)\/tickets\/([^/]+)\/read$/);
+  if (method === 'POST' && readMatch) {
+    const actor = readMatch[1];
+    const session = requireWebSession(request, sessions, actor, true, actor === 'admin' ? 'ticket.view' : undefined);
+    respondJson(response, 200, portal.markTicketRead({ ...session, actor_type: actor }, readMatch[2], await readJson(request)));
+    return true;
+  }
+
   const customerTicketMatch = url.pathname.match(/^\/web\/customer\/tickets\/([^/]+)$/);
   if (method === 'GET' && customerTicketMatch) {
     const session = requireWebSession(request, sessions, 'customer');

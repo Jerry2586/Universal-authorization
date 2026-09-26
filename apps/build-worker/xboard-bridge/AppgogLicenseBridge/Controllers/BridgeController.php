@@ -13,6 +13,24 @@ class BridgeController extends PluginController
     {
     }
 
+    public function adminContext(): JsonResponse
+    {
+        if ($error = $this->beforePluginAction()) return response()->json(['message' => $error[1]], $error[0]);
+        $themes = [];
+        $service = app(\App\Services\ThemeService::class);
+        foreach ($service->getList() as $name => $theme) {
+            if (!preg_match('/^[A-Za-z0-9_-]{1,100}$/', $name)) continue;
+            $directory = $service->getThemePath($name);
+            if ($directory && is_file($directory . '/appgog-license/build.json')) {
+                $themes[] = ['name' => $name, 'version' => $theme['version'] ?? '', 'appgog_activation' => ['schema' => 1]];
+            }
+        }
+        return response()->json([
+            'admin_path' => admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key')))),
+            'themes' => $themes,
+        ]);
+    }
+
     public function health(): JsonResponse
     {
         if ($error = $this->beforePluginAction()) {
@@ -21,7 +39,7 @@ class BridgeController extends PluginController
         return response()->json([
             'ok' => true,
             'code' => 'appgog_license_bridge',
-            'version' => '1.0.2',
+            'version' => '1.0.5',
             'identity' => $this->bridge->publicIdentity(),
         ]);
     }

@@ -1,7 +1,7 @@
 export async function handleAdminOverviewHttp({ method, url, response, portal, auth, respondJson }) {
   if (method !== 'GET' || url.pathname !== '/web/admin/overview') return false;
   const admin = auth.requireAdmin(false, 'dashboard.view');
-  const overview = portal.adminOverview();
+  const overview = portal.adminOverview(admin.session.actor_id);
   if (!admin.permissions.includes('*')) {
     if (!admin.permissions.includes('license.view')) {
       overview.licenses = [];

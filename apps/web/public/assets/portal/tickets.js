@@ -4,11 +4,26 @@ import {
 } from './ui.js';
 
 export function createTicketUi({ state, request, uploadTicketAttachment, notify, refresh, can }) {
+  async function readSelected(ticket, actor) {
+    if (!ticket?.unread_count || document.hidden || location.hash !== '#tickets') return;
+    const last = ticket.messages?.at(-1);
+    if (!last || state.ticketReadPending) return;
+    state.ticketReadPending = true;
+    try {
+      const updated = await request('/web/' + actor + '/tickets/' + encodeURIComponent(ticket.id) + '/read',
+        { method: 'POST', body: { through_message_id: last.id } });
+      ticket.unread_count = updated.unread_count;
+      document.dispatchEvent(new Event('appgog:unread-changed'));
+    } catch (error) { notify(error.message, true); }
+    finally { state.ticketReadPending = false; }
+  }
+
   function ticketListItem(ticket, selected, onSelect) {
     const item = element('button', null, `ticket-list-item${selected ? ' selected' : ''}`);
     item.type = 'button';
     item.setAttribute('aria-pressed', String(selected));
     const top = element('span', null, 'ticket-list-top');
+    if (ticket.unread_count) top.append(element('span', String(ticket.unread_count), 'ticket-unread-badge'));
     top.append(element('b', ticket.ticket_number), element('span', ticketStatusLabel(ticket.status), `ticket-status status-${ticket.status}`));
     item.append(
       top,
@@ -109,7 +124,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
       for (const build of builds) select.append(new Option(`${build.version} · ${ticketStatusLabel(build.status)} · ${String(build.id).slice(-8)}`, build.id));
       if ([...select.options].some((option) => option.value === current)) select.value = current;
     }
-    if (!tickets.some((ticket) => ticket.id === state.selectedCustomerTicketId)) state.selectedCustomerTicketId = tickets[0]?.id ?? null;
+    if (!tickets.some((ticket) => ticket.id === state.selectedCustomerTicketId)) state.selectedCustomerTicketId = null;
     const list = $('customer-ticket-list'); list.replaceChildren();
     if (!tickets.length) {
       const empty = element('div', null, 'empty-state compact-empty');
@@ -119,6 +134,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
       for (const ticket of tickets) list.append(ticketListItem(ticket, ticket.id === state.selectedCustomerTicketId, () => {
         state.selectedCustomerTicketId = ticket.id;
         renderCustomerTickets(tickets, builds);
+        void readSelected(ticket, 'customer').then(() => renderCustomerTickets(tickets, builds));
       }));
     }
     renderCustomerTicketDetail(tickets.find((ticket) => ticket.id === state.selectedCustomerTicketId));
@@ -210,7 +226,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
       && [ticket.ticket_number, ticket.subject, ticket.customer_ref, ticket.bound_domain, ticket.key_prefix].some((value) => match(value, query)));
     const pending = tickets.filter((ticket) => ['pending', 'processing', 'waiting_customer'].includes(ticket.status)).length;
     $('admin-ticket-count').textContent = `${pending} 个待处理`;
-    if (!tickets.some((ticket) => ticket.id === state.selectedAdminTicketId)) state.selectedAdminTicketId = tickets[0]?.id ?? null;
+    if (!tickets.some((ticket) => ticket.id === state.selectedAdminTicketId)) state.selectedAdminTicketId = null;
     const list = $('admin-ticket-list'); list.replaceChildren();
     if (!filtered.length) {
       const empty = element('div', null, 'empty-state compact-empty');
@@ -220,6 +236,7 @@ export function createTicketUi({ state, request, uploadTicketAttachment, notify,
       for (const ticket of filtered) list.append(ticketListItem(ticket, ticket.id === state.selectedAdminTicketId, () => {
         state.selectedAdminTicketId = ticket.id;
         renderAdminTickets(tickets, admins);
+        void readSelected(ticket, 'admin').then(() => renderAdminTickets(tickets, admins));
       }));
     }
     renderAdminTicketDetail(tickets.find((ticket) => ticket.id === state.selectedAdminTicketId), admins);

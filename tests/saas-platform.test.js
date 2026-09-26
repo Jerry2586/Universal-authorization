@@ -1310,3 +1310,55 @@ test('套餐管理 HTTP: owner 可创建编辑，客服只读，CSRF 必需', as
   assert.equal((await app.send('/web/admin/plans', reader)).status, 200);
   assert.equal((await app.send('/web/admin/plans/studio', { ...reader, method: 'POST', body })).status, 403);
 });
+
+test('工单未读按接收者持久化，精确到已看到的消息且禁止越权标读', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const issued = await issue(app, owner, {customerRef:'UNREAD-A',domain:'unread.example.com'});
+  const otherIssued = await issue(app, owner, {customerRef:'UNREAD-B',domain:'other-unread.example.com'});
+  const customer = await app.customer(issued.license_key), other = await app.customer(otherIssued.license_key);
+  const created = await app.send('/web/customer/tickets',{method:'POST',cookie:customer.cookie,csrf:customer.csrf,
+    body:{category:'install',subject:'安装未读测试',body:'请检查这份安装包。'}});
+  assert.equal(created.status,201);
+  const id=created.data.id;
+  const unread = async (actor, user) => (await app.send('/web/'+actor+'/overview',{cookie:user.cookie})).data.tickets.find(t=>t.id===id).unread_count;
+  assert.equal(await unread('admin',owner),1);
+  assert.equal(await unread('customer',customer),0);
+  // Merely reading the list/detail is not an acknowledgement.
+  await app.send('/web/admin/tickets/'+id,{cookie:owner.cookie});
+  assert.equal(await unread('admin',owner),1);
+  const read = (actor,user,messageId)=>app.send('/web/'+actor+'/tickets/'+id+'/read',{method:'POST',cookie:user.cookie,csrf:user.csrf,body:{through_message_id:messageId}});
+  assert.equal((await read('customer',other,created.data.messages[0].id)).status,404);
+  assert.equal((await read('admin',owner,created.data.messages[0].id)).status,200);
+  assert.equal(await unread('admin',owner),0);
+  await app.send('/web/admin/tickets/'+id+'/messages',{method:'POST',cookie:owner.cookie,csrf:owner.csrf,body:{body:'管理员内部备注',visibility:'internal'}});
+  assert.equal(await unread('customer',customer),0);
+  const reply=await app.send('/web/admin/tickets/'+id+'/messages',{method:'POST',cookie:owner.cookie,csrf:owner.csrf,body:{body:'请重新检查安装状态',visibility:'public'}});
+  const seen=reply.data.messages.at(-1).id;
+  assert.equal(await unread('customer',customer),1);
+  await app.send('/web/admin/tickets/'+id+'/messages',{method:'POST',cookie:owner.cookie,csrf:owner.csrf,body:{body:'还有一条刚发来的消息',visibility:'public'}});
+  assert.equal((await read('customer',customer,seen)).status,200);
+  assert.equal(await unread('customer',customer),1,'读取旧消息不能吞掉并发的新消息');
+  const relogin=await app.customer(issued.license_key);
+  assert.equal(await unread('customer',relogin),1);
+  assert.equal(await unread('admin',owner),0,'自己发出的消息不计未读');
+});
+
+// Upgrade from a database created before read cursors existed, then reopen and vacuum.
+test('旧工单数据库升级保留消息，已读游标在重开数据库和VACUUM后稳定', () => {
+  const root=mkdtempSync(join(tmpdir(),'appgog-read-upgrade-'));
+  const path=join(root,'old.sqlite');
+  const old=new DatabaseSync(path);
+  old.exec(`CREATE TABLE support_messages (id TEXT PRIMARY KEY,ticket_id TEXT NOT NULL,actor_type TEXT NOT NULL,actor_id TEXT,body TEXT NOT NULL,visibility TEXT NOT NULL DEFAULT 'public',created_at TEXT NOT NULL);
+    INSERT INTO support_messages VALUES ('old_message','legacy_ticket','admin','legacy_admin','old reply','public','2026-09-25T00:00:00Z');`);
+  old.close();
+  try {
+    let db=openDatabase(path);
+    const seq=db.prepare("SELECT sequence FROM support_messages WHERE id='old_message'").get().sequence;
+    assert.equal(seq,1);
+    assert.ok(db.prepare("SELECT version FROM schema_migrations WHERE version='2026-09-26-v1.2.33-support-read-cursors'").get());
+    db.exec('VACUUM');db.close();db=openDatabase(path);
+    assert.equal(db.prepare("SELECT sequence FROM support_messages WHERE id='old_message'").get().sequence,seq);
+    db.close();
+  } finally {rmSync(root,{recursive:true,force:true});}
+});

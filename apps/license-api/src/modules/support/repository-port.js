@@ -1,5 +1,7 @@
 export function createSupportRepositoryPort(repository) {
   return Object.freeze({
+    supportRead: repository.supportRead,
+    markSupportRead: repository.markSupportRead,
     licenseById: repository.licenseById,
     buildJobById: repository.buildJobById,
     adminById: repository.adminById,

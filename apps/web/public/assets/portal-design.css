@@ -231,3 +231,9 @@ body[data-portal] .plan-capabilities label { display:flex; align-items:center; g
 body[data-portal] .plan-capabilities input { width:16px; height:16px; accent-color:var(--accent); }
 body[data-portal] .button:active { transform:translateY(1px); }
 @media (prefers-reduced-motion:reduce) { body[data-portal] .button:active { transform:none; } }
+
+/* Unread is per recipient and persisted by Support. */
+.ticket-unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:20px;background:#dc354f;color:#fff;font-size:11px;font-weight:700;line-height:1;flex-shrink:0}
+.ticket-unread-badge[hidden]{display:none!important}
+.nav-item>.ticket-unread-badge{margin-left:auto}
+.ticket-list-top:has(.ticket-unread-badge){color:#c82d49}

@@ -67,7 +67,7 @@ function installBrowser({
     setItem: (key, value) => values.set(key, String(value)),
   };
   globalThis.location = {
-    hostname: 'demo.example.com', origin: 'https://demo.example.com', href: 'https://demo.example.com/', reload() {},
+    hostname: 'demo.example.com', origin: 'https://demo.example.com', href: 'https://demo.example.com/', reload() {}, assign(value) { this.assigned = value; },
   };
   globalThis.document = {
     readyState: 'complete', referrer,
@@ -518,11 +518,12 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     await browser.settle();
     let nodes = descend(browser.elements.find(e=>e.id==='__appgog_gate'));
     nodes.find(e=>e.placeholder==='INS-XXXX-XXXX-XXXX').value='fixture-install-key';
-    nodes.find(e=>e.type==='url').value='https://demo.example.com/secure_test';
+    assert.equal(nodes.some(e=>e.type==='url'), false, '后台地址从已验证连接继承，不再重复要求填写');
     await nodes.find(e=>e.tagName==='form').onsubmit({preventDefault(){}});
     const receiptState = JSON.parse(values.get(key));
     for (const field of Object.keys(initial)) assert.equal(receiptState[field],initial[field]);
     assert.equal(receiptState.install_receipt_id,'receipt');
+    assert.match(globalThis.location.assigned, /theme\/APPGOG\/editor.html\?appgog_admin_path=secure_test/);
     assert.equal(writes.at(-1).install_window_token,'window-proof');
   } finally { browser.restore(); }
   browser=boot();
@@ -552,4 +553,31 @@ test('安装解锁和固定 Key 激活保留后台路径、安装身份及窗口
     for(const field of ['install_window_token','install_receipt_secret','refresh_secret']) assert.equal(reloaded[field],undefined);
     assert.equal(serverState.refresh_secret,'refresh-secret');
   } finally { browser.restore(); }
+});
+
+test('旧版已保存的主题后台连接在无referrer时可恢复插件管理路径', async () => {
+  const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+  const values=new Map([
+    ['XBOARD_ACCESS_TOKEN',JSON.stringify({value:'fixture-admin-token'})],
+    ['appgog_studio_connection_v1',JSON.stringify({admin_path:'old_secure_path',api_version:'v2'})],
+  ]);
+  const paths=[];
+  const browser=installBrowser({token:null,publicKey,manifestToken:packageManifest(privateKey),initialValues:values,
+    bridge:{gc:'appgog_license_bridge',gv:'1.0.2',gt:'APPGOG'},fetchImpl:async(url)=>{
+      const path=new URL(url,'https://demo.example.com').pathname;paths.push(path);
+      if(path.endsWith('/health'))return Response.json({ok:true,code:'appgog_license_bridge',version:'1.0.2',identity:{installation_id:'installation_runtime_123',installation_public_key:'public-key'}});
+      if(path.endsWith('/admin-context'))return Response.json({}, {status:404});
+      if(path==='/api/v2/old_secure_path/plugin/getPlugins')return Response.json({data:[]});
+      if(path.endsWith('/register'))return Response.json({installation_id:'installation_runtime_123',installation_public_key:'public-key'});
+      if(path.endsWith('/state/runtime')||path.endsWith('/state/read'))return Response.json({state:{}});
+      throw Error('unexpected '+path);
+    }});
+  try {await browser.settle();assert.ok(paths.includes('/api/v2/old_secure_path/plugin/getPlugins'));assert.equal(JSON.parse(values.get('appgog_license_pkg_runtime')).xboard_admin_path,'old_secure_path');assert.match(elementText(browser.elements.find(e=>e.id==='__appgog_gate')),/开始激活/);}
+  finally{browser.restore();}
+});
+
+test('缺失管理路径时提供恢复和重试入口而不是只有不可点击按钮', async () => {
+  const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+  const browser=installBrowser({token:null,publicKey,manifestToken:packageManifest(privateKey),initialValues:new Map([['XBOARD_ACCESS_TOKEN',JSON.stringify({value:'fixture-admin-token'})]]),bridge:{gc:'appgog_license_bridge',gv:'1.0.3'},fetchImpl:async()=>Response.json({message:'not found'},{status:404})});
+  try{await browser.settle();const gate=browser.elements.find(e=>e.id==='__appgog_gate');assert.match(elementText(gate),/重新检查并准备插件/);assert.match(elementText(gate),/前往 Xboard 后台登录/);assert.ok(browser.classes.has('__appgog_locked'));}finally{browser.restore();}
 });

@@ -2,6 +2,8 @@ import { newId } from '../../../../packages/core/src/identifiers.js';
 
 export function createSupportSqliteRepository(queries) {
   return Object.freeze({
+    supportRead: (ticketId, actorType, actorId) => queries.supportRead.get(ticketId, actorType, actorId)?.message_sequence ?? 0,
+    markSupportRead: (ticketId, actorType, actorId, sequence) => queries.markSupportRead.run(ticketId, actorType, actorId, sequence),
     createSupportTicket(values) {
       const id = values.id ?? newId('tkt');
       queries.insertSupportTicket.run(

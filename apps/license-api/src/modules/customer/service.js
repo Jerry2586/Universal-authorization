@@ -1,4 +1,5 @@
 import { publicBuildJob } from '../../../../../packages/contracts/src/build-job.js';
+import { buildDeliveryView } from '../packaging/delivery-view.js';
 import { invariant } from '../../../../../packages/core/src/errors.js';
 
 export function createCustomerPortalService({
@@ -79,7 +80,7 @@ export function createCustomerPortalService({
         current_version: currentVersion,
         latest_version: latestVersion,
         latest_eligible_version: latestEligibleVersion,
-        builds: builds.map(job => ({ ...publicBuildJob(job), can_void: Boolean(job.can_void) })),
+        builds: builds.map(job => ({ ...publicBuildJob(job), ...buildDeliveryView(repository, job, clock().toISOString()), can_void: Boolean(job.can_void) })),
         tickets: support.listCustomerTickets(license.id),
       };
     },

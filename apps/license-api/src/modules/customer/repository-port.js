@@ -1,5 +1,5 @@
 const METHODS = Object.freeze([
-  'activeActivationByLicense', 'latestApprovedDomainMigrationByLicense', 'licenseById',
+  'buildDeliveryById', 'activeActivationByLicense', 'latestApprovedDomainMigrationByLicense', 'licenseById',
   'listActiveSourceVersions', 'listBuildJobsByLicense', 'recentBuildCount', 'setting', 'totalBuildCount',
 ]);
 

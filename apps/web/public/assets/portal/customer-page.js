@@ -15,9 +15,11 @@ export function createCustomerPage(shell) {
     const row = element('tr');
     const version = element('td');
     version.append(element('strong', job.version || '—'), element('small', intentLabel(job.intent), 'table-subline'));
-    row.append(version, td(job.domain), badge(job.status), progressCell(job.progress), td(date(job.created_at)));
+    const status = badge(job.status);
+    if (job.status === 'succeeded') status.append(element('small', job.activation_label || '未激活', 'table-subline'));
+    row.append(version, td(job.domain), status, progressCell(job.progress), td(date(job.created_at)));
     const action = element('td');
-    action.append(button(job.status === 'succeeded' ? '领取交付' : '查看状态', () => showBuild(job.id)));
+    action.append(button(job.status === 'succeeded' ? (job.can_download ? '下载与激活' : '查看激活详情') : '查看状态', () => showBuild(job.id)));
     if (job.can_void) action.append(button('作废', () => voidBuild(job.id)));
     row.append(action);
     return row;
@@ -149,7 +151,18 @@ export function createCustomerPage(shell) {
   async function showBuild(id) {
     try {
       const job = await request(`/web/customer/builds/${encodeURIComponent(id)}`);
-      if (!job.install_key) return notify(`${job.message}（${job.progress}%）`, job.status === 'failed');
+      if (!job.install_key || !job.can_download) {
+        dialog(job.status === 'succeeded' ? '安装与激活详情' : '构建详情', (job.status === 'succeeded' ? job.activation_label : job.message) || '等待构建完成', (card, close) => {
+          card.append(element('p', '版本：' + job.version + ' · 域名：' + job.domain));
+          card.append(element('p', 'Build：' + (job.build_id || '尚未生成')));
+          if (job.install_key_used_at) card.append(element('p', '安装 Key 已使用：' + date(job.install_key_used_at)));
+          if (job.activated_at) card.append(element('p', '激活时间：' + date(job.activated_at)));
+          if (job.activation_state === 'unlocked') card.append(element('p', '本地解锁已完成，请在主题后台使用固定授权 Key 完成正式激活。'));
+          if (job.status === 'failed') card.append(element('p', job.message || '构建失败，请查看日志'));
+          card.append(button('关闭', close));
+        });
+        return;
+      }
       const download = await request(`/web/customer/builds/${encodeURIComponent(id)}/download-ticket`, { method: 'POST' });
       showSecret('本次安装 Key', job.install_key, `Build ID：${job.build_id}。本 Key 只能成功激活一次；下载地址将在 5 分钟后失效。`, download.download_url);
     } catch (error) { notify(error.message, true); }

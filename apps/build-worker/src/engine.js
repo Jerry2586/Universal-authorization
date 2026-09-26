@@ -184,7 +184,7 @@ function themeDescriptor(files, root) {
 function injectRuntime(html, runtimeSrc, marker) {
   invariant(!html.includes('data-appgog-license-runtime'), 'SOURCE_ALREADY_PROTECTED', '主题包已经包含 APPGOG 授权运行时', 409);
   // Lock before external scripts/network checks can expose the original editor.
-  const initialLock = '<style data-appgog-initial-lock>html:not(.__appgog_unlocked) body>*:not(#__appgog_gate){visibility:hidden!important}html:not(.__appgog_unlocked) body::before{content:"正在验证 APPGOG 授权…";position:fixed;inset:0;display:grid;place-items:center;background:#f6f7fb;color:#72788a;font:14px system-ui}</style>';
+  const initialLock = '<style data-appgog-initial-lock>html:not(.__appgog_unlocked) body>*:not(#__appgog_gate){visibility:hidden!important}html:not(.__appgog_unlocked) body::before{content:var(--appgog-loading-message,"正在验证 APPGOG 授权…");position:fixed;inset:0;display:grid;place-items:center;background:#f6f7fb;color:#72788a;font:14px system-ui}</style>';
   if (/<head(?:\s[^>]*)?>/i.test(html)) html = html.replace(/<head(?:\s[^>]*)?>/i, (match) => match + initialLock);
   else html = initialLock + html;
   const tag = `<script data-appgog-license-runtime="${marker}" src="${runtimeSrc}"></script>`;
@@ -248,6 +248,8 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
     const root = roots[0] === '.' ? '' : `${roots[0]}/`;
     const theme = themeDescriptor(files, root);
+    theme.appgog_activation = { schema: 1, entry: 'editor.html', bridge: 'appgog_license_bridge' };
+    files.set(root + 'config.json', Buffer.from(JSON.stringify(theme, null, 2)));
     const pathSeed = createHmac('sha256', packageSecret).update(`appgog-paths:${packageId}:${watermark}`, 'utf8').digest('hex');
     const protectedRoot = `${root}appgog-license/p-${pathSeed.slice(0, 12)}/`;
     const runtimePath = `${protectedRoot}r-${pathSeed.slice(12, 28)}.js`;
