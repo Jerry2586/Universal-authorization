@@ -8,6 +8,7 @@ import { verifyCompactToken } from '../../../packages/core/src/signing.js';
 import { readZip, writeZip } from '../../../packages/core/src/zip.js';
 import { createBuildInjection } from './manifest.js';
 import { createBrowserLicenseRuntime } from './runtime.js';
+import { initialLockMarkup, startupPresentationProfile } from './startup-presentation.js';
 import { createXboardBridgePackage, xboardBridgeDescriptor } from './xboard-bridge-package.js';
 
 const BLOCKED_EXTENSIONS = new Set(['.exe', '.dll', '.so', '.dylib', '.bat', '.cmd', '.ps1', '.sh', '.phar', '.jar']);
@@ -181,10 +182,10 @@ function themeDescriptor(files, root) {
   return descriptor;
 }
 
-function injectRuntime(html, runtimeSrc, marker) {
+function injectRuntime(html, runtimeSrc, marker, presentation) {
   invariant(!html.includes('data-appgog-license-runtime'), 'SOURCE_ALREADY_PROTECTED', '主题包已经包含 APPGOG 授权运行时', 409);
   // Lock before external scripts/network checks can expose the original editor.
-  const initialLock = '<style data-appgog-initial-lock>html:not(.__appgog_unlocked) body>*:not(#__appgog_gate){visibility:hidden!important}html:not(.__appgog_unlocked) body::before{content:"";position:fixed;inset:0;display:grid;place-items:center;background:#f6f7fb;color:#72788a;font:14px system-ui}</style>';
+  const initialLock = initialLockMarkup(presentation);
   if (/<head(?:\s[^>]*)?>/i.test(html)) html = html.replace(/<head(?:\s[^>]*)?>/i, (match) => match + initialLock);
   else html = initialLock + html;
   const tag = `<script data-appgog-license-runtime="${marker}" src="${runtimeSrc}"></script>`;
@@ -230,6 +231,9 @@ export class HardenedThemeBuildEngine extends BuildEngine {
   async build({ sourceRef, sourceBuffer: providedSourceBuffer, product, version, buildId, packageId, packageSecret, packageManifestToken, watermark, domain }) {
     const sourceBuffer = providedSourceBuffer ?? this.artifactStore.read(sourceRef);
     const { files, entries } = this.validateSource(sourceBuffer);
+    const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
+    const root = roots[0] === '.' ? '' : `${roots[0]}/`;
+    const presentations = new Map(entries.map(entry => [entry, startupPresentationProfile(files, root, files.get(entry).toString('utf8'))]));
     await applyPerPackageSourceProtection(files, watermark);
     const injection = createBuildInjection({
       product,
@@ -245,8 +249,6 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       packagePublicKey: this.packagePublicKey,
       notificationPublicKey: this.notificationPublicKey,
     });
-    const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
-    const root = roots[0] === '.' ? '' : `${roots[0]}/`;
     const theme = themeDescriptor(files, root);
     theme.appgog_activation = { schema: 1, entry: 'editor.html', bridge: 'appgog_license_bridge' };
     files.set(root + 'config.json', Buffer.from(JSON.stringify(theme, null, 2)));
@@ -321,7 +323,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       const runtimeSrc = entry.toLowerCase().endsWith('.blade.php')
         ? `/theme/${theme.name}/${posix.relative(root || '.', runtimePath)}`
         : (relative.startsWith('.') ? relative : `./${relative}`);
-      files.set(entry, Buffer.from(injectRuntime(html, runtimeSrc, packageId), 'utf8'));
+      files.set(entry, Buffer.from(injectRuntime(html, runtimeSrc, packageId, presentations.get(entry)), 'utf8'));
     }
     files.set(`${root}APPGOG-ACTIVATION.txt`, Buffer.from([
       'APPGOG 授权主题包',
