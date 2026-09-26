@@ -45,7 +45,7 @@ function fakeElement(tagName) {
 
 function installBrowser({
   token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey,
-  manifestToken, bridge = null, initialValues = null, referrer = '', readyState = 'complete', onDomReady = null,
+  editor = true, manifestToken, bridge = null, initialValues = null, referrer = '', readyState = 'complete', onDomReady = null,
 }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
@@ -61,6 +61,7 @@ function installBrowser({
   const intervals = [];
   globalThis.setInterval = (...args) => { const timer = original.setInterval(...args); intervals.push(timer); return timer; };
   const elements = [];
+  if (editor) { const nav = fakeElement('nav'); nav.id = 'editorTabs'; elements.push(nav); }
   const classes = new Set();
   globalThis.localStorage = {
     getItem: (key) => values.get(key) ?? null,
@@ -644,3 +645,5 @@ for (const kind of ['current','available','stale','unavailable','tampered']) {
     finally {browser.restore();}
   });
 }
+
+test('user pages keep license enforcement without owner UI or update feed requests', async()=>{const {privateKey,publicKey}=generateKeyPairSync('ed25519');let calls=0;const browser=installBrowser({editor:false,token:activation(privateKey),publicKey,manifestToken:packageManifest(privateKey),fetchImpl:async()=>{calls++;throw Error('offline');}});try{await browser.settle();const before=calls;assert.equal(globalThis.APPGOGLicense.mount,undefined);assert.equal((await globalThis.APPGOGLicense.checkUpdates()).status,'restricted');assert.equal(calls,before);assert.equal(globalThis.APPGOGLicense.status,'offline');assert.ok(!browser.elements.some(e=>['__appgog_offline','__appgog_update','__appgog_activation_entry'].includes(e.id)));}finally{browser.restore();}});

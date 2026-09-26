@@ -482,6 +482,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
   };
   let updateFlight = null;
   function checkUpdates() {
+    if (!document.getElementById('editorTabs')) return Promise.resolve({ status: 'restricted' });
     if (updateFlight) return updateFlight;
     updateFlight = loadUpdate().finally(() => { updateFlight = null; });
     return updateFlight;
@@ -533,10 +534,10 @@ export function browserLicenseRuntime(config, mountPage = null) {
     root.classList.remove('__appgog_locked');
     document.getElementById('__appgog_gate')?.remove();
     globalThis.APPGOGLicense.status = state;
-    if (state === 'offline') showOffline();
+    if (state === 'offline' && document.getElementById('editorTabs')) showOffline();
     installActivationEntry();
     if (typeof globalThis.dispatchEvent === 'function' && typeof CustomEvent === 'function') globalThis.dispatchEvent(new CustomEvent('appgog-license-ready'));
-    void checkUpdates();
+    if (document.getElementById('editorTabs')) void checkUpdates();
   }
 
   function installActivationEntry() {
@@ -761,6 +762,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
   }
 
   function mountAuthorizedPage(host, options = {}) {
+    if (!document.getElementById('editorTabs')) return null;
     if (!activePayload || !['active', 'offline'].includes(globalThis.APPGOGLicense.status) || !mountPage) {
       host.textContent = '正在读取授权状态…'; return null;
     }
@@ -774,7 +776,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
   }
   globalThis.APPGOGLicense = {
     product: config.p, version: config.v, buildId: config.b, packageId: config.i,
-    installationId, status: 'checking', checkUpdates, hasCapability, requireCapability, mount: mountAuthorizedPage,
+    installationId, status: 'checking', checkUpdates, hasCapability, requireCapability,
   };
   const start = () => { void packageIdentityValid().then(async (result) => {
     if (!result.ok) { integrityFailure = result; await domReady; showGate(); return; }
