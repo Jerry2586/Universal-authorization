@@ -9,7 +9,7 @@ import { readZip, writeZip } from '../../../packages/core/src/zip.js';
 import { createBuildInjection } from './manifest.js';
 import { createBrowserLicenseRuntime } from './runtime.js';
 import { initialLockMarkup, startupPresentationProfile } from './startup-presentation.js';
-import { integrateLicensePage } from './license-page-adapter.js';
+import { integrateLicensePage, versionThemeAssets } from './license-page-adapter.js';
 import { createXboardBridgePackage, xboardBridgeDescriptor } from './xboard-bridge-package.js';
 
 const BLOCKED_EXTENSIONS = new Set(['.exe', '.dll', '.so', '.dylib', '.bat', '.cmd', '.ps1', '.sh', '.phar', '.jar']);
@@ -236,6 +236,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     const root = roots[0] === '.' ? '' : `${roots[0]}/`;
     const presentations = new Map(entries.map(entry => [entry, startupPresentationProfile(files, root, files.get(entry).toString('utf8'))]));
     integrateLicensePage(files, root);
+    versionThemeAssets(files, root, buildId);
     await applyPerPackageSourceProtection(files, watermark);
     const injection = createBuildInjection({
       product,
