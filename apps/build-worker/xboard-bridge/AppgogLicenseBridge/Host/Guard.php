@@ -152,11 +152,20 @@ final class Guard
         // Recovery remains reachable even after the removable plugin is deleted.
         if ($path === $admin && $request->method() === 'GET' && $response->getStatusCode() === 200
             && str_contains($response->headers->get('Content-Type', ''), 'text/html')) {
-            $html = $response->getContent();
-            $script = self::root() . '/admin-entry.js';
-            if (is_file($script) && !str_contains($html, 'data-appgog-admin-entry')) {
-                $response->setContent(str_replace('</body>', '<script data-appgog-admin-entry>' . file_get_contents($script) . '</script></body>', $html));
-                $response->headers->remove('Content-Length');
+            try {
+                $html = $response->getContent();
+                $script = self::root() . '/admin-entry.js';
+                if (is_string($html) && is_file($script) && is_readable($script) && !str_contains($html, 'data-appgog-admin-entry')) {
+                    $source = file_get_contents($script);
+                    if (is_string($source)) {
+                        $response->setContent(str_replace('</body>', '<script data-appgog-admin-entry>' . $source . '</script></body>', $html));
+                        $response->headers->remove('Content-Length');
+                    }
+                }
+            } catch (\Throwable $error) {
+                // Presentation is optional; authorization checks above remain fail-closed.
+                try { \Illuminate\Support\Facades\Log::warning('APPGOG recovery page decoration skipped', ['error_type' => get_class($error)]); }
+                catch (\Throwable $loggingError) { /* Preserve the host recovery response. */ }
             }
         }
         return $response;

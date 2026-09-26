@@ -27,24 +27,44 @@
     frame.src='/theme/'+encodeURIComponent(theme.name)+'/editor.html?appgog_admin_path='+encodeURIComponent(path)+(prepare?'&appgog_setup=prepare':'&appgog_install=1');
     frame.style.cssText='width:100%;height:calc(100% - 52px);border:0';d.append(bar,frame);d.addEventListener('close',()=>d.remove());document.body.append(d);d.showModal();
   }
+  const label=button=>(button.textContent||'').replace(/\s+/g,'').trim();
+  const activates=button=>/^(激活|激活主题|启用|启用主题|使用|使用主题|应用主题|Activate|ActivateTheme|Enable|EnableTheme)$/i.test(label(button));
+  const settings=button=>/^(主题设置|设置主题|ThemeSettings)$/i.test(label(button));
+  function themeCard(heading){
+    let node=heading?.parentElement;
+    for(let depth=0;node&&depth<6;depth++,node=node.parentElement){
+      if(node===document.body||node.querySelectorAll('h3').length>1)return null;
+      const buttons=[...node.querySelectorAll('button')];
+      if(buttons.some(button=>activates(button)||settings(button)||/^(当前主题|CurrentTheme)$/i.test(label(button))))return node;
+    }
+    return null;
+  }
   function mount(){
     if(!token()||!/theme/i.test(location.hash))return;
     for(const theme of themes){
       const heading=[...document.querySelectorAll('h3')].find(n=>n.textContent.trim()===theme.name);
-      const card=heading?.parentElement?.parentElement;if(!card)continue;
+      const card=themeCard(heading);if(!card)continue;
       card.dataset.appgogProtectedTheme=theme.name;
+      const buttons=[...card.querySelectorAll('button')];
+      const activation=buttons.find(activates);
+      // Reuse the real primary action; never clone the first (possibly delete/icon) button.
+      if(activation){
+        card.querySelector('[data-appgog-theme-action]')?.remove();
+        continue;
+      }
       if(card.querySelector('[data-appgog-theme-action]'))continue;
-      const native=card.querySelector('button');if(!native)continue;
-      const button=document.createElement('button');button.type='button';button.dataset.appgogThemeAction=theme.name;button.textContent='激活 / 授权管理';button.className=native.className;
-      button.onclick=()=>openActivation(theme);native.parentElement.append(button);
+      const reference=buttons.find(settings);if(!reference)continue;
+      const button=document.createElement('button');button.type='button';button.dataset.appgogThemeAction=theme.name;
+      button.textContent='授权与激活';button.className=reference.className;
+      button.style.cssText='position:static;inset:auto;flex:0 1 auto;width:auto;max-width:100%;height:auto;min-height:36px;white-space:normal;overflow-wrap:anywhere';
+      reference.parentElement.append(button);
     }
   }
-  // Stop the native activation BEFORE it writes frontend_theme. HostGuard also
-  // rejects direct API calls until both stages have been verified server-side.
+  // Capture before React/native actions write frontend_theme, including “激活主题”.
   document.addEventListener('click',event=>{
-    const button=event.target.closest?.('button');if(!button||button.dataset.appgogThemeAction)return;
+    const button=event.target.closest?.('button');if(!button)return;
     const card=button.closest('[data-appgog-protected-theme]');if(!card)return;
-    if(!/^(激活|启用|使用|Activate|Enable)$/i.test(button.textContent.trim()))return;
+    if(!button.dataset.appgogThemeAction&&!activates(button))return;
     const theme=themes.find(t=>t.name===card.dataset.appgogProtectedTheme);if(!theme)return;
     event.preventDefault();event.stopImmediatePropagation();openActivation(theme);
   },true);

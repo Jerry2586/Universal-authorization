@@ -12,7 +12,7 @@ use RuntimeException;
 
 class BridgeState
 {
-    private const VERSION = '1.1.0';
+    private const VERSION = '1.1.1';
     private const SPKI_PREFIX_HEX = '302a300506032b6570032100';
     private const PURPOSES = [
         'activation', 'refresh', 'migration_issue', 'migration_accept',

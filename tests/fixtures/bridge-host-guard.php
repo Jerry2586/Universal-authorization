@@ -7,6 +7,7 @@ namespace Illuminate\Support\Facades {
     class Crypt { public static function encryptString($value){return base64_encode($value);} public static function decryptString($value){return base64_decode($value,true);} }
     class Log { public static function error(...$args){} }
 }
+namespace Illuminate\Database\Migrations { class Migration {} }
 namespace App\Models {
     class Plugin { public static $enabled=true; public static function where(...$args){return new self;} public function first(){return (object)['is_enabled'=>self::$enabled];} }
 }
@@ -21,7 +22,7 @@ namespace {
     function storage_path($path=''){global $root;return $root.'/storage/'.$path;}
     function base_path($path=''){global $root;return $root.'/'.$path;}
     function public_path($path=''){return base_path('public/'.$path);}
-    function app($class){return new $class;}
+    function app($class=null){if($class)return new $class;return new class {public function terminating($callback){$GLOBALS['reloadCallbacks'][]=$callback;}};}
     function admin_setting($key,$default=null){return ['secure_path'=>'secure','frontend_theme'=>'APPGOG'][$key]??$default;}
     function config($key){return 'fixture-only';}
     class Headers {public function __construct(public $type='text/html'){} public function get($key,$default=''){return $this->type;}public function remove($key){} }
@@ -98,5 +99,24 @@ namespace {
     check($upload->status===200 && is_file(public_path('theme/APPGOG/appgog-license/build.json')),'activation assets not published');
     // A replayed public token must not change the persisted identity or customer settings.
     check(json_decode(base64_decode(file_get_contents(storage_path('app/private/appgog-license-bridge/identity.json.enc'))),true)['public_key']===base64_encode($ipublic),'identity changed');
+    // Replay an installed 1.1.0 host layout: migration must refresh both persisted files,
+    // preserve the original bootstrap and identity, and schedule a post-commit reload.
+    $identityPath=storage_path('app/private/appgog-license-bridge/identity.json.enc');
+    $identityBefore=file_get_contents($identityPath);
+    $stateBefore=file_get_contents($statePath);
+    $enrollmentPath=storage_path('app/private/appgog-host/themes/APPGOG.json');
+    $enrollmentBefore=file_get_contents($enrollmentPath);
+    write(storage_path('app/private/appgog-host/Guard.php'),'<?php /* old guard */');
+    write(storage_path('app/private/appgog-host/admin-entry.js'),'/* old admin */');
+    $migration=require $argv[1].'/database/migrations/2026_09_27_000008_admin_recovery.php';
+    $migration->up();$migration->up();
+    check(file_get_contents(storage_path('app/private/appgog-host/Guard.php'))===file_get_contents($argv[1].'/Host/Guard.php'),'guard upgrade not persisted');
+    check(file_get_contents(storage_path('app/private/appgog-host/admin-entry.js'))===file_get_contents($argv[1].'/assets/admin-entry.js'),'admin upgrade not persisted');
+    check(file_get_contents($identityPath)===$identityBefore,'upgrade changed identity');
+    check(file_get_contents($statePath)===$stateBefore,'upgrade changed activation');
+    check(file_get_contents($enrollmentPath)===$enrollmentBefore,'upgrade changed enrollment');
+    check(file_get_contents(storage_path('app/private/appgog-host/bootstrap-original.php'))===$original,'upgrade changed recovery backup');
+    check(file_get_contents(base_path('bootstrap/app.php'))===$installed,'upgrade changed host registration');
+    check(count($GLOBALS['reloadCallbacks'])===2,'upgrade did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }
