@@ -629,3 +629,18 @@ for (const mode of ['denied','missing','wrong-installation','tampered']) {
     finally {browser.restore();}
   });
 }
+
+for (const kind of ['current','available','stale','unavailable','tampered']) {
+  test('授权更新页面返回真实 '+kind+' 状态而不修改激活', async()=>{
+    const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+    const token=activation(privateKey,{exp:Math.floor(FIXED_NOW/1000)+3600});
+    const version=kind==='available'?'1.18.0':kind==='stale'?'1.16.0':'1.17.1';
+    const release=signCompactToken({typ:'release',product:'appgog',version,exp:Math.floor(FIXED_NOW/1000)+3600,build_center_url:'https://build.example.com'},privateKey);
+    const browser=installBrowser({token,publicKey,manifestToken:packageManifest(privateKey),fetchImpl:async()=>{
+      if(kind==='unavailable')throw Error('offline');
+      return Response.json({release_token:release,latest:{version:kind==='tampered'?'9.9.9':version},build_center_url:'https://build.example.com'});
+    }});
+    try {await browser.settle();const result=await globalThis.APPGOGLicense.checkUpdates();assert.equal(result.status,kind==='tampered'?'unavailable':kind);assert.equal(globalThis.APPGOGLicense.status,'active');if(['current','available','stale'].includes(kind))assert.equal(result.buildCenterUrl,'https://build.example.com/');else assert.equal(result.buildCenterUrl,undefined);}
+    finally {browser.restore();}
+  });
+}

@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
+import { mountLicensePage } from './license-page.js';
 
 function publicKeyDer(pem) {
   return pem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, '');
 }
 
 // This function is serialized into the installed theme. Keep it self-contained: it has no Node dependencies.
-export function browserLicenseRuntime(config) {
+export function browserLicenseRuntime(config, mountPage = null) {
   const root = document.documentElement;
   root.classList.remove('__appgog_unlocked');
   root.classList.add('__appgog_locked');
@@ -472,12 +473,26 @@ export function browserLicenseRuntime(config) {
     return false;
   }
 
-  async function checkUpdates() {
+  let updateState = { status: 'idle' };
+  const updateListeners = new Set();
+  const publishUpdate = value => {
+    updateState = Object.freeze(value);
+    for (const listener of updateListeners) { try { listener(updateState); } catch { /* Presentation cannot change license state. */ } }
+    return updateState;
+  };
+  let updateFlight = null;
+  function checkUpdates() {
+    if (updateFlight) return updateFlight;
+    updateFlight = loadUpdate().finally(() => { updateFlight = null; });
+    return updateFlight;
+  }
+  async function loadUpdate() {
     try {
-      if (!hasCapability('updates:read')) return;
+      if (!hasCapability('updates:read')) return publishUpdate({ status: 'restricted' });
+      publishUpdate({ status: 'checking' });
       // Optional endpoint. A missing feed must never affect the activation state.
-      const response = await fetch(`${config.u}/api/v1/releases/latest?product=${encodeURIComponent(config.p)}`);
-      if (!response.ok) return;
+      const response = await fetch(`${config.u}/api/v1/releases/latest?product=${encodeURIComponent(config.p)}`, { cache: 'no-store', signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined });
+      if (!response.ok) throw new Error('Update feed unavailable');
       const result = await response.json();
       const feed = await signedPayload(result.release_token, notificationPublicKey);
       const latest = result.latest;
@@ -488,27 +503,29 @@ export function browserLicenseRuntime(config) {
         || (feed.release_notes ?? null) !== (latest.release_notes ?? null)
         || (feed.published_at ?? null) !== (latest.published_at ?? null)
         || (feed.channel ?? null) !== (latest.channel ?? null)
-        || (feed.release_kind ?? null) !== (latest.release_kind ?? null)
-        || !newerVersion(feed.version, config.v)) return;
+        || (feed.release_kind ?? null) !== (latest.release_kind ?? null)) throw new Error('Invalid release signature');
+      let buildCenterUrl = null;
+      if (typeof result.build_center_url === 'string' && feed.build_center_url === result.build_center_url) {
+        try { const url = new URL(result.build_center_url);
+          if (!url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)))) buildCenterUrl = url.href;
+        } catch { /* Invalid navigation is never trusted. */ }
+      }
+      const releaseState = { status: newerVersion(feed.version, config.v) ? 'available' : (feed.version === config.v ? 'current' : 'stale'), version: feed.version, checkedAt: Date.now(), buildCenterUrl };
+      document.getElementById('__appgog_update')?.remove();
+      if (releaseState.status !== 'available') return publishUpdate(releaseState);
       const notice = document.createElement('aside');
       notice.id = '__appgog_update';
       notice.setAttribute('role', 'status');
       notice.style.cssText = 'position:fixed;right:16px;top:16px;z-index:2147483646;padding:14px 18px;border-radius:10px;background:#fff;color:#14233d;font:14px system-ui;box-shadow:0 8px 30px #0002;border:1px solid #dbe4f1';
       notice.textContent = `APPGOG 新版本 ${feed.version} 已发布，请到打包中心重新构建更新包。`;
-      // The navigation URL is used only when the signed token binds the exact response value.
-      if (typeof result.build_center_url === 'string' && feed.build_center_url === result.build_center_url) {
-        const url = new URL(result.build_center_url);
-        if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) {
-          const link = document.createElement('a');
-          link.href = url.href;
-          link.rel = 'noopener noreferrer';
-          link.textContent = '前往打包中心';
-          link.style.cssText = 'display:block;margin-top:8px;color:#3266df';
-          notice.append(link);
-        }
+      if (buildCenterUrl) {
+        const link = document.createElement('a'); link.href = buildCenterUrl;
+        link.rel = 'noopener noreferrer'; link.textContent = '前往打包中心';
+        link.style.cssText = 'display:block;margin-top:8px;color:#3266df'; notice.append(link);
       }
       document.body.append(notice);
-    } catch { /* Feed failure is not an activation failure. */ }
+      return publishUpdate(releaseState);
+    } catch { document.getElementById('__appgog_update')?.remove(); return publishUpdate({ status: 'unavailable', checkedAt: Date.now() }); }
   }
 
   function unlock(state) {
@@ -518,6 +535,7 @@ export function browserLicenseRuntime(config) {
     globalThis.APPGOGLicense.status = state;
     if (state === 'offline') showOffline();
     installActivationEntry();
+    if (typeof globalThis.dispatchEvent === 'function' && typeof CustomEvent === 'function') globalThis.dispatchEvent(new CustomEvent('appgog-license-ready'));
     void checkUpdates();
   }
 
@@ -534,19 +552,16 @@ export function browserLicenseRuntime(config) {
     const nav = document.getElementById('editorTabs');
     if (!nav || document.getElementById('__appgog_activation_entry')) return;
     const entry = document.createElement('button'); entry.type = 'button';
-    entry.id = '__appgog_activation_entry'; entry.textContent = '◇ 授权与激活';
+    entry.id = '__appgog_activation_entry'; entry.textContent = '◇ 授权与更新';
     entry.addEventListener('click', () => {
       const existing = document.getElementById('__appgog_activation_detail');
       if (existing) return;
       const panel = document.createElement('dialog'); panel.id = '__appgog_activation_detail';
-      panel.style.cssText = 'border:1px solid #e5e7ef;border-radius:20px;padding:32px;max-width:520px;width:calc(100% - 48px);color:#25304a;background:#fff';
-      const title = document.createElement('h2'); title.textContent = 'APPGOG 授权与激活';
-      const detail = document.createElement('p'); detail.textContent = '状态：' + (globalThis.APPGOGLicense.status === 'offline' ? '已激活（离线宽限期）' : '已激活') + ' · 版本：' + config.v;
-      const binding = document.createElement('p'); binding.textContent = '绑定域名：' + domain();
-      const expiry = document.createElement('p'); expiry.textContent = '本次签名凭证有效至：' + new Date(activePayload.exp * 1000).toLocaleString();
-      const close = document.createElement('button'); close.textContent = '关闭'; close.type = 'button'; close.addEventListener('click', () => panel.close());
-      panel.addEventListener('close', () => panel.remove());
-      panel.append(title, detail, binding, expiry, close); document.body.append(panel); panel.showModal();
+      document.body.append(panel);
+      panel.setAttribute('aria-label', '授权与更新');
+      const page = mountAuthorizedPage(panel, { close: () => panel.close() });
+      panel.addEventListener('close', () => { page?.dispose?.(); panel.remove(); entry.focus?.(); });
+      panel.showModal();
     });
     nav.append(entry);
   }
@@ -745,9 +760,21 @@ export function browserLicenseRuntime(config) {
     });
   }
 
+  function mountAuthorizedPage(host, options = {}) {
+    if (!activePayload || !['active', 'offline'].includes(globalThis.APPGOGLicense.status) || !mountPage) {
+      host.textContent = '正在读取授权状态…'; return null;
+    }
+    return mountPage(host, {
+      snapshot: () => ({ product: config.p, version: config.v, domain: activePayload.domain,
+        installationId, plan: activePayload.plan || 'legacy', status: globalThis.APPGOGLicense.status,
+        tokenExpiresAt: activePayload.exp, offlineUntil: activePayload.offline_until, update: updateState }),
+      checkUpdates, subscribe: listener => { updateListeners.add(listener); return () => updateListeners.delete(listener); },
+      close: options.close,
+    });
+  }
   globalThis.APPGOGLicense = {
     product: config.p, version: config.v, buildId: config.b, packageId: config.i,
-    installationId, status: 'checking', checkUpdates, hasCapability, requireCapability,
+    installationId, status: 'checking', checkUpdates, hasCapability, requireCapability, mount: mountAuthorizedPage,
   };
   const start = () => { void packageIdentityValid().then(async (result) => {
     if (!result.ok) { integrityFailure = result; await domReady; showGate(); return; }
@@ -819,5 +846,5 @@ export function createBrowserLicenseRuntime({
   const encoded = Buffer.from(JSON.stringify(runtimeConfig), 'utf8').toString('base64');
   const namespace = `a${createHash('sha256').update(injection.package_id).digest('hex').slice(0, 11)}`;
   const runtime = randomizedIdentifiers(browserLicenseRuntime.toString(), injection.package_id);
-  return `;/* APPGOG ${namespace} */(${runtime})(JSON.parse(atob(${JSON.stringify(encoded)})));`;
+  return `;/* APPGOG ${namespace} */(${runtime})(JSON.parse(atob(${JSON.stringify(encoded)})),${mountLicensePage.toString()});`;
 }
