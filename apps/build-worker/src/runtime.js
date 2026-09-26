@@ -300,6 +300,8 @@ export function browserLicenseRuntime(config) {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: config.gc }),
         });
       }
+      // Explicit authenticated post-commit reload avoids relying only on termination callbacks.
+      if (!versionLessThan(config.gv, '1.0.7')) await bridgeRequest('/runtime/reload', {}, true);
       // Only poll reads while the upgraded PHP workers reload; never replay upload/install.
       for (let attempt = 0; attempt < 8; attempt += 1) {
         health = await bridgeHealth();

@@ -31,6 +31,11 @@ final class RuntimeReload
                         }
                     }
                 }
+                if (!array_key_exists('octane:reload', Artisan::all()) && class_exists(\Laravel\Octane\Commands\ReloadCommand::class)) {
+                    // Octane registers console commands only in CLI mode. Resolve the fixed
+                    // official command explicitly for this authenticated HTTP maintenance action.
+                    app(\Illuminate\Contracts\Console\Kernel::class)->registerCommand(app(\Laravel\Octane\Commands\ReloadCommand::class));
+                }
                 if (!array_key_exists('octane:reload', Artisan::all())) {
                     Log::info('APPGOG bridge PHP cache refreshed; no Octane command installed');
                     return;

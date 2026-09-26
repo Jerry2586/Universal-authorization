@@ -1,7 +1,7 @@
 {
   "name": "APPGOG License Bridge",
   "code": "appgog_license_bridge",
-  "version": "1.0.5",
+  "version": "1.0.8",
   "description": "APPGOG Xboard 服务端授权、安装身份、恢复、迁移与主题安全清理桥",
   "author": "APPGOG",
   "type": "feature",

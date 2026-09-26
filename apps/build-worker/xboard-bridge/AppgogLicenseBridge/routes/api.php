@@ -9,6 +9,7 @@ Route::prefix('api/v1/appgog-license-bridge')->middleware('throttle:30,1')->grou
     Route::post('/refresh', [BridgeController::class, 'refreshActivation']);
     Route::post('/deactivate-theme', [BridgeController::class, 'deactivateTheme'])->middleware('admin');
     Route::middleware('admin')->group(function (): void {
+        Route::post('/runtime/reload', [\Plugin\AppgogLicenseBridge\Controllers\RuntimeMaintenanceController::class, 'reload'])->middleware('throttle:2,1');
         Route::get('/admin-context', [BridgeController::class, 'adminContext']);
         Route::post('/register', [BridgeController::class, 'registerPackage']);
         Route::post('/sign-challenge', [BridgeController::class, 'signChallenge']);
