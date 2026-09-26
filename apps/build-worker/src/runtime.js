@@ -20,10 +20,15 @@ export function browserLicenseRuntime(config) {
   let installationPublicKey = null;
   let xboardAdminPath = null;
   let activationAdminRequired = false;
-  let setupMessage = '正在检查授权组件…';
+  let setupMessage = '页面加载中…';
+  let prefetchedBridge = null;
+  const domReady = document.readyState === 'loading'
+    ? new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }))
+    : Promise.resolve();
+  const captured = promise => promise.then(value => ({ value }), error => ({ error }));
   function progress(message) {
     setupMessage = message;
-    root.style?.setProperty?.('--appgog-loading-message', JSON.stringify(message));
+    // Setup details belong to the activation form, never to normal visitor loading.
     const element = document.getElementById('__appgog_setup_progress');
     if (element) element.textContent = message;
   }
@@ -188,7 +193,7 @@ export function browserLicenseRuntime(config) {
   async function protectedIdentityValid() {
     if (!config.x) return true;
     try {
-      const response = await fetch(new URL(config.x, runtimeSource), { cache: 'no-store', credentials: 'same-origin' });
+      const response = await fetch(new URL(config.x, runtimeSource), { cache: 'default', credentials: 'same-origin' });
       if (!response.ok) return false;
       const raw = new Uint8Array(await response.arrayBuffer());
       if (hex(await crypto.subtle.digest('SHA-256', raw)) !== config.h) return false;
@@ -216,6 +221,12 @@ export function browserLicenseRuntime(config) {
     if (payload.domain !== currentDomain) {
       return { ok: false, reason: 'domain', expected: payload.domain, actual: currentDomain };
     }
+    // Only signed, domain-matched packages may start same-origin read-only checks.
+    // Capture failures immediately: installation/registration still waits for integrity.
+    if (config.gc) prefetchedBridge = {
+      health: captured(bridgeHealth()),
+      runtime: captured(bridgeRequest('/state/runtime', { package_id: config.i, package_proof: packageProof() })),
+    };
     if (!await protectedIdentityValid()) return { ok: false, reason: 'protected-identity' };
     return { ok: true };
   }
@@ -274,9 +285,13 @@ export function browserLicenseRuntime(config) {
       return;
     }
     progress('正在检查授权组件…');
-    let health = await bridgeHealth();
+    const initialHealth = prefetchedBridge ? await prefetchedBridge.health : null;
+    if (initialHealth?.error) throw initialHealth.error;
+    let health = initialHealth ? initialHealth.value : await bridgeHealth();
+    let bridgeChanged = false;
     let plugins = null;
     if (!health || versionLessThan(health.version, config.gv)) {
+      bridgeChanged = true;
       progress('正在连接 Xboard 插件中心…');
       plugins = await findAdminPath();
       let plugin = plugins.find((item) => item.code === config.gc);
@@ -311,14 +326,23 @@ export function browserLicenseRuntime(config) {
       if (!health || versionLessThan(health.version, config.gv)) throw new Error('APPGOG 授权桥版本尚未生效，请重载 Xboard 应用服务后重试；安装身份与授权数据会保留');
     }
     progress('正在验证插件与安装身份…');
-    if (!xboardAdminPath && adminToken()) {
-      try { await findAdminPath(); } catch { /* Existing bridge can still report its identity. */ }
-    }
     let identity = health.identity;
     installationId = identity?.installation_id;
     installationPublicKey = identity?.installation_public_key;
     if (!installationId || !installationPublicKey) throw new Error('APPGOG 授权桥没有返回有效的服务器安装身份');
-    if (adminToken()) {
+    let runtime = null;
+    const initialRuntime = !bridgeChanged && prefetchedBridge ? await prefetchedBridge.runtime : null;
+    // An active registered package needs no plugin discovery, admin context or writes.
+    const registeredActivation = initialRuntime?.value?.state;
+    const existingActivation = registeredActivation?.activation_id && !registeredActivation.denied
+      && await activationPayload(registeredActivation.activation_token, registeredActivation.backend_origin);
+    if (existingActivation) {
+      const path = saved?.xboard_admin_path || connectionPath() || localStorage.getItem('appgog_xboard_admin_path');
+      if (/^[A-Za-z0-9_-]{1,128}$/.test(path || '')) xboardAdminPath = path;
+    } else if (adminToken()) {
+      if (!xboardAdminPath) {
+        try { await findAdminPath(); } catch { /* Existing bridge can still report its identity. */ }
+      }
       const registered = await bridgeRequest('/register', {
         product: config.p, build_id: config.b, package_id: config.i, package_proof: packageProof(),
         domain: domain(), theme_name: config.gt, license_server: config.u,
@@ -327,14 +351,20 @@ export function browserLicenseRuntime(config) {
       installationId = identity?.installation_id;
       installationPublicKey = identity?.installation_public_key;
     }
-    let runtime = null;
     try {
-      runtime = await bridgeRequest('/state/runtime', {
-        package_id: config.i, package_proof: packageProof(),
-      });
+      if (initialRuntime && (!adminToken() || existingActivation)) {
+        if (initialRuntime.error) throw initialRuntime.error;
+        runtime = initialRuntime.value;
+      } else {
+        runtime = await bridgeRequest('/state/runtime', { package_id: config.i, package_proof: packageProof() });
+      }
     } catch (error) {
       if (adminToken() || error.unavailable) throw error;
       activationAdminRequired = true;
+    }
+    // Never reuse a browser activation when this server no longer has that state.
+    if (!runtime?.state?.activation_id && saved?.activation_id) {
+      store({ ...saved, activation_id: null, activation_token: null, denied: true });
     }
     if (runtime?.state) store({ ...(saved || {}), ...runtime.state });
     // Activated pages use the public signed runtime state; secrets stay in the bridge.
@@ -720,7 +750,7 @@ export function browserLicenseRuntime(config) {
     installationId, status: 'checking', checkUpdates, hasCapability, requireCapability,
   };
   const start = () => { void packageIdentityValid().then(async (result) => {
-    if (!result.ok) { integrityFailure = result; showGate(); return; }
+    if (!result.ok) { integrityFailure = result; await domReady; showGate(); return; }
     try {
       await ensureBridge();
       globalThis.APPGOGLicense.installationId = installationId;
@@ -732,14 +762,15 @@ export function browserLicenseRuntime(config) {
       }
     } catch (error) {
       bridgeFailure = error?.message || 'APPGOG 授权桥安装或健康检查失败';
+      await domReady;
       showGate();
       return;
     }
     const state = await checkStoredActivation();
+    await domReady;
     if (state === 'locked') showGate(); else unlock(state);
-  }).catch(() => { integrityFailure = { reason: 'runtime' }; showGate(); }); };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
-  else start();
+  }).catch(async () => { integrityFailure = { reason: 'runtime' }; await domReady; showGate(); }); };
+  start();
 }
 
 function randomizedIdentifiers(source, packageId) {

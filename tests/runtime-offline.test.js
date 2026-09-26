@@ -45,7 +45,7 @@ function fakeElement(tagName) {
 
 function installBrowser({
   token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey,
-  manifestToken, bridge = null, initialValues = null, referrer = '',
+  manifestToken, bridge = null, initialValues = null, referrer = '', readyState = 'complete', onDomReady = null,
 }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
@@ -70,7 +70,7 @@ function installBrowser({
     hostname: 'demo.example.com', origin: 'https://demo.example.com', href: 'https://demo.example.com/', reload() {}, assign(value) { this.assigned = value; },
   };
   globalThis.document = {
-    readyState: 'complete', referrer,
+    readyState, referrer, addEventListener(type, listener) { if (type === 'DOMContentLoaded') onDomReady?.(listener); },
     documentElement: { classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) } },
     head: { append: (...nodes) => elements.push(...nodes) },
     body: { append: (...nodes) => elements.push(...nodes) },
@@ -478,7 +478,7 @@ for (const status of [429, 503]) {
     });
     try {
       await browser.settle();
-      assert.deepEqual(requests, ['/api/v1/appgog-license-bridge/health']);
+      assert.deepEqual(requests, ['/api/v1/appgog-license-bridge/health', '/api/v1/appgog-license-bridge/state/runtime']);
       assert.equal(browser.classes.has('__appgog_locked'), true);
       assert.match(elementText(browser.elements.find(e => e.id === '__appgog_gate')), /稍后刷新重试/);
     } finally { browser.restore(); }
@@ -581,3 +581,51 @@ test('缺失管理路径时提供恢复和重试入口而不是只有不可点�
   const browser=installBrowser({token:null,publicKey,manifestToken:packageManifest(privateKey),initialValues:new Map([['XBOARD_ACCESS_TOKEN',JSON.stringify({value:'fixture-admin-token'})]]),bridge:{gc:'appgog_license_bridge',gv:'1.0.3'},fetchImpl:async()=>Response.json({message:'not found'},{status:404})});
   try{await browser.settle();const gate=browser.elements.find(e=>e.id==='__appgog_gate');assert.match(elementText(gate),/重新检查并准备插件/);assert.match(elementText(gate),/前往 Xboard 后台登录/);assert.ok(browser.classes.has('__appgog_locked'));}finally{browser.restore();}
 });
+
+
+test('已激活旧包刷新在 DOM 就绪前并行读服务端状态，管理员也不重复注册或查插件', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const token = activation(privateKey, { exp: Math.floor(FIXED_NOW / 1000) + 3600 });
+  let ready, releaseHealth;
+  const healthPending = new Promise(resolve => { releaseHealth = resolve; });
+  const requests = [];
+  const values = new Map([['XBOARD_ACCESS_TOKEN', JSON.stringify({value:'fixture-admin-token'})],
+    ['appgog_license_pkg_runtime', JSON.stringify({activation_id:'act_runtime', activation_token:token,
+      backend_origin:'https://demo.example.com', xboard_admin_path:'secure_test'})]]);
+  const browser = installBrowser({ token, publicKey, manifestToken: packageManifest(privateKey), initialValues:values,
+    readyState:'loading', onDomReady:callback => { ready = callback; },
+    bridge:{gc:'appgog_license_bridge',gv:'1.0.8'},
+    fetchImpl:async url => {
+      const path = new URL(url).pathname; requests.push(path);
+      if(path.endsWith('/health')) { await healthPending; return Response.json({ok:true,code:'appgog_license_bridge',version:'1.0.8',
+        identity:{installation_id:'installation_runtime_123',installation_public_key:'public-key'}}); }
+      if(path.endsWith('/state/runtime')) return Response.json({state:{activation_id:'act_runtime',activation_token:token,backend_origin:'https://demo.example.com'}});
+      throw Error('Unexpected foreground request: '+path);
+    }});
+  try {
+    await browser.settle(()=>requests.length===2);
+    assert.equal(browser.classes.has('__appgog_unlocked'),false,'不得在服务端身份返回前解锁');
+    assert.equal(browser.elements.some(e=>e.id==='__appgog_gate'),false);
+    releaseHealth(); ready(); await browser.settle();
+    assert.equal(globalThis.APPGOGLicense.status,'active');
+    assert.equal(requests.filter(path=>path.includes('/appgog-license-bridge/')).length,2,'正常刷新只读健康和运行状态，不做后台发现或注册写入');
+    assert.equal(browser.elements.some(e=>e.id==='__appgog_gate'),false);
+  } finally { releaseHealth(); browser.restore(); }
+});
+
+for (const mode of ['denied','missing','wrong-installation','tampered']) {
+  test('并行刷新仍拒绝服务端 '+mode+'，旧浏览器已激活缓存不能放行', async () => {
+    const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+    const token=activation(privateKey,{exp:Math.floor(FIXED_NOW/1000)+3600});
+    const browser=installBrowser({token,publicKey,manifestToken:packageManifest(privateKey),bridge:{gc:'appgog_license_bridge',gv:'1.0.8'},
+      fetchImpl:async url => {
+        if(String(url).endsWith('/health')) return Response.json({ok:true,code:'appgog_license_bridge',version:'1.0.8',identity:{
+          installation_id:mode==='wrong-installation'?'other-server':'installation_runtime_123',installation_public_key:'public-key'}});
+        if(String(url).endsWith('/state/runtime')) return Response.json({state:mode==='missing'?null:{activation_id:'act_runtime',
+          activation_token:mode==='tampered'?token.slice(0,-12)+'AAAAAAAAAAAA':token,backend_origin:'https://demo.example.com',denied:mode==='denied'}});
+        throw Error('Unexpected request');
+      }});
+    try {await browser.settle();assert.equal(browser.classes.has('__appgog_unlocked'),false);assert.ok(browser.elements.some(e=>e.id==='__appgog_gate'));}
+    finally {browser.restore();}
+  });
+}
