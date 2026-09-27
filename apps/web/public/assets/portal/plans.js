@@ -75,6 +75,21 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
       card.append(form);
     });
   }
+  function deletePlan(plan) {
+    dialog('删除套餐', '删除“' + plan.name + '”后，不再用于新授权或切换套餐。已经签发的授权、额度和权益保持不变，历史引用保留。', (card, close) => {
+      const row = element('div', null, 'dialog-actions');
+      const cancel = button('取消', close, 'button button-secondary');
+      const confirm = button('删除套餐', async () => {
+        confirm.disabled = true; cancel.disabled = true;
+        try {
+          await request('/web/admin/plans/' + encodeURIComponent(plan.code), { method: 'DELETE' });
+          close(); notify('套餐已删除，已有授权保持不变'); await refresh();
+        } catch (error) { notify(error.message, true); }
+        finally { confirm.disabled = false; cancel.disabled = false; }
+      }, 'button button-danger');
+      row.append(cancel, confirm); card.append(row);
+    });
+  }
   function renderRowsOnly() {
     const query = ($('plan-search')?.value ?? '').trim().toLowerCase();
     const status = $('plan-status-filter')?.value;
@@ -84,7 +99,7 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
       const row = element('tr'); const name = element('td'); name.append(element('strong', plan.name), element('small', plan.code, 'table-subline'));
       row.append(name, td(plan.access_tier === 'paid' ? '免费 + 付费' : '免费'), td(`${plan.limits.max_builds_per_day} 次`), td(`${plan.limits.max_activations} 个`), td(`${plan.capabilities.length} 项`), badge(plan.status));
       const cell = element('td', null, 'actions');
-      if (can('license.manage')) cell.append(button('编辑套餐', () => editPlan(plan)));
+      if (can('license.manage')) cell.append(button('编辑套餐', () => editPlan(plan)), button('删除', () => deletePlan(plan), 'button button-secondary danger'));
       else cell.append(element('span', '只读', 'muted'));
       row.append(cell); return row;
     }, '暂无符合条件的套餐');
@@ -98,7 +113,7 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
     },
     applyIssueLimits,
     render(next) {
-      plans = next;
+      plans = next.filter(p => p.status !== 'deleted');
       fillSelect($('license-plan'), plans.filter(p => p.status === 'active' && p.code !== 'legacy'));
       fillSelect($('license-plan-filter'), plans, '全部套餐');
       applyIssueLimits(); renderRowsOnly();

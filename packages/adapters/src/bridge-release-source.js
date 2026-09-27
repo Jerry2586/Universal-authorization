@@ -34,7 +34,7 @@ export function bridgeFromSignedRelease(manifestBytes,signature,zipBytes,{public
   invariant(descriptor?.code==='appgog_license_bridge'&&/^\d+\.\d+\.\d+$/.test(descriptor.version||'')&&files.has('AppgogLicenseBridge/Plugin.php'),'BRIDGE_PACKAGE_INVALID','签名制品中缺少有效授权桥',502);
   const buffer=writeZip(files,{date:new Date('2026-09-28T00:00:00Z')});
   invariant(buffer.length<=10*1024*1024,'BRIDGE_PACKAGE_TOO_LARGE','授权桥包超过 Xboard 官方 10 MB 上传限制',502);
-  return {version:descriptor.version,release_version:version,buffer};
+  return {version:descriptor.version,release_version:version,descriptor,buffer, evidence: {manifest:manifestBytes, signature, zip:zipBytes}};
 }
 export function createBridgeReleaseSource({transport=releaseTransport,publicKey=key}={}) {
   let cached=null;
@@ -50,11 +50,17 @@ export function createBridgeReleaseSource({transport=releaseTransport,publicKey=
     return result.body;
   }
   return {
-    async latest() {
-      const release=JSON.parse((await download(root+'/latest',1024*1024)).toString('utf8'));
+    async latest() { return this.fetchRelease('latest'); },
+    async byVersion(version) {
+      invariant(/^\d+\.\d+\.\d+$/.test(version), 'BRIDGE_RELEASE_INVALID', '发布版本无效');
+      return this.fetchRelease('tags/v' + version, true, version);
+    },
+    async fetchRelease(endpoint, fresh = false, expected = null) {
+      const release=JSON.parse((await download(root+'/'+endpoint,1024*1024)).toString('utf8'));
       invariant(/^v\d+\.\d+\.\d+$/.test(release.tag_name||'')&&!release.draft&&!release.prerelease,'BRIDGE_RELEASE_INVALID','没有可用的正式签名版本',502);
       const fingerprint=JSON.stringify([release.id,release.tag_name,(release.assets||[]).map(a=>[a.id,a.name,a.updated_at,a.size])]);
-      if(cached?.fingerprint===fingerprint) return cached.artifact;
+      invariant(!expected || release.tag_name === 'v'+expected, 'BRIDGE_RELEASE_INVALID', '发布标签不匹配', 502);
+      if(!fresh && cached?.fingerprint===fingerprint) return cached.artifact;
       const version=release.tag_name.slice(1),assets=release.assets||[];
       const asset=name=>{const matches=assets.filter(x=>x.name===name);invariant(matches.length===1,'BRIDGE_RELEASE_INCOMPLETE','发布附件缺失或重复',502);return matches[0].browser_download_url;};
       const manifest=await download(asset('release-manifest.json'),65536);

@@ -46,7 +46,7 @@ export function createEntitlementService({ database, repository, activationLifec
     const now = iso(clock);
     return transaction(database, () => {
       const existing = repository.planByCode(code);
-      invariant(creating ? !existing : Boolean(existing), creating ? 'PLAN_EXISTS' : 'PLAN_NOT_FOUND', creating ? '套餐标识已存在' : '套餐不存在', creating ? 409 : 404);
+      invariant(creating ? !existing : Boolean(existing && existing.status !== 'deleted'), creating ? 'PLAN_EXISTS' : 'PLAN_NOT_FOUND', creating ? '套餐标识已存在' : '套餐不存在', creating ? 409 : 404);
       invariant(code !== 'legacy', 'PLAN_RESERVED', '历史兼容套餐由系统维护', 409);
       const result = repository.savePlan({ id: existing?.id ?? newId('plan'), code, name, access_tier: accessTier, status,
         capabilities: [...new Set(selected)], limits: { max_builds_per_day: limits.max_builds_per_day, max_activations: limits.max_activations }, now }, creating);
@@ -60,6 +60,20 @@ export function createEntitlementService({ database, repository, activationLifec
     listLicensePlans: () => repository.allPlans().map(publicPlan),
     createLicensePlan: input => savePlan(input, true),
     updateLicensePlan: input => savePlan(input, false),
+    deleteLicensePlan({ code, actorId }) {
+      code = String(code ?? '').trim().toLowerCase();
+      return transaction(database, () => {
+        const plan = repository.planByCode(code);
+        invariant(plan, 'PLAN_NOT_FOUND', '套餐不存在', 404);
+        invariant(code !== 'legacy', 'PLAN_RESERVED', '历史兼容套餐由系统维护', 409);
+        if (plan.status === 'deleted') return { code, deleted: true };
+        const now = iso(clock);
+        invariant(repository.deletePlan(code, now), 'PLAN_STATE_CHANGED', '套餐状态已变化，请刷新后重试', 409);
+        audit.record({ actorType: 'admin', actorId, action: 'plan.deleted', subjectType: 'plan', subjectId: plan.id,
+          metadata: { before: publicPlan(plan), retained_existing_licenses: true }, now });
+        return { code, deleted: true };
+      });
+    },
     versionEligibility,
     assertVersionAccess,
     changeLicensePlan({ licenseId, planCode, actorId = null }) {

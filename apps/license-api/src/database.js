@@ -27,6 +27,7 @@ const MIGRATIONS = Object.freeze({
     ['published_at', 'TEXT'],
   ],
   build_jobs: [
+    ['quota_refunded_at', 'TEXT'],
     ['intent', "TEXT NOT NULL DEFAULT 'install'"],
     ['base_version', 'TEXT'],
   ],
@@ -93,6 +94,9 @@ function runMigration(database, version, operation) {
 }
 
 function migrate(database) {
+  runMigration(database, '2026-09-28-v1.2.45-build-void-refund', () => {
+    addMissingColumns(database, { build_jobs: [['quota_refunded_at', 'TEXT']] });
+  });
   runMigration(database, '2026-09-26-v1.2.33-support-read-cursors', () => {
     addMissingColumns(database, { support_messages: [['sequence', 'INTEGER']] });
     database.exec('UPDATE support_messages SET sequence = rowid WHERE sequence IS NULL');

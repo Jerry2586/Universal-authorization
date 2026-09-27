@@ -35,6 +35,7 @@ SCRIPT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)
 . "$SCRIPT_ROOT/scripts/lib/release-download.sh"
 . "$SCRIPT_ROOT/scripts/lib/release-install.sh"
 . "$SCRIPT_ROOT/scripts/lib/dns.sh"
+. "$SCRIPT_ROOT/scripts/lib/version-lock.sh"
 
 usage() {
   cat <<'EOF'
@@ -681,6 +682,20 @@ else
   log '下载并校验 APPGOG 正式发布包'; install_packages; download_source
 fi
 
+# Hold the same guard as the API until deployment finishes. Only an identical
+# signed version may be repaired while pinned, including direct .run installs.
+version_guard="$SHARED_DIR/update-control/version-change.guard"
+mkdir -p "$SHARED_DIR/update-control"
+mkdir "$version_guard" 2>/dev/null || fail '已有部署或版本设置正在执行；请完成后重试。'
+cleanup_version_guard() {
+  rmdir "$version_guard" 2>/dev/null || true
+  [ -z "${temp_dir:-}" ] || rm -rf "$temp_dir"
+}
+trap cleanup_version_guard 0
+trap 'exit 130' 2
+trap 'exit 143' 15
+candidate_version=$(jq -er '.version' "$STAGED_RELEASE/package.json")
+appgog_check_version_lock "$INSTALL_ROOT" "$candidate_version" || fail '版本已锁定，未切换程序或运行环境。'
 select_base_images
 write_env
 activate_release
@@ -706,5 +721,7 @@ else log '源码与环境已准备；按要求未启动，尚未验证公网 HTT
 fi
 
 if [ "$OPEN_MENU" = true ] && [ "$NON_INTERACTIVE" = false ] && { [ -t 0 ] || [ -t 1 ]; } && [ -r /dev/tty ]; then
+  cleanup_version_guard
+  trap - 0 2 15
   exec /usr/local/bin/appgog </dev/tty >/dev/tty
 fi

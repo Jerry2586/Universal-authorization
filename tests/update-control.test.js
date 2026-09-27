@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -75,4 +75,44 @@ test('online update control rejects stale, failed, equal, and source-behind rele
   writeStatus({ latest_version: '1.2.22' });
   assert.equal(control.status().relation, 'source_behind');
   assert.throws(() => control.enqueue('install-version'), (error) => error.code === 'UPDATE_SOURCE_BEHIND');
+});
+
+
+test('version lock persists across restart, compensates audit failure, permits checks and same-version repair', t => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-version-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const now = new Date();
+  const options = { root, currentVersion: '1.2.44', clock: () => now };
+  const control = createUpdateControl(options);
+  const idle = () => {
+    for (const file of readdirSync(join(root, 'requests'))) rmSync(join(root, 'requests', file));
+    writeFileSync(join(root, 'status.json'), JSON.stringify({ schema: 2, state: 'idle', heartbeat_at: now.toISOString(), latest_version: '1.2.45', check_status: 'succeeded', checked_at: now.toISOString() }));
+  };
+  assert.throws(() => control.setVersionLock('true'), e => e.code === 'UPDATE_LOCK_INVALID');
+  assert.throws(() => control.setVersionLock(true, () => { throw Error('audit failed'); }), /audit failed/);
+  assert.equal(control.status().version_lock.locked, false);
+  let event;
+  control.setVersionLock(true, value => { event = value; });
+  assert.equal(event.action, 'lock-version');
+  idle();
+  const restarted = createUpdateControl(options);
+  assert.equal(restarted.status().version_lock.version, '1.2.44');
+  assert.equal(restarted.status().installable, false);
+  assert.throws(() => restarted.enqueue('install-version'), e => e.code === 'UPDATE_VERSION_LOCKED');
+  restarted.enqueue('check-update');
+  assert.throws(() => restarted.setVersionLock(false), e => e.code === 'UPDATE_ALREADY_RUNNING');
+  idle(); restarted.enqueue('repair-current'); idle();
+  assert.throws(() => restarted.setVersionLock(false, () => { throw Error('audit failed'); }), /audit failed/);
+  assert.equal(restarted.status().version_lock.locked, true);
+  restarted.setVersionLock(false);
+  assert.equal(restarted.status().installable, true);
+  assert.equal(restarted.enqueue('install-version').version, '1.2.45');
+  idle();
+  writeFileSync(join(root, 'version-lock.json'), '{broken');
+  assert.equal(restarted.status().version_lock.valid, false);
+  assert.equal(restarted.status().installable, false);
+  assert.throws(() => restarted.enqueue('install-version'), e => e.code === 'UPDATE_VERSION_LOCKED');
+  restarted.setVersionLock(true);
+  mkdirSync(join(root, 'version-change.guard'));
+  assert.throws(() => restarted.setVersionLock(false), e => e.code === 'UPDATE_ALREADY_RUNNING');
 });

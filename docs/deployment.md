@@ -2,7 +2,7 @@
 
 日期：2026-09-26。
 
-APPGOG打包授权系统 v1.2.44 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.45 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.44 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.45 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -208,4 +208,12 @@ docker compose exec -T appgog node scripts/docker/health.js
 
 ## 从系统运维更新客户授权桥
 
-平台升级到 1.2.43 后，在系统运维的「授权桥管理」连接目标 Xboard（公开 HTTPS 根地址、后台安全路径标识、管理员邮箱及密码），检查更新后点击「安全更新最新版本」。查看实际运行桥版本和独立日志确认完成。此操作与平台 Docker 更新独立；不会自动更新所有客户桥。首次安装或后台无法登录时须先恢复原生 Xboard，具体边界见 bridge-maintenance.md。
+平台升级到 1.2.45 后，在系统运维的「授权桥更新」直接检查、更新或修复中心打包组件。无需输入客户站点地址或管理员凭证，不直接修改已部署客户插件。查看版本与独立日志确认结果，具体边界见 bridge-maintenance.md。
+
+## 1.2.45 授权桥与主题交付
+
+系统页面“授权桥更新”维护打包用组件，源和路径固定，无需输入 Xboard 账号。组件在 ARTIFACT_ROOT 下持久保存并随原制品备份保留；更新/修复均验证正式签名。检查版本、更新、修复不会直接修改客户服务器。客户需安装新构建的主题包及桥 1.1.4；新迁移刷新持久后台入口并触发运行时重载。已有旧 ZIP 不会因中心更新而改写。
+
+### 平台版本锁定（1.2.45）
+
+运营中心“在线安全更新”可锁定当前平台版本。锁定期间检查更新和修复当前版本仍可用，升级须先解除锁定；状态保存在 shared/update-control/version-lock.json，普通重启保留。网页 API、宿主机更新助手和本版安装器共同检查；不会自动升级客户主题或桥。锁定记录异常时禁止部署，可在面板重新设置。若宿主机部署被强制终止而留下 version-change.guard，应先确认没有安装进程，再由管理员移除这个空目录，禁止自动抢锁。套餐模板在“套餐管理”维护，单个客户的打包额度仍在授权管理调整。

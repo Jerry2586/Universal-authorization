@@ -4,7 +4,8 @@ export function createSqliteStatements(database) {
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
     planByCode: database.prepare(`SELECT * FROM license_plans WHERE code = ?`),
     listPlans: database.prepare(`SELECT * FROM license_plans WHERE status = 'active' ORDER BY code ASC`),
-    allPlans: database.prepare(`SELECT * FROM license_plans ORDER BY created_at, code`),
+    allPlans: database.prepare(`SELECT * FROM license_plans WHERE status != 'deleted' ORDER BY created_at, code`),
+    deletePlan: database.prepare(`UPDATE license_plans SET status = 'deleted', updated_at = ? WHERE code = ? AND status != 'deleted'`),
     insertPlan: database.prepare(`INSERT INTO license_plans (id, code, name, access_tier, status, capabilities_json, limits_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     updatePlan: database.prepare(`UPDATE license_plans SET name = ?, access_tier = ?, status = ?, capabilities_json = ?, limits_json = ?, updated_at = ? WHERE code = ?`),
     insertLicense: database.prepare(`
@@ -290,8 +291,8 @@ export function createSqliteStatements(database) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     listLicenseEvents: database.prepare(`SELECT * FROM license_events WHERE license_id = ? ORDER BY created_at DESC LIMIT ?`),
-    countRecentBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND created_at >= ? AND (status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL))`),
-    countLicenseBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND (status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL))`),
+    countRecentBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND created_at >= ? AND (status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL AND j.quota_refunded_at IS NULL))`),
+    countLicenseBuilds: database.prepare(`SELECT COUNT(*) AS count FROM builds WHERE license_id = ? AND (status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL AND j.quota_refunded_at IS NULL))`),
     insertSession: database.prepare(`
       INSERT INTO web_sessions (id, token_hash, csrf_token, actor_type, actor_id, expires_at, last_seen_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -372,6 +373,20 @@ export function createSqliteStatements(database) {
       WHERE build_jobs.license_id = ?
       ORDER BY build_jobs.created_at DESC LIMIT ?
     `),
+    pageBuildJobsByLicense: database.prepare(`
+      SELECT build_jobs.*, licenses.customer_ref, products.code AS product_code,
+        (build_jobs.status = 'queued' OR (build_jobs.status = 'succeeded'
+          AND b.status = 'ready' AND ik.status = 'available')) AS can_void
+      FROM build_jobs
+      JOIN licenses ON licenses.id = build_jobs.license_id
+      JOIN products ON products.id = licenses.product_id
+      LEFT JOIN builds b ON b.id = build_jobs.build_id
+      LEFT JOIN install_keys ik ON ik.build_id = b.id
+      WHERE build_jobs.license_id = ?
+        AND (? IS NULL OR build_jobs.created_at < ? OR (build_jobs.created_at = ? AND build_jobs.id < ?))
+        AND (? = '' OR instr(lower(build_jobs.requested_version || ' ' || build_jobs.requested_domain || ' ' || coalesce(build_jobs.build_id, '') || ' ' || build_jobs.id), lower(?)) > 0)
+      ORDER BY build_jobs.created_at DESC, build_jobs.id DESC LIMIT ?
+    `),
     listBuildJobs: database.prepare(`
       SELECT build_jobs.*, licenses.customer_ref, products.code AS product_code
       FROM build_jobs
@@ -394,7 +409,9 @@ export function createSqliteStatements(database) {
     cancelledArtifacts: database.prepare("SELECT id, artifact_ref FROM build_jobs WHERE status = 'cancelled' AND artifact_ref IS NOT NULL LIMIT 100"),
     clearCancelledArtifact: database.prepare("UPDATE build_jobs SET artifact_ref = NULL WHERE id = ? AND status = 'cancelled'"),
     cancelBuildJob: database.prepare(`
-      UPDATE build_jobs SET status = 'cancelled', status_message = '已作废，请重新构建',
+      UPDATE build_jobs SET status = 'cancelled',
+        status_message = CASE WHEN build_id IS NOT NULL THEN '已作废，打包额度已返还' ELSE '已取消，未消耗打包额度' END,
+        quota_refunded_at = CASE WHEN build_id IS NOT NULL THEN ? ELSE NULL END,
         install_key_encrypted = NULL, updated_at = ?, completed_at = ?
       WHERE id = ? AND status IN ('queued', 'succeeded')
     `),
@@ -429,7 +446,7 @@ export function createSqliteStatements(database) {
         license_plans.code AS plan_code, license_plans.name AS plan_name,
         licenses.entitlement_capabilities_json AS plan_capabilities_json,
         licenses.entitlement_limits_json AS plan_limits_json,
-        (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id AND (builds.status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL))) AS build_count,
+        (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id AND (builds.status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL AND j.quota_refunded_at IS NULL))) AS build_count,
         (SELECT COUNT(*) FROM activations WHERE activations.license_id = licenses.id AND activations.status = 'active') AS active_activation_count
       FROM licenses
       JOIN products ON products.id = licenses.product_id

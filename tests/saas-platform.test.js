@@ -1362,3 +1362,33 @@ test('旧工单数据库升级保留消息，已读游标在重开数据库和VA
     db.close();
   } finally {rmSync(root,{recursive:true,force:true});}
 });
+
+test('删除套餐保留既有授权快照，禁止重新签发/编辑，权限与审计原子', async (t) => {
+  const app = await fixture(t), owner = await app.owner();
+  const body = { code: 'deletable', name: '可删除套餐', access_tier: 'paid', status: 'active', capabilities: ['settings:read'], limits: { max_builds_per_day: 4, max_activations: 1 } };
+  await app.send('/web/admin/plans', { ...owner, method:'POST', body });
+  const issued = app.service.issueLicense({customerRef:'PLAN-PRESERVE',domain:'plan.example.com',planCode:'deletable'});
+  const customer = app.sessions.loginCustomer(issued.licenseKey).session;
+  const before = app.repository.licenseById(customer.actor_id);
+  const url = '/web/admin/plans/deletable';
+  assert.equal((await app.send(url, {method:'DELETE'})).status,401);
+  assert.equal((await app.send(url, {cookie:owner.cookie,method:'DELETE'})).status,403);
+  await app.send('/web/admin/admins', {...owner,method:'POST',body:{username:'plan-delete-reader',password:'123456',role:'support'}});
+  const login = await app.send('/web/admin/login',{method:'POST',body:{username:'plan-delete-reader',password:'123456'}});
+  assert.equal((await app.send(url,{method:'DELETE',cookie:login.cookie.split(';')[0],csrf:login.data.csrf_token})).status,403);
+  app.database.exec("CREATE TEMP TRIGGER deny_plan_delete BEFORE INSERT ON audit_events WHEN NEW.action='plan.deleted' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+  assert.throws(()=>app.service.deleteLicensePlan({code:'deletable',actorId:'owner'}),/audit unavailable/);
+  assert.equal(app.repository.planByCode('deletable').status,'active');
+  app.database.exec('DROP TRIGGER deny_plan_delete');
+  assert.equal((await app.send(url, {...owner,method:'DELETE'})).status,200);
+  assert.equal((await app.send(url, {...owner,method:'DELETE'})).status,200);
+  assert.equal(app.repository.planByCode('deletable').status,'deleted');
+  assert.deepEqual(app.repository.licenseById(customer.actor_id),before);
+  assert.equal(app.portal.customerOverview(customer).license.status,'active');
+  assert.ok(!(await app.send('/web/admin/plans',owner)).data.plans.some(p=>p.code==='deletable'));
+  assert.ok(!app.portal.adminOverview().license_plans.some(p=>p.code==='deletable'));
+  assert.equal((await app.send(url,{...owner,method:'POST',body})).status,404);
+  assert.throws(()=>app.service.issueLicense({customerRef:'PLAN-DENY',domain:'denied.example.com',planCode:'deletable'}));
+  assert.equal((await app.send('/web/admin/plans/legacy',{...owner,method:'DELETE'})).status,409);
+  assert.equal(app.database.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='plan.deleted'").get().n,1);
+});

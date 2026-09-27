@@ -1,3 +1,4 @@
+import { verifyBridgeDelivery } from '../../../packages/core/src/bridge-delivery.js';
 import { resolve } from 'node:path';
 import { LocalArtifactStore } from '../../../packages/adapters/src/local-artifact-store.js';
 import { HardenedThemeBuildEngine } from './engine.js';
@@ -62,7 +63,9 @@ export async function runWorkerOnce({
       : null;
     const canonicalBaseUrl = build.licenseServer ?? publicBaseUrl;
     const resolvedKeys = publicKeys ?? { activation: publicKey, package: publicKey, notification: publicKey };
+    const bridge = verifyBridgeDelivery(task.bridge, build.buildId, canonicalBaseUrl, resolvedKeys.package);
     const engine = new HardenedThemeBuildEngine({
+      bridgePackage: () => bridge,
       artifactStore,
       publicKey: resolvedKeys.activation,
       activationPublicKey: resolvedKeys.activation,

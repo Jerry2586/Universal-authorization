@@ -51,7 +51,7 @@ export async function handleIdentityHttp({
     const token = auth.sessionToken(actor);
     const session = sessions.requireActor(token, actor);
     sessions.verifyCsrf(session, request.headers['x-csrf-token']);
-    if (actor === 'admin') bridgeUpdates?.forget(session);
+
     sessions.logout(token);
     respondJson(response, 200, { ok: true }, { 'set-cookie': auth.clearCookieHeader(actor) });
     return true;

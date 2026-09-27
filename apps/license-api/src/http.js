@@ -100,7 +100,7 @@ export function createHttpHandler({
         return requestedId.trim();
       };
       if (await handlePackagingHttp({
-        method, url, request, response, service, portal, config, readJson, readBuffer, respondJson,
+        method, url, request, response, service, portal, bridgeUpdates, config, readJson, readBuffer, respondJson,
         requireToken: (_incoming, expected, role) => auth.requireToken(expected, role), workerIdentity,
         zipHeaders: () => securityHeaders('application/zip'), rateLimit: scopedRateLimit,
       })) return;

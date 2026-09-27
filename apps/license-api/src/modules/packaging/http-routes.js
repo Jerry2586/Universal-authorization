@@ -1,7 +1,7 @@
 import { invariant } from '../../../../../packages/core/src/errors.js';
 
 export async function handlePackagingHttp({
-  method, url, request, response, service, portal, config, readJson, readBuffer,
+  method, url, request, response, service, portal, bridgeUpdates, config, readJson, readBuffer,
   respondJson, requireToken, workerIdentity, zipHeaders, rateLimit,
 }) {
   if (method === 'POST' && url.pathname === '/api/v1/builds/authorize') {
@@ -34,7 +34,10 @@ export async function handlePackagingHttp({
     invariant(portal.serviceEnabled('worker_enabled'), 'WORKER_DISABLED', '构建 Worker 服务已暂停', 503);
     const body = await readJson(request);
     const workerId = workerIdentity(request, body.worker_id);
-    respondJson(response, 200, { task: portal.leaseBuild(workerId) });
+    const snapshot = bridgeUpdates.snapshot();
+    const task = portal.leaseBuild(workerId);
+    if (task) task.bridge = bridgeUpdates.delivery(snapshot, task.build);
+    respondJson(response, 200, { task });
     return true;
   }
 

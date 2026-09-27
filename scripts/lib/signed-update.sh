@@ -3,6 +3,8 @@
 # Subshell keeps temporary paths, traps and environment out of the caller.
 appgog_run_signed_update() (
   source_root=$1; install_root=$2; requested=${3:-}; repair=${4:-false}; output_log=$5
+  . "$source_root/scripts/lib/version-lock.sh"
+  appgog_check_version_lock "$install_root" "$requested" || exit 1
   work=$(mktemp -d) || exit 1
   trap 'rm -rf "$work"' 0
   trap 'exit 130' 2

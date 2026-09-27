@@ -17,6 +17,8 @@ for (const repair of [false, true]) {
     if (!existsSync(shell)) return t.skip('POSIX shell unavailable');
     const directory = mkdtempSync(join(tmpdir(), 'appgog-updater-'));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
+    mkdirSync(join(directory, 'scripts/lib'), { recursive: true });
+    writeFileSync(join(directory, 'scripts/lib/version-lock.sh'), readFileSync(join(root, 'scripts/lib/version-lock.sh')));
     writeFileSync(join(directory, 'install-docker.sh'), '#!/bin/sh\nprintf "version=%s repair=%s\\n" "$APPGOG_VERSION" "$APPGOG_REPAIR_SOURCE"\nexit 37\n');
     const command = '. ' + quote(shellPath(join(root, 'scripts/lib/signed-update.sh'))) + '\n' +
       'appgog_run_signed_update ' + [shellPath(directory), shellPath(directory), repair ? '1.2.14' : '', String(repair), shellPath(join(directory, 'update.log'))].map(quote).join(' ');
@@ -74,6 +76,8 @@ test('helper installer reports an actual failed install instead of cleanup succe
   if (!existsSync(shell)) return t.skip('POSIX shell unavailable');
   const directory = mkdtempSync(join(tmpdir(), 'appgog-helper-failure-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, 'scripts/lib'), { recursive: true });
+  writeFileSync(join(directory, 'scripts/lib/version-lock.sh'), readFileSync(join(root, 'scripts/lib/version-lock.sh')));
   writeFileSync(join(directory, 'install-docker.sh'), 'echo FAILED_INSTALL\nexit 37\n');
   const helper = readFileSync(join(root, 'scripts/update-helper.sh'), 'utf8');
   const runner = helper.match(/run_installer\(\) \{[\s\S]*?\n\}/)[0];
@@ -82,4 +86,23 @@ test('helper installer reports an actual failed install instead of cleanup succe
     'write_status() { :; }\nsleep() { command sleep 0.05; }\n' + runner + '\nif run_installer ""; then exit 0; else exit $?; fi';
   const result = spawnSync(shell, ['-c', command], { encoding: 'utf8' });
   assert.equal(result.status, 37, result.stderr);
+});
+
+
+test('installer lock rejects newer versions and corrupt state, allows only pinned repair', t => {
+  if (!existsSync(shell)) return t.skip('POSIX shell unavailable');
+  if (spawnSync(shell, ['-c', 'command -v jq'], { encoding: 'utf8' }).status !== 0) return t.skip('jq not installed on this host; Linux CI verifies the installer lock');
+  const directory = mkdtempSync(join(tmpdir(), 'appgog-installer-lock-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const control = join(directory, 'shared/update-control'); mkdirSync(control, { recursive: true });
+  const lock = join(control, 'version-lock.json');
+  const check = target => spawnSync(shell, ['-c', '. ' + quote(shellPath(join(root, 'scripts/lib/version-lock.sh'))) + '\nappgog_check_version_lock ' + quote(shellPath(directory)) + ' ' + quote(target)], { encoding: 'utf8' });
+  assert.equal(check('1.2.45').status, 0);
+  writeFileSync(lock, JSON.stringify({ schema: 1, locked: true, version: '1.2.44' }));
+  assert.equal(check('1.2.44').status, 0);
+  assert.equal(check('1.2.45').status, 1);
+  assert.equal(check('').status, 1);
+  writeFileSync(lock, '{invalid'); assert.equal(check('1.2.44').status, 1);
+  writeFileSync(lock, JSON.stringify({ schema: 1, locked: false, version: '1.2.44' }));
+  assert.equal(check('1.2.45').status, 0);
 });

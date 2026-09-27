@@ -300,6 +300,7 @@ CREATE TABLE IF NOT EXISTS build_jobs (
   artifact_ref TEXT,
   artifact_sha256 TEXT,
   install_key_encrypted TEXT,
+  quota_refunded_at TEXT,
   error_code TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -459,6 +460,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON web_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_source_versions_product ON source_versions(product_id, status);
 CREATE INDEX IF NOT EXISTS idx_build_jobs_status ON build_jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_control_migrations_status ON control_migrations(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_build_jobs_history ON build_jobs(license_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_build_jobs_license ON build_jobs(license_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_service_nodes_role ON service_nodes(role, status);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_license ON support_tickets(license_id, updated_at);

@@ -144,7 +144,7 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   assert.match(runtime, /\/plugin\/enable/);
   assert.match(runtime, /\/state\/runtime/);
   assert.match(runtime, /\/sign-challenge/);
-  assert.match(runtime, /APPGOG 授权桥插件摘要校验失败/);
+  assert.match(runtime, /授权桥插件与当前主题包不一致/);
   const manifest = JSON.parse(output.get('APPGOG/appgog-license/build.json').toString('utf8'));
   assert.equal(manifest.build_id, leased.build.buildId);
   assert.equal(manifest.domain, 'demo.example.com');
@@ -372,10 +372,14 @@ test('未使用构建复用、作废权限与审计回滚', async (t) => {
   assert.equal(app.repository.buildJobById(built.job.id).status, 'succeeded');
   assert.equal(app.repository.buildById(built.leased.build.buildId).status, 'ready');
   assert.equal(app.repository.installKeyByBuildId(built.leased.build.buildId).status, 'available');
+  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 1);
+  assert.equal(app.repository.buildJobById(built.job.id).quota_refunded_at, null);
   app.database.exec('DROP TRIGGER deny_void_audit');
   assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
   assert.throws(() => app.artifactStore.read(ref), { code: 'ENOENT' });
-  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 1);
+  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 0);
+  assert.equal(app.repository.recentBuildCount(built.customer.actor_id, '2026-09-21T08:00:00.000Z'), 0);
+  assert.ok(app.repository.buildJobById(built.job.id).quota_refunded_at);
   assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
   assert.equal(app.portal.buildDetails(built.customer, built.job.id).install_key, null);
   assert.equal(app.portal.customerOverview(built.customer).builds.find(job => job.id === built.job.id).can_void, false);
@@ -428,7 +432,7 @@ test('作废文件清理失败保留重试记录且不能继续下载', async (t
   app.portal.leaseBuild('cleanup-worker');
   assert.equal(app.repository.buildJobById(built.job.id).artifact_ref, null);
   assert.throws(() => app.artifactStore.read(ref), { code: 'ENOENT' });
-  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 1);
+  assert.equal(app.repository.totalBuildCount(built.customer.actor_id), 0);
 });
 
 // Xboard extracts the config directory and serves Blade at /; ZIP paths are not browser URLs.
@@ -458,4 +462,32 @@ test('Blade runtime URL follows Xboard public theme name at root and nested rout
       assert.ok(files.has(wrapper + expected.slice('/theme/CustomTheme/'.length)));
     }
   } finally { app.close(); }
+});
+
+test('打包历史翻页覆盖超过30条、同一时间无重复、搜索与会话隔离', (t) => {
+  const app = fixture(); t.after(() => app.close());
+  const first = app.service.issueLicense({ customerRef: 'HISTORY-A', domain: 'demo.example.com' });
+  const second = app.service.issueLicense({ customerRef: 'HISTORY-B', domain: 'other.example.com' });
+  const customer = app.sessions.loginCustomer(first.licenseKey).session;
+  const other = app.sessions.loginCustomer(second.licenseKey).session;
+  for (let i = 0; i < 47; i++) app.repository.createBuildJob({ id: `history-${String(i).padStart(3, '0')}`, licenseId: customer.actor_id,
+    version: i === 5 ? '2.5.0' : '1.0.0', domain: 'demo.example.com', sourceKind: 'upload', now: '2026-09-22T08:00:00.000Z' });
+  app.repository.createBuildJob({ id: 'other-job', licenseId: other.actor_id, version: '1.0.0', domain: 'other.example.com', sourceKind: 'upload', now: '2026-09-22T08:00:00.000Z' });
+  let cursor = '', ids = [];
+  do {
+    const page = app.portal.customerBuildHistory(customer, { cursor, limit: 20 });
+    ids.push(...page.items.map(job => job.id)); cursor = page.next_cursor;
+    assert.equal(page.has_more, Boolean(cursor));
+    assert.ok(page.items.every(job => job.domain === 'demo.example.com'));
+  } while (cursor);
+  assert.equal(ids.length, 47); assert.equal(new Set(ids).size, 47);
+  assert.equal(app.portal.customerBuildHistory(customer, { query: '2.5.0' }).items.length, 1);
+  assert.equal(app.portal.customerBuildHistory(customer, { query: 'other' }).items.length, 0);
+  const foreignCursor = app.portal.customerBuildHistory(customer, { limit: 1 }).next_cursor;
+  assert.ok(app.portal.customerBuildHistory(other, { cursor: foreignCursor }).items.every(job => job.domain === 'other.example.com'));
+  assert.throws(() => app.portal.customerBuildHistory(customer, { limit: 101 }), { code: 'HISTORY_PAGE_INVALID' });
+  assert.throws(() => app.portal.customerBuildHistory(customer, { cursor: 'wrong' }), { code: 'HISTORY_CURSOR_INVALID' });
+  const queued = app.portal.voidCustomerBuild(customer, ids[0]);
+  assert.equal(queued.quota_refunded_at, null); assert.equal(app.repository.totalBuildCount(customer.actor_id), 0);
+  assert.equal(app.portal.voidCustomerBuild(customer, ids[0]).quota_refunded_at, null);
 });

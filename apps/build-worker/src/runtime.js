@@ -276,10 +276,14 @@ export function browserLicenseRuntime(config, mountPage = null) {
   }
 
   async function uploadBridgePackage() {
-    const response = await fetch(new URL(config.j, runtimeSource), { cache: 'no-store', credentials: 'same-origin' });
+    const packageUrl = new URL(config.j, runtimeSource);
+    packageUrl.searchParams.set('appgog_build', config.b);
+    packageUrl.searchParams.set('sha256', config.y);
+    const response = await fetch(packageUrl, { cache: 'no-store', credentials: 'same-origin' });
     if (!response.ok) throw new Error('客户包内缺少 APPGOG 授权桥插件');
     const raw = new Uint8Array(await response.arrayBuffer());
-    if (hex(await crypto.subtle.digest('SHA-256', raw)) !== config.y) throw new Error('APPGOG 授权桥插件摘要校验失败');
+    if (raw.length < 4 || raw[0] !== 0x50 || raw[1] !== 0x4b) throw new Error('授权桥下载未返回 ZIP 文件，请检查站点静态文件访问或重新安装完整主题包');
+    if (hex(await crypto.subtle.digest('SHA-256', raw)) !== config.y) throw new Error('授权桥插件与当前主题包不一致，已停止上传。请清理站点缓存后重新安装完整主题包');
     const form = new FormData();
     form.append('file', new Blob([raw], { type: 'application/zip' }), `appgog-license-bridge-${config.gv}.zip`);
     await xboardAdminRequest('/plugin/upload', { method: 'POST', body: form });
@@ -594,7 +598,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
   function showGate() {
     if (document.getElementById('__appgog_gate')) return;
     const style = document.createElement('style');
-    style.textContent = 'html.__appgog_locked body>*:not(#__appgog_gate){visibility:hidden!important}#__appgog_gate{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;overflow:auto;background:#f6f7fb;color:#202333;font-family:system-ui,-apple-system,sans-serif;padding:24px}#__appgog_gate *{box-sizing:border-box}#__appgog_card{width:min(480px,100%);margin:auto;background:#fff;border:1px solid #e5e7ef;border-radius:20px;padding:32px;box-shadow:0 12px 40px #2023440a}#__appgog_brand{display:flex;align-items:center;gap:12px;margin-bottom:26px;font-size:15px;font-weight:750;letter-spacing:.08em}#__appgog_brand b{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:#6554c0;color:#fff;font-size:22px;letter-spacing:-.05em}#__appgog_brand span{display:grid;gap:3px}#__appgog_brand small{font-size:11px;font-weight:400;letter-spacing:0;color:#767b8d}#__appgog_card h1{font-size:24px;line-height:1.3;margin:0 0 12px;letter-spacing:-.025em}#__appgog_card p{color:#72788a;font-size:13px;line-height:1.8;margin:0 0 22px}#__appgog_card label{display:grid;gap:8px;margin:18px 0;font-size:12px;font-weight:650;color:#454b60}#__appgog_card input{width:100%;min-width:0;height:46px;border:1px solid #dfe2eb;background:#fafbfe;color:#202333;border-radius:9px;padding:0 12px;font:inherit;outline:none}#__appgog_card input:focus{border-color:#8572ce;box-shadow:0 0 0 3px #6554c012}#__appgog_card button{min-height:46px;width:100%;padding:10px;border:1px solid #5e4db5;border-radius:9px;background:#6554c0;color:#fff;font-weight:650;margin-top:8px;cursor:pointer}#__appgog_card button:hover{background:#5746b0}#__appgog_card button:focus-visible{outline:3px solid #c6bce8;outline-offset:3px}#__appgog_card button:disabled{opacity:.55;cursor:not-allowed}#__appgog_error{color:#b42338!important;margin:13px 0 0!important;font-size:12px}#__appgog_meta{font-size:11px;line-height:1.8;overflow-wrap:anywhere;color:#8990a2;margin-top:24px;padding-top:16px;border-top:1px solid #edf0f5}#__appgog_timer{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #f0dfb8;background:#fffaf0;border-radius:9px;color:#946619;font-size:12px;margin:0 0 20px}@media(max-width:480px){#__appgog_gate{padding:16px}#__appgog_card{padding:24px 20px;border-radius:16px}#__appgog_card h1{font-size:22px}}';
+    style.textContent = 'html.__appgog_locked{overflow:hidden!important}html.__appgog_locked body{overflow:hidden!important;margin:0!important}html.__appgog_locked body>*:not(#__appgog_gate){visibility:hidden!important}#__appgog_gate{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;overflow:auto;overscroll-behavior:contain;box-sizing:border-box;background:#f6f7fb;color:#202333;font-family:system-ui,-apple-system,sans-serif;padding:20px}#__appgog_gate *{box-sizing:border-box}#__appgog_card{width:min(480px,100%);margin:auto;background:#fff;border:1px solid #e5e7ef;border-radius:20px;padding:26px;box-shadow:0 12px 40px #2023440a}#__appgog_brand{display:flex;align-items:center;gap:12px;margin-bottom:20px;font-size:15px;font-weight:750;letter-spacing:.08em}#__appgog_brand b{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:#6554c0;color:#fff;font-size:22px;letter-spacing:-.05em}#__appgog_brand span{display:grid;gap:3px}#__appgog_brand small{font-size:11px;font-weight:400;letter-spacing:0;color:#767b8d}#__appgog_card h1{font-size:24px;line-height:1.3;margin:0 0 12px;letter-spacing:-.025em}#__appgog_card p{color:#72788a;font-size:13px;line-height:1.8;margin:0 0 22px}#__appgog_card label{display:grid;gap:8px;margin:18px 0;font-size:12px;font-weight:650;color:#454b60}#__appgog_card input{width:100%;min-width:0;height:46px;border:1px solid #dfe2eb;background:#fafbfe;color:#202333;border-radius:9px;padding:0 12px;font:inherit;outline:none}#__appgog_card input:focus{border-color:#8572ce;box-shadow:0 0 0 3px #6554c012}#__appgog_card button{min-height:46px;width:100%;padding:10px;border:1px solid #5e4db5;border-radius:9px;background:#6554c0;color:#fff;font-weight:650;margin-top:8px;cursor:pointer}#__appgog_card button:hover{background:#5746b0}#__appgog_card button:focus-visible{outline:3px solid #c6bce8;outline-offset:3px}#__appgog_card button:disabled{opacity:.55;cursor:not-allowed}#__appgog_error{color:#b42338!important;margin:13px 0 0!important;font-size:12px}#__appgog_meta{font-size:11px;line-height:1.8;overflow-wrap:anywhere;color:#8990a2;margin-top:24px;padding-top:16px;border-top:1px solid #edf0f5}#__appgog_timer{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid #f0dfb8;background:#fffaf0;border-radius:9px;color:#946619;font-size:12px;margin:0 0 20px}@media(max-width:480px){#__appgog_gate{padding:16px}#__appgog_card{padding:24px 20px;border-radius:16px}#__appgog_card h1{font-size:22px}}';
     document.head.append(style);
     const gate = document.createElement('div'); gate.id = '__appgog_gate';
     const card = document.createElement('div'); card.id = '__appgog_card';
@@ -663,7 +667,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
       pathInput.placeholder = '/后台安全路径'; pathInput.value = xboardAdminPath || saved?.xboard_admin_path || connectionPath() || '';
       pathLabel.append(pathInput);
       const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重新检查并准备插件';
-      const login = document.createElement('button'); login.type = 'button'; login.textContent = '前往 Xboard 后台登录';
+      const login = document.createElement('button'); login.type = 'button'; login.style.cssText = 'background:#fff;color:#6554c0;border-color:#dfe2eb'; login.textContent = '前往 Xboard 后台登录';
       const selectedPath = () => {
         const value = pathInput.value.trim();
         if (!value) throw new Error('请填写本站 Xboard 后台路径');
@@ -678,7 +682,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
           if (pathInput.value.trim()) rememberAdminPath(selectedPath());
           progress('正在重试，请稍候…');
           prefetchedBridge = null; await ensureBridge(); bridgeFailure = null; location.reload();
-        } catch (failure) { error.textContent = failure.message; }
+        } catch (failure) { progress('准备失败，已停止。'); error.textContent = failure.message; }
         finally { retry.disabled = false; }
       });
       login.addEventListener('click', () => {
@@ -692,7 +696,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
       button.disabled = true;
       button.textContent = integrityFailure ? '请重新安装完整授权包'
         : (bridgeFailure ? '授权组件未就绪' : '请先登录 Xboard 管理后台');
-      form.append(button, error);
+      form.append(error);
     } else if (hasInstallReceipt) form.append(fixedLabel, button, error);
     else if (!hasInstallWindow || installWindowExpired) form.append(button, error);
     else form.append(installLabel, button, error);
@@ -859,6 +863,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
       }
     } catch (error) {
       bridgeFailure = error?.message || 'APPGOG 授权桥安装或健康检查失败';
+      progress('准备失败，已停止。');
       await domReady;
       showGate();
       return;

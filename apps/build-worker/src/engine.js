@@ -203,9 +203,11 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     packagePublicKey = publicKey,
     notificationPublicKey = publicKey,
     publicBaseUrl,
+    bridgePackage = () => ({ buffer: createXboardBridgePackage(), descriptor: xboardBridgeDescriptor() }),
   }) {
     super();
     this.artifactStore = artifactStore;
+    this.bridgePackage = bridgePackage;
     this.activationPublicKey = activationPublicKey;
     this.packagePublicKey = packagePublicKey;
     this.notificationPublicKey = notificationPublicKey;
@@ -260,8 +262,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     const protectedIdentityPath = `${protectedRoot}i-${pathSeed.slice(28, 44)}.bin`;
     const bridgeContractPath = `${root}appgog-license/xboard-bridge-contract.json`;
     const bridgePackagePath = `${root}appgog-license/appgog-license-bridge.zip`;
-    const bridgePackage = createXboardBridgePackage();
-    const bridgeDescriptor = xboardBridgeDescriptor();
+    const { buffer: bridgePackage, descriptor: bridgeDescriptor } = this.bridgePackage();
     const protectedIdentity = protectIdentity({ product, version, build_id: buildId, package_id: packageId, domain, watermark }, packageSecret);
     files.set(protectedIdentityPath, protectedIdentity);
     files.set(bridgePackagePath, bridgePackage);

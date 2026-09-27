@@ -96,6 +96,12 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   assert.equal(queued.status, 201);
   assert.equal(queued.data.status, 'queued');
 
+  // Distinct center-selected component proves the remote worker does not use its own bundled bridge.
+  const component = app.bridgeUpdates.snapshot();
+  const bridgeFiles = readZip(component.buffer);
+  const selectedDescriptor = { ...component.descriptor, version: '1.1.99' };
+  bridgeFiles.set('AppgogLicenseBridge/config.json', Buffer.from(JSON.stringify(selectedDescriptor)));
+  app.bridgeUpdates.snapshot = () => ({ ...component, descriptor: selectedDescriptor, version: '1.1.99', buffer: writeZip(bridgeFiles) });
   const remoteWorkerStore = new LocalArtifactStore(join(tempRoot, 'worker-artifacts'));
   const worked = await runWorkerOnce({
     baseUrl: centerUrl, token: workerNode.credential, workerId: 'ignored-request-worker-id',
@@ -111,6 +117,11 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   const detail = await send(buildUrl, `/web/customer/builds/${queued.data.id}`, { cookie: customerCookie });
   assert.equal(detail.status, 200);
   assert.equal(detail.data.status, 'succeeded');
+  const history = await send(buildUrl, '/web/customer/builds?limit=20', { cookie: customerCookie });
+  assert.equal(history.status, 200);
+  assert.equal(history.data.items[0].id, queued.data.id);
+  assert.equal(history.data.items[0].activation_label, '未激活');
+  assert.equal((await send(buildUrl, '/web/customer/builds?limit=20')).status, 401);
   assert.match(detail.data.install_key, /^INS-/);
   const ticket = await send(buildUrl, `/web/customer/builds/${queued.data.id}/download-ticket`, {
     method: 'POST', cookie: customerCookie, csrf: customerCsrf,
@@ -120,6 +131,8 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   assert.equal(result.status, 200);
   const output = Buffer.from(await result.arrayBuffer());
   assert.equal(createHash('sha256').update(output).digest('hex'), result.headers.get('x-appgog-sha256'));
+  const shippedBridge = [...readZip(output)].find(([name])=>name.endsWith('/appgog-license-bridge.zip'))[1];
+  assert.equal(JSON.parse(readZip(shippedBridge).get('AppgogLicenseBridge/config.json')).version, '1.1.99');
   assert.ok([...readZip(output).keys()].some((path) => /appgog-license\/p-[a-f0-9]+\/r-[a-f0-9]+\.js$/.test(path)));
   assert.equal((await send(buildUrl, '/web/admin/overview', { cookie: customerCookie })).status, 404);
 });

@@ -133,7 +133,7 @@ export function createPackagingService({
         const now = clock().toISOString();
         invariant(repository.cancelBuildJob(job.id, now), 'BUILD_STATE_CHANGED', '任务状态已变化，请刷新', 409);
         repository.audit({ actorType: 'customer', actorId: session.actor_id, action: 'build_job.voided',
-          subjectType: 'build_job', subjectId: job.id, metadata: { build_id: job.build_id }, now });
+          subjectType: 'build_job', subjectId: job.id, metadata: { build_id: job.build_id, quota_refunded: Boolean(job.build_id), refunded_count: job.build_id ? 1 : 0 }, now });
         return publicBuildJob(repository.buildJobById(job.id));
       });
       cleanupCancelledArtifacts();

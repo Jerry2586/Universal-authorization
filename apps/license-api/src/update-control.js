@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { newId } from '../../../packages/core/src/identifiers.js';
 import { invariant } from '../../../packages/core/src/errors.js';
@@ -61,13 +61,25 @@ export function createUpdateControl({ root, currentVersion, clock = () => new Da
   root ??= resolve(process.cwd(), 'var/update-control');
   const requests = join(root, 'requests');
   const statusPath = join(root, 'status.json');
+  const lockPath = join(root, 'version-lock.json');
+  const executionPath = join(root, 'version-change.guard');
+  const lockState = () => {
+    if (!existsSync(lockPath)) return { locked: false, version: null, valid: true };
+    const value = readJson(lockPath);
+    if (value?.schema !== 1 || typeof value.locked !== 'boolean' || !VERSION_PATTERN.test(value.version ?? '')) {
+      return { locked: true, version: null, valid: false };
+    }
+    return { locked: value.locked, version: value.version, valid: true, updated_at: value.updated_at };
+  };
   mkdirSync(requests, { recursive: true });
 
   return {
     status() {
       const status = readJson(statusPath);
+      const versionLock = lockState();
       if (!status) return {
         schema: 2,
+        version_lock: versionLock,
         available: false,
         installable: false,
         state: 'unavailable',
@@ -81,9 +93,32 @@ export function createUpdateControl({ root, currentVersion, clock = () => new Da
       const available = Number.isFinite(heartbeat.getTime()) && clock().getTime() - heartbeat.getTime() < 90_000;
       const release = releaseState(status, currentVersion, clock());
       const busy = ['queued', 'running'].includes(status.state);
-      const installable = available && !busy && release.check_status === 'succeeded'
+      const installable = !versionLock.locked && available && !busy && release.check_status === 'succeeded'
         && release.freshness === 'fresh' && release.relation === 'update_available';
-      return { ...status, ...release, available, installable, current_version: currentVersion };
+      return { ...status, ...release, available, installable, version_lock: versionLock, current_version: currentVersion };
+    },
+
+    setVersionLock(locked, record = () => {}) {
+      invariant(typeof locked === 'boolean', 'UPDATE_LOCK_INVALID', '版本锁定参数无效');
+      try { mkdirSync(executionPath); } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        invariant(false, 'UPDATE_ALREADY_RUNNING', '安装或版本设置正在执行，请完成后重试', 409);
+      }
+      try {
+        const state = this.status();
+        invariant(!['queued', 'running'].includes(state.state) && !readdirSync(requests).some(name => /\.json(?:\.processing)?$/.test(name)),
+          'UPDATE_ALREADY_RUNNING', '已有更新任务正在执行，完成后才能修改版本锁定', 409);
+        const previous = existsSync(lockPath) ? readFileSync(lockPath) : null;
+        const value = { schema: 1, locked, version: currentVersion, updated_at: clock().toISOString() };
+        atomicJson(lockPath, value);
+        try { record({ id: newId('upd'), action: locked ? 'lock-version' : 'unlock-version', version: currentVersion }); }
+        catch (error) {
+          if (previous) { const rollback = lockPath + '.rollback'; writeFileSync(rollback, previous, { mode: 0o600 }); renameSync(rollback, lockPath); }
+          else rmSync(lockPath, { force: true });
+          throw error;
+        }
+        return this.status();
+      } finally { rmdirSync(executionPath); }
     },
 
     enqueue(action, version = null) {
@@ -91,15 +126,18 @@ export function createUpdateControl({ root, currentVersion, clock = () => new Da
       const normalizedVersion = version ? String(version).trim().replace(/^v/, '') : null;
       invariant(!normalizedVersion || VERSION_PATTERN.test(normalizedVersion), 'UPDATE_VERSION_INVALID', '目标版本号格式无效');
       const status = this.status();
+      invariant(!existsSync(executionPath), 'UPDATE_ALREADY_RUNNING', '安装或版本设置正在执行，请完成后重试', 409);
       invariant(status.available, 'UPDATE_HELPER_UNAVAILABLE', '宿主机更新助手未运行，请先执行 appgog repair-source 修复助手', 503);
       invariant(!['queued', 'running'].includes(status.state), 'UPDATE_ALREADY_RUNNING', '已有更新任务正在执行', 409);
       if (action === 'install-version') {
+        invariant(!status.version_lock.locked, 'UPDATE_VERSION_LOCKED', status.version_lock.valid ? '当前版本已锁定，请先解除锁定再升级' : '版本锁定状态损坏，请在面板重新设置锁定状态', 409);
         invariant(status.freshness !== 'stale', 'UPDATE_CHECK_STALE', '更新检查结果已过期，请重新检查更新', 409);
         invariant(status.relation !== 'source_behind', 'UPDATE_SOURCE_BEHIND', '签名发布源版本落后于当前运行版本，已禁止更新', 409);
         invariant(status.check_status === 'succeeded' && status.freshness === 'fresh', 'UPDATE_RELEASE_NOT_READY', '尚未取得新鲜有效的签名发布结果，请先检查更新', 409);
         invariant(status.relation === 'update_available', 'UPDATE_NO_UPDATE', '当前已经是最新版本，无需重复更新', 409);
+        invariant(!normalizedVersion || normalizedVersion === status.latest_version, 'UPDATE_TARGET_MISMATCH', '目标版本与已验证发布结果不一致，请重新检查更新', 409);
       }
-      const request = { id: newId('upd'), action, version: normalizedVersion, requested_at: clock().toISOString() };
+      const request = { id: newId('upd'), action, version: action === 'install-version' ? normalizedVersion || status.latest_version : normalizedVersion, requested_at: clock().toISOString() };
       atomicJson(join(requests, `${request.id}.json`), request);
       const { available: _available, installable: _installable, freshness: _freshness, relation: _relation, ...persisted } = status;
       atomicJson(statusPath, {

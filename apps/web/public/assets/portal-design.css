@@ -104,10 +104,40 @@ body[data-portal] .version-name-row { gap: 8px; flex-wrap: wrap; }
 body[data-portal] .version-name-row > strong { font-size: 14px; letter-spacing: -.02em; }
 body[data-portal] .release-summary > p { font-size: 12px; line-height: 1.75; color: var(--muted); }
 body[data-portal] .release-meta { gap: 9px; font-size: 11px; line-height: 1.7; }
-body[data-portal] .customer-version-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 0; padding: 22px; }
-body[data-portal] .customer-version-card { display: flex; flex-direction: column; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: none; }
-body[data-portal] .customer-version-card.latest { border-color: #d5c7ee; background: #fcfaff; }
-body[data-portal] .customer-version-card .version-card-footer { margin-top: auto; padding-top: 18px; }
+/* Build delivery: latest/current cards above the task table. */
+body[data-portal] .customer-version-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 0; padding: 0 24px 24px; align-items: stretch; }
+body[data-portal] .customer-version-card.version-delivery-card { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: none; }
+body[data-portal] .customer-version-card.version-delivery-card.latest { border-color: #d9ccff; background: #fbf9ff; box-shadow: 0 6px 18px rgba(107,85,232,.04); }
+body[data-portal] .build-version-catalog { overflow: hidden; margin-bottom: 22px; }
+body[data-portal] .build-version-catalog > .surface-head { align-items: center; padding: 24px; margin: 0; }
+.delivery-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; min-width: 0; }
+.delivery-version-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.delivery-version-heading > strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 650; line-height: 1.6; }
+.delivery-version-number { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.delivery-version-labels { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.delivery-version-badge, .delivery-version-tier { display: inline-flex; padding: 5px 10px; border: 1px solid #ccecdc; border-radius: 20px; background: #edf9f3; color: #168572; font-size: 11px; line-height: 1.5; white-space: nowrap; }
+.delivery-version-badge.current { border-color: #e1e7f3; background: #f4f6fb; color: #64758f; }
+.delivery-card-availability { flex: none; padding: 5px 8px; border-radius: 7px; border: 1px solid #e9e2f4; background: #f7f3fc; color: #78628e; font-size: 11px; white-space: nowrap; }
+.delivery-version-meta, .delivery-version-published { color: var(--subtle); font-size: 11px; line-height: 1.7; }
+.version-delivery-card > .version-release-details { margin: 4px 0 2px; }
+.version-delivery-card .version-release-details summary { color: var(--accent); font-size: 12px; cursor: pointer; }
+.version-delivery-card .version-notes { padding-top: 12px; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
+.delivery-version-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 18px; margin-top: auto; border-top: 1px solid var(--line); }
+.delivery-version-controls .button { flex: none; min-height: 40px; font-size: 12px; }
+.delivery-version-reason { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.build-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.history-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px; border-top: 1px solid var(--line); }
+.history-pagination p { color: var(--muted); font-size: 12px; }
+@media (max-width: 1000px) {
+  body[data-portal] .customer-version-list { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  body[data-portal] .customer-version-list { padding: 0 16px 16px; }
+  body[data-portal] .customer-version-card.version-delivery-card { padding: 18px; }
+  body[data-portal] .build-version-catalog > .surface-head { padding: 20px 16px; }
+  .delivery-card-top { flex-wrap: wrap; }.delivery-version-heading > strong { font-size: 15px; }
+  .delivery-version-controls { flex-wrap: wrap; }.delivery-version-controls .button { margin-left: auto; }
+}
 body[data-portal] .support-workspace { display: grid; grid-template-columns: minmax(280px, .3fr) minmax(0, .7fr); gap: 22px; align-items: stretch; }
 body[data-portal] .support-workspace > .ticket-detail { grid-column: auto; padding: 24px; min-height: 550px; }
 body[data-portal] .ticket-queue { min-height: 550px; padding: 0; }
@@ -205,7 +235,7 @@ body[data-portal] .update-log { border: 1px solid #e7e1ef; border-radius: 10px; 
   body[data-portal] .ticket-detail-head { flex-wrap: wrap; }
   body[data-portal] .ticket-message { width: 96%; }
   body[data-portal] .ticket-create-dialog { padding: 22px; }
-  body[data-portal] .customer-version-list { padding: 18px; }
+  body[data-portal] .customer-version-list { padding: 0; }
   body[data-portal] .button { min-height: 42px; }
   body[data-portal] .ticket-reply-actions { align-items: stretch; }
   body[data-portal] .ticket-reply-actions .button { flex: 1 1 auto; }
@@ -265,3 +295,10 @@ body[data-portal] .button:active { transform:translateY(1px); }
 .delivery-flow-disclosure > summary { font-weight: 600; }.delivery-flow-disclosure[open] > summary { margin-bottom: 16px; }
 .version-release-details { margin-top: 12px; font-size: 12px; }.version-release-details .version-notes { margin-top: 10px; }
 @media(max-width:640px) { .build-start-card { align-items: flex-start; flex-direction: column; }.build-start-card > button { width: 100%; } }
+body[data-portal] .build-version-catalog { border-radius: 18px; overflow: hidden; }
+body[data-portal] .build-version-catalog > .surface-head { border-bottom: 1px solid var(--line); }
+body[data-portal] .build-version-catalog > .surface-head h3 { font-size: 17px; }
+body[data-portal] .build-version-catalog > .surface-head p { margin-top: 6px; font-size: 13px; }
+.history-pagination { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 24px; border-top: 1px solid var(--line); }
+.history-pagination p { margin: 0; font-size: 13px; color: var(--muted); }
+.bridge-log-details { margin-top: 16px; }.bridge-log-details summary { cursor: pointer; color: var(--muted); font-size: 13px; }

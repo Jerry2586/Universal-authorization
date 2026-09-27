@@ -36,6 +36,14 @@ export async function handleCustomerHttp({
     return true;
   }
 
+  if (method === 'GET' && url.pathname === '/web/customer/builds') {
+    invariant(portal.serviceEnabled('build_center_enabled'), 'BUILD_CENTER_MAINTENANCE', '客户打包中心正在维护', 503);
+    respondJson(response, 200, portal.customerBuildHistory(auth.requireSession('customer'), {
+      limit: url.searchParams.get('limit') ?? 20, cursor: url.searchParams.get('cursor') ?? '', query: url.searchParams.get('query') ?? '',
+    }));
+    return true;
+  }
+
   if (method === 'POST' && url.pathname === '/web/customer/builds') {
     invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('new_builds_enabled'),
       'NEW_BUILDS_DISABLED', '当前暂停接收新构建', 503);

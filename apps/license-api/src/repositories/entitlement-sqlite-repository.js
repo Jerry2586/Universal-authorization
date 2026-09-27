@@ -3,6 +3,7 @@ export function createEntitlementSqliteRepository(queries) {
     planByCode: (code) => queries.planByCode.get(code),
     listPlans: () => queries.listPlans.all(),
     allPlans: () => queries.allPlans.all(),
+    deletePlan: (code, now) => queries.deletePlan.run(now, code).changes === 1,
     savePlan(plan, creating) {
       const fields = [plan.name, plan.access_tier, plan.status, JSON.stringify(plan.capabilities), JSON.stringify(plan.limits)];
       if (creating) queries.insertPlan.run(plan.id, plan.code, ...fields, plan.now, plan.now);

@@ -6,6 +6,11 @@ export async function handleEntitlementHttp({ method, url, request, response, se
     return true;
   }
   const edit = url.pathname.match(/^\/web\/admin\/plans\/([a-z][a-z0-9_-]{1,39})$/);
+  if (method === 'DELETE' && edit) {
+    const admin = auth.requireSession('admin', true, 'license.manage');
+    respondJson(response, 200, service.deleteLicensePlan({ code: edit[1], actorId: admin.actor_id }));
+    return true;
+  }
   if (method !== 'POST' || (url.pathname !== root && !edit)) return false;
   const admin = auth.requireSession('admin', true, 'license.manage');
   const body = await readJson(request);

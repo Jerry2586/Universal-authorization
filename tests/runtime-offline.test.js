@@ -373,7 +373,7 @@ test('生成的运行时先提交一次性 Install Key，再使用 Install Recei
 for (const malformed of [false, true]) {
   test(malformed ? '授权桥上传后插件响应异常会显示可读错误并保持锁定' : '未安装授权桥时自动通过非默认管理路径上传、安装、启用并锁定等待激活', async () => {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-    const pluginZip = Buffer.from('fixture-bridge-zip');
+    const pluginZip = Buffer.from('PK\x03\x04fixture-bridge-zip');
     const requests = [];
     let uploaded = false, installed = false, enabled = false;
     const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
@@ -423,7 +423,7 @@ for (const malformed of [false, true]) {
 for (const outdated of [false, true]) {
   test(outdated ? '健康旧授权桥自动升级后保留安装身份并等待激活' : '健康旧授权桥上传后仍未更新则保持锁定', async () => {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-    const pluginZip = Buffer.from('fixture-bridge-zip');
+    const pluginZip = Buffer.from('PK\x03\x04fixture-bridge-zip');
     const requests = [];
     let uploaded = false, installed = true, enabled = true, healthReadsAfterUpload = 0;
     const identity = { installation_id: 'installation_runtime_123', installation_public_key: 'fixture-public-key' };
@@ -684,5 +684,35 @@ for (const failure of ['deleted','disabled','revoked','tampered','rate-limit','s
       const read=await globalThis.fetch('/api/v2/secure/theme/getThemeConfig');assert.equal(read.status,423);
       if(failure==='rate-limit')assert.equal(stateRequests,readsBefore,'Retry-After must suppress repeated bridge calls');
     }finally{browser.restore();}
+  });
+}
+
+for (const htmlResponse of [false, true]) {
+  test(htmlResponse ? '桥ZIP被HTML替换时拒绝上传并结束进度' : '桥ZIP摘要错误时拒绝上传、使用按包缓存参数并结束进度', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    let downloadUrl = null, uploads = 0;
+    const browser = installBrowser({ token: null, publicKey, manifestToken: packageManifest(privateKey),
+      referrer: 'https://demo.example.com/secure_test#/theme',
+      initialValues: new Map([['XBOARD_ACCESS_TOKEN', JSON.stringify({ value: 'fixture-admin-token' })]]),
+      bridge: { gc: 'appgog_license_bridge', gv: '1.1.4', gt: 'APPGOG', j: '/bridge.zip', y: '00' },
+      fetchImpl: async url => {
+        const parsed = new URL(url, 'https://demo.example.com');
+        if (parsed.pathname.endsWith('/health') || parsed.pathname.endsWith('/admin-context')) return new Response('{}', { status: 404 });
+        if (parsed.pathname.endsWith('/plugin/getPlugins')) return new Response('{"data":[]}');
+        if (parsed.pathname === '/bridge.zip') { downloadUrl = parsed; return new Response(htmlResponse ? '<html>login</html>' : 'PK\x03\x04wrong-zip'); }
+        if (parsed.pathname.endsWith('/plugin/upload')) uploads++;
+        throw Error('unexpected call');
+      },
+    });
+    try {
+      await browser.settle();
+      const gate = browser.elements.find(element => element.id === '__appgog_gate');
+      assert.match(elementText(gate), htmlResponse ? /未返回 ZIP/ : /与当前主题包不一致/);
+      assert.match(elementText(gate), /准备失败，已停止/);
+      assert.doesNotMatch(elementText(gate), /正在校验并上传/);
+      assert.equal(downloadUrl.searchParams.get('appgog_build'), 'bld_runtime');
+      assert.equal(downloadUrl.searchParams.get('sha256'), '00');
+      assert.equal(uploads, 0); assert.ok(browser.classes.has('__appgog_locked'));
+    } finally { browser.restore(); }
   });
 }

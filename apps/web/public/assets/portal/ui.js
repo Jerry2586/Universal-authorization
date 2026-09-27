@@ -26,7 +26,7 @@ export function roleLabel(role) { return { owner: '平台所有者', super_admin
 export function nodeRoleLabel(role) { return { 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未知节点'; }
 export function installationRoleLabel(role) { return { 'all-in-one': '完整系统', 'license-center': '授权中心', 'build-center': '打包中心', worker: '构建 Worker' }[role] ?? role ?? '未设置'; }
 export function channelLabel(channel) { return { stable: '正式版', beta: '测试版', preview: '预览版' }[channel] ?? channel ?? '正式版'; }
-export function releaseKindLabel(kind) { return { feature: '功能更新', security: '安全更新', hotfix: '问题修复' }[kind] ?? kind ?? '常规更新'; }
+export function releaseKindLabel(kind) { return { feature: '功能更新', security: '安全更新', hotfix: '问题修复', bugfix: '问题修复' }[kind] ?? kind ?? '常规更新'; }
 export function intentLabel(intent) { return { update: '更新包', reinstall: '重装包' }[intent] ?? '安装包'; }
 export function ticketCategoryLabel(value) { return { packaging: '打包问题', build: '构建问题', install: '安装问题', license: '授权问题', consulting: '使用咨询' }[value] ?? value ?? '其他'; }
 export function ticketPriorityLabel(value) { return { low: '低', normal: '普通', high: '较急', urgent: '紧急' }[value] ?? value ?? '普通'; }

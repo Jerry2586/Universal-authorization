@@ -3,6 +3,8 @@ import { $ } from './core.js';
 
 export function createOperationsUi({ request, notify, can }) {
   const bridge = createBridgeUpdateUi({ request, notify, can });
+  let versionLocked = false;
+  let lockPending = false;
   function latestLabel(update) {
     if (update.check_status === 'failed') return '发布源不可用';
     if (update.freshness === 'stale') return '检查结果已过期';
@@ -38,11 +40,19 @@ export function createOperationsUi({ request, notify, can }) {
       $('update-log').textContent = Array.isArray(update.log) ? update.log.slice(-12).join('\n') : update.last_log || '暂无更新日志';
       if ($('update-fallback')) $('update-fallback').hidden = update.available;
       const busy = ['queued', 'running'].includes(update.state);
+      versionLocked = update.version_lock?.locked === true;
+      if ($('update-lock-status')) $('update-lock-status').textContent = update.version_lock?.valid === false ? '状态异常，已阻止升级' : versionLocked ? '已锁定 v' + update.version_lock.version : '未锁定';
+      if ($('toggle-version-lock')) {
+        $('toggle-version-lock').textContent = versionLocked ? '解除版本锁定' : '锁定当前版本';
+        $('toggle-version-lock').disabled = busy || lockPending;
+      }
+      if (versionLocked) $('update-message').textContent = (update.version_lock?.valid === false ? '锁定记录异常，请重新设置。' : '版本已锁定，检查与当前版本修复仍可使用。') + ' ' + statusMessage(update);
       $('check-update').disabled = !update.available || busy;
       $('repair-current').disabled = !update.available || busy;
-      $('install-update').disabled = !update.installable;
+      $('install-update').disabled = versionLocked || !update.installable;
     } catch (error) {
       $('update-state').textContent = '读取失败';
+      for (const id of ['toggle-version-lock', 'install-update', 'repair-current', 'check-update']) if ($(id)) $(id).disabled = true;
       $('update-message').textContent = error.message;
       if ($('update-fallback')) $('update-fallback').hidden = false;
     }
@@ -59,6 +69,15 @@ export function createOperationsUi({ request, notify, can }) {
 
   function bind() {
     bridge.bind();
+    $('toggle-version-lock')?.addEventListener('click', async () => {
+      if (lockPending) return;
+      lockPending = true; $('toggle-version-lock').disabled = true;
+      try {
+        await request('/web/admin/system/update/lock', { method: 'POST', body: { locked: !versionLocked } });
+        notify(versionLocked ? '版本锁定已解除' : '当前版本已锁定');
+      } catch (error) { notify(error.message, true); }
+      finally { lockPending = false; await refresh(); }
+    });
     $('check-update')?.addEventListener('click', () => trigger('check-update'));
     $('install-update')?.addEventListener('click', () => trigger('install-version'));
     $('repair-current')?.addEventListener('click', () => trigger('repair-current'));

@@ -29,7 +29,7 @@ export function createPackagingSqliteRepository(queries) {
     expiredBuildJobs: (now) => queries.expiredBuildJobs.all(now),
     cancelledArtifacts: () => queries.cancelledArtifacts.all(),
     clearCancelledArtifact: (id) => queries.clearCancelledArtifact.run(id),
-    cancelBuildJob: (id, now) => queries.cancelBuildJob.run(now, now, id).changes === 1,
+    cancelBuildJob: (id, now) => queries.cancelBuildJob.run(now, now, now, id).changes === 1,
     createBuildJob(values) {
       queries.insertBuildJob.run(
         values.id, values.licenseId, values.sourceVersionId ?? null, values.version, values.domain,
@@ -40,6 +40,8 @@ export function createPackagingSqliteRepository(queries) {
     },
     buildJobById: (id) => queries.buildJobById.get(id),
     listBuildJobsByLicense: (licenseId, limit = 50) => queries.listBuildJobsByLicense.all(licenseId, limit),
+    pageBuildJobsByLicense: (licenseId, { limit, cursor, query }) => queries.pageBuildJobsByLicense.all(
+      licenseId, cursor?.created_at ?? null, cursor?.created_at ?? null, cursor?.created_at ?? null, cursor?.id ?? null, query, query, limit),
     listBuildJobs: (limit = 100) => queries.listBuildJobs.all(limit),
     nextQueuedJob: () => queries.nextQueuedJob.get(),
     leaseBuildJob(values) {

@@ -85,6 +85,27 @@ export function createCustomerPortalService({
       };
     },
 
+    customerBuildHistory(session, { limit = 20, cursor = '', query = '' } = {}) {
+      const license = customerLicense(session);
+      const size = Number(limit);
+      invariant(Number.isInteger(size) && size >= 1 && size <= 100, 'HISTORY_PAGE_INVALID', '每页记录数必须在 1 到 100 之间');
+      invariant(typeof query === 'string' && query.length <= 120 && typeof cursor === 'string' && cursor.length <= 1024,
+        'HISTORY_QUERY_INVALID', '历史记录查询参数无效');
+      let position = null;
+      if (cursor) {
+        try { position = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch {}
+        invariant(position && typeof position.created_at === 'string' && Number.isFinite(Date.parse(position.created_at))
+          && typeof position.id === 'string' && position.id.length > 0 && position.id.length <= 128, 'HISTORY_CURSOR_INVALID', '历史记录游标无效');
+      }
+      const rows = repository.pageBuildJobsByLicense(license.id, { limit: size + 1, cursor: position, query: query.trim() });
+      const more = rows.length > size, page = rows.slice(0, size), last = page.at(-1);
+      return {
+        items: page.map(job => ({ ...publicBuildJob(job), ...buildDeliveryView(repository, job, clock().toISOString()), can_void: Boolean(job.can_void) })),
+        next_cursor: more ? Buffer.from(JSON.stringify({ created_at: last.created_at, id: last.id })).toString('base64url') : null,
+        has_more: more,
+      };
+    },
+
     bindCustomerDomain(session, { domain }) {
       customerLicense(session);
       const license = licensing.bindLicenseDomain({ licenseId: session.actor_id, domain, actorId: session.actor_id });

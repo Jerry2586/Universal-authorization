@@ -1,108 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createBridgeUpdates } from '../apps/license-api/src/modules/operations/bridge-updates.js';
-import { createXboardBridgeClient, normalizeBridgeTarget, publicAddress, publicHttps } from '../packages/adapters/src/xboard-bridge-client.js';
+import { createBridgeDistribution } from '../packages/adapters/src/bridge-distribution.js';
+import { signBridgeDelivery, verifyBridgeDelivery } from '../packages/core/src/bridge-delivery.js';
 import { bridgeFromSignedRelease, createBridgeReleaseSource } from '../packages/adapters/src/bridge-release-source.js';
 import { writeZip, readZip } from '../packages/core/src/zip.js';
 
-const session = { id: 'admin-session', actor_id: 'admin', expires_at: '2026-09-29T00:00:00Z' };
-function fixture() {
-  let now = Date.parse('2026-09-28T00:00:00Z'), saved = null, version = '1.1.0', identity = 'original';
-  let failRelease = false, failInspect = false, uploads = 0, inside = false;
-  const repository = { setting: () => saved, setSetting: (_, value) => { assert.ok(inside); saved = value; }, audit: event => { assert.ok(inside); assert.ok(event.action); } };
-  const client = { connect: async input => ({ origin: input.origin, token: 'private-token' }),
-    inspect: async () => { if (failInspect) throw Error('private response'); return { version, identity }; },
-    upload: async (_c, _b, v) => { uploads++; version = v; }, repair: async () => ({ ok: true }) };
-  const releases = { latest: async () => { if (failRelease) throw Error('secret'); return { version: '1.1.3', release_version: '1.2.43', buffer: Buffer.from('zip') }; } };
-  const options = { client, releases, repository, atomic: fn => { inside = true; try { return fn(); } finally { inside = false; } }, clock: () => new Date(now), delay: async () => {}, attempts: 2 };
-  const api = createBridgeUpdates(options);
-  return { api, client, releases, options, connect: () => api.connect(session, { origin: 'https://example.com' }),
-    advance: ms => now += ms, failRelease: () => failRelease = true, failInspect: () => failInspect = true,
-    setIdentity: value => identity = value, setVersion: value => version = value, uploads: () => uploads,
-    saved: () => saved, seed: value => saved = JSON.stringify(value) };
-}
-async function run(api, action) {
-  api.enqueue(session, action);
-  for (let i = 0; i < 100 && api.status(session).busy; i++) await new Promise(resolve => setImmediate(resolve));
-  assert.equal(api.status(session).busy, false);
-  return api.status(session);
-}
-
-test('bridge update checks, installs once and preserves running identity; credentials never persist', async () => {
-  const f = fixture(); await f.connect();
-  assert.equal(f.api.status(session).current_version, '1.1.0');
-  assert.throws(() => f.api.enqueue(session, 'install-version'), /先检查/);
-  assert.equal((await run(f.api, 'check-update')).installable, true);
-  const state = await run(f.api, 'install-version');
-  assert.equal(state.state, 'succeeded'); assert.equal(state.current_version, '1.1.3'); assert.equal(f.uploads(), 1);
-  assert.doesNotMatch(f.saved(), /private-token/);
-  assert.equal((await run(f.api, 'repair-current')).state, 'succeeded');
-  assert.equal((await run(f.api, 'check-update')).installable, false);
-});
-test('bridge freshness, session isolation, expiry, source behind, failed checks never reuse latest', async () => {
-  const f = fixture(); await f.connect();
-  assert.throws(() => f.api.enqueue({ ...session, id: 'other' }, 'check-update'), /过期/);
-  await run(f.api, 'check-update'); f.advance(600001);
-  assert.equal(f.api.status(session).latest_version, null);
-  assert.throws(() => f.api.enqueue(session, 'install-version'), /先检查/);
-  f.setVersion('1.1.4'); assert.equal((await run(f.api, 'check-update')).installable, false);
-  f.failRelease(); const state = await run(f.api, 'check-update');
-  assert.equal(state.state, 'failed'); assert.equal(state.latest_version, null); assert.doesNotMatch(JSON.stringify(state), /secret/);
-  f.advance(600000); assert.equal(f.api.status(session).connected, false);
-});
-test('bridge tasks are single-flight, interrupted tasks are not replayed, mismatched identity is rejected', async () => {
-  const f = fixture(); await f.connect();
-  f.api.enqueue(session, 'check-update');
-  assert.throws(() => f.api.enqueue(session, 'check-update'), /重复/);
-  assert.throws(() => f.api.disconnect(session), /不能断开/);
-  await new Promise(resolve => setImmediate(resolve));
-  f.client.upload = async () => { f.setVersion('1.1.3'); f.setIdentity('replacement'); };
-  assert.equal((await run(f.api, 'install-version')).state, 'failed');
-  assert.equal(f.api.status(session).current_version, null);
-  f.seed({ state: 'running', origin: 'https://example.com', operation_id: 'interrupted' });
-  const restarted = createBridgeUpdates(f.options);
-  assert.match(restarted.status(session).message, /重启/); assert.equal(restarted.status(session).state, 'failed');
-});
-test('uncertain upload and health timeouts fail visibly without retrying writes', async () => {
-  const f = fixture(); await f.connect(); await run(f.api, 'check-update');
-  let count = 0; f.client.upload = async () => { count++; throw Error('lost response'); };
-  assert.equal((await run(f.api, 'install-version')).state, 'failed'); assert.equal(count, 1);
-  await run(f.api, 'check-update'); f.client.upload = async () => { count++; };
-  assert.equal((await run(f.api, 'install-version')).state, 'failed'); assert.equal(count, 2);
-});
-test('failed target replacement clears previous connection; stale source change stops upload', async () => {
-  const f = fixture(); await f.connect(); await run(f.api, 'check-update');
-  f.releases.latest = async () => ({ version: '1.1.4' });
-  assert.equal((await run(f.api, 'install-version')).state, 'failed'); assert.equal(f.uploads(), 0);
-  f.client.connect = async () => { throw Error('offline'); };
-  await assert.rejects(f.connect()); assert.equal(f.api.status(session).connected, false);
-});
-test('target adapter refuses private, mapped IPv6 and mixed DNS answers before credentials leave', async () => {
-  for (const address of ['127.0.0.1','10.0.0.1','169.254.169.254','100.64.0.2','192.168.1.1','::1','::ffff:8.8.8.8','2002:0808:0808::1','2001:db8::1']) assert.equal(publicAddress(address), false, address);
-  assert.equal(publicAddress('8.8.8.8'), true); assert.equal(publicAddress('2606:4700:4700::1111'), true);
-  for (const target of ['http://example.com','https://user:pass@example.com','https://example.com/admin','https://localhost','https://example.com:8443']) assert.throws(() => normalizeBridgeTarget(target));
-  await assert.rejects(publicHttps('https://example.com', { resolve: async () => [{ address: '8.8.8.8', family: 4 }, { address: '127.0.0.1', family: 4 }] }), /内网/);
-});
-test('Xboard adapter verifies plugin enablement and actual process, rejects redirects and failed JSON', async () => {
-  let enabled = true, stale = false, rejected = false, redirect = false;
-  const calls = [];
-  const client = createXboardBridgeClient({ transport: async (url, options) => {
-    calls.push({ url, options });
-    const body = url.endsWith('/login') ? { data: { auth_data: 'secret' } }
-      : url.endsWith('/getPlugins') ? { data: [{ code: 'appgog_license_bridge', version: '1.1.3', is_enabled: enabled }] }
-      : url.endsWith('/health') ? { ok: true, code: 'appgog_license_bridge', version: stale ? '1.1.0' : '1.1.3', identity: { installation_id: 'original' } }
-      : rejected ? { status: 'fail' } : { data: true };
-    return { status: redirect ? 302 : 200, headers: {}, body: Buffer.from(JSON.stringify(body)) };
-  } });
-  const c = await client.connect({ origin: 'https://example.com', admin_path: 'secure', email: 'admin@example.com', password: 'password' });
-  assert.equal((await client.inspect(c)).version, '1.1.3');
-  await client.upload(c, Buffer.from('zip'), '1.1.3'); assert.match(calls.at(-1).options.headers['content-type'], /multipart/);
-  enabled = false; await assert.rejects(client.inspect(c), /停用/); enabled = true;
-  stale = true; await assert.rejects(client.inspect(c), /进程不一致/); stale = false;
-  rejected = true; await assert.rejects(client.upload(c, Buffer.from('zip'), '1.1.3'), /拒绝/);
-  redirect = true; const before = calls.length; await assert.rejects(client.inspect(c), /302/); assert.equal(calls.length, before + 1);
-});
 test('only signed platform ZIP with matching hash/version yields bridge plugin', () => {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const version = '1.2.43', prefix = `APPGOG-Packaging-Licensing-System-${version}/apps/build-worker/xboard-bridge/AppgogLicenseBridge/`;
@@ -140,8 +47,105 @@ test('release metadata uses GitHub JSON media type and changed assets are reveri
   epoch++; await source.latest(); assert.equal(downloads, 6);
 });
 
-test('logout explicitly forgets the remote credential connection', async () => {
-  const f = fixture(); await f.connect(); f.api.forget(session);
-  assert.equal(f.api.status(session).connected, false);
-  assert.throws(() => f.api.enqueue(session, 'check-update'), /过期/);
+const keys = generateKeyPairSync('ed25519');
+function signedArtifact(version = '1.1.4', release = '1.2.45') {
+  const prefix = `APPGOG-Packaging-Licensing-System-${release}/apps/build-worker/xboard-bridge/AppgogLicenseBridge/`;
+  const zip = writeZip({ [prefix + 'config.json']: JSON.stringify({ code: 'appgog_license_bridge', version }), [prefix + 'Plugin.php']: '<?php // test' });
+  const manifest = Buffer.from(JSON.stringify({ schema: 2, product: 'appgog', version: release,
+    zip_name: `APPGOG-Packaging-Licensing-System-${release}.zip`, zip_sha256: createHash('sha256').update(zip).digest('hex') }));
+  return bridgeFromSignedRelease(manifest, sign(null, manifest, keys.privateKey), zip, { publicKey: keys.publicKey, version: release });
+}
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-bridge-'));
+  let baseline = signedArtifact('1.1.3', '1.2.44'), saved = null, now = Date.now(), inside = false, fail = false, latest = signedArtifact();
+  const distributionOptions = { root, publicKey: keys.publicKey, bundled: () => baseline };
+  const distribution = createBridgeDistribution(distributionOptions);
+  const repairedReleases = [];
+  const releases = { latest: async () => { if (fail) throw Error('private-secret'); return latest; },
+    byVersion: async version => { repairedReleases.push(version); if (fail) throw Error('private-secret'); return version === '1.2.44' ? signedArtifact('1.1.3', version) : signedArtifact('1.1.4', version); } };
+  const options = { distribution, releases, packagePrivateKey: keys.privateKey, issuer: 'https://license.example',
+    repository: { setting: () => saved, setSetting: (_, value) => { assert.ok(inside); saved = value; }, audit: () => assert.ok(inside) },
+    atomic: fn => { inside = true; try { return fn(); } finally { inside = false; } }, clock: () => new Date(now) };
+  return { api: createBridgeUpdates(options), distribution, distributionOptions, options, root, repairedReleases,
+    advance: ms => now += ms, fail: () => fail = true, setLatest: value => latest = value, seed: value => saved = JSON.stringify(value),
+    upgradeBaseline: () => baseline = signedArtifact('1.1.5', '1.2.46') };
+}
+const session = { actor_id: 'admin' };
+async function run(api, action) {
+  api.enqueue(session, action);
+  for (let i = 0; i < 100 && api.status().busy; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(api.status().busy, false);
+  return api.status();
+}
+test('component maintenance needs no connection; update and exact-version repair affect build snapshots', async () => {
+  const f = fixture();
+  assert.equal(f.api.status().current_version, '1.1.3');
+  assert.equal(f.api.status().repairable, true);
+  assert.throws(() => f.api.enqueue(session, 'install-version'), /先检查/);
+  assert.equal((await run(f.api, 'check-update')).installable, true);
+  assert.equal((await run(f.api, 'install-version')).current_version, '1.1.4');
+  assert.equal(f.api.snapshot().descriptor.version, '1.1.4');
+  assert.equal((await run(f.api, 'repair-current')).state, 'succeeded');
+  assert.deepEqual(f.repairedReleases, ['1.2.45']);
+  const restarted = createBridgeDistribution(f.distributionOptions);
+  assert.equal(restarted.snapshot().version, '1.1.4');
+  const delivery = f.api.delivery(f.api.snapshot(), { buildId: 'build-test' });
+  assert.equal(verifyBridgeDelivery(delivery, 'build-test', 'https://license.example', keys.publicKey).version, '1.1.4');
+});
+test('expired checks, failures, changed release and downgrade cannot replace selected component', async () => {
+  const f = fixture(); await run(f.api, 'check-update'); f.advance(600001);
+  assert.equal(f.api.status().latest_version, null);
+  assert.throws(() => f.api.enqueue(session, 'install-version'), /先检查/);
+  await run(f.api, 'check-update'); f.setLatest(signedArtifact('1.1.5'));
+  assert.equal((await run(f.api, 'install-version')).state, 'failed');
+  assert.equal(f.distribution.snapshot().version, '1.1.3');
+  f.setLatest(signedArtifact('1.1.2'));
+  assert.equal((await run(f.api, 'check-update')).installable, false);
+  f.fail(); const state = await run(f.api, 'check-update');
+  assert.equal(state.latest_version, null); assert.equal(state.state, 'failed');
+  assert.doesNotMatch(JSON.stringify(state), /private-secret/);
+});
+test('tampered persisted component blocks builds; repair re-downloads same release, failed write keeps old selection', async () => {
+  const f = fixture(); await run(f.api, 'check-update'); await run(f.api, 'install-version');
+  const pointer = JSON.parse(readFileSync(join(f.root, 'bridge-distribution/active.json')));
+  writeFileSync(join(f.root, 'bridge-distribution', pointer.id, 'platform.zip'), 'tamper');
+  assert.throws(() => f.api.snapshot(), /校验失败/);
+  assert.equal(f.api.status().current_version, null);
+  assert.equal((await run(f.api, 'repair-current')).current_version, '1.1.4');
+  const bad = signedArtifact('1.1.5'); bad.evidence.signature = Buffer.alloc(64);
+  assert.throws(() => f.distribution.install(bad), /签名/);
+  assert.equal(f.distribution.snapshot().version, '1.1.4');
+  f.upgradeBaseline();
+  assert.equal(createBridgeDistribution(f.distributionOptions).snapshot().version, '1.1.5');
+});
+test('bundled repair is allowed; concurrent tasks reject, restart does not replay interrupted operation', async () => {
+  const f = fixture();
+  assert.equal((await run(f.api, 'repair-current')).current_version, '1.1.3');
+  assert.deepEqual(f.repairedReleases, ['1.2.44']);
+  f.api.enqueue(session, 'check-update');
+  assert.throws(() => f.api.enqueue(session, 'check-update'), /重复/);
+  await new Promise(resolve => setImmediate(resolve));
+  f.seed({ operation_id: 'old', state: 'running', action: 'install-version' });
+  const restarted = createBridgeUpdates(f.options);
+  assert.equal(restarted.status().state, 'failed'); assert.match(restarted.status().message, /重启/);
+});
+test('worker accepts only package-key signed component bound to build, issuer and lifetime', () => {
+  const artifact = signedArtifact(), now = Date.now();
+  const delivery = signBridgeDelivery(artifact, 'build', 'https://license.example', keys.privateKey, now);
+  assert.equal(verifyBridgeDelivery(delivery, 'build', 'https://license.example', keys.publicKey, now).version, '1.1.4');
+  assert.throws(() => verifyBridgeDelivery(delivery, 'other', 'https://license.example', keys.publicKey, now), /不匹配/);
+  assert.throws(() => verifyBridgeDelivery(delivery, 'build', 'https://other.example', keys.publicKey, now), /不匹配/);
+  assert.throws(() => verifyBridgeDelivery(delivery, 'build', 'https://license.example', keys.publicKey, now + 3600001), /不匹配/);
+  assert.throws(() => verifyBridgeDelivery({ ...delivery, buffer: Buffer.from('tamper').toString('base64') }, 'build', 'https://license.example', keys.publicKey, now), /不匹配/);
+  assert.throws(() => verifyBridgeDelivery(delivery, 'build', 'https://license.example', generateKeyPairSync('ed25519').publicKey, now), /签名/);
+});
+
+test('corrupt active index can be repaired from its verified recovery metadata without changing bridge version', async () => {
+  const f = fixture(); await run(f.api, 'check-update'); await run(f.api, 'install-version');
+  writeFileSync(join(f.root, 'bridge-distribution/active.json'), 'corrupt-index');
+  assert.equal(f.api.status().current_version, null);
+  assert.equal(f.api.status().repairable, true);
+  assert.equal((await run(f.api, 'repair-current')).current_version, '1.1.4');
+  assert.deepEqual(f.repairedReleases, ['1.2.45']);
+  assert.throws(()=>f.distribution.install(signedArtifact('1.1.4','1.2.44'),{repair:true}),/降级/);
 });

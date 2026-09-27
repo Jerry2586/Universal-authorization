@@ -53,6 +53,7 @@
         <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span>工作台</span></button>
         <div class="nav-section-label">产品交付</div>
         <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M9 5V3h6v2m-3 9v4m-2-2h4"/></svg></span><span>构建任务</span></button>
+        <button class="nav-item" type="button" data-view="history" data-title="打包历史"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M9 5V3h6v2m-3 9v4m-2-2h4"/></svg></span><span>历史记录</span></button>
         <button class="nav-item" type="button" data-view="lifecycle" data-title="安装与迁移"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h17l-4-4m5 14H4l4 4M20 7l-4 4M4 17l4-4"/></svg></span><span>安装与迁移</span></button>
         <div class="nav-section-label">服务与授权</div>
         <button class="nav-item" type="button" data-view="tickets" data-title="工单反馈"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H3l2-5A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 10h8M8 14h5"/></svg></span><span>工单反馈</span></button>
@@ -98,20 +99,29 @@
               <li><span class="delivery-step-number">3</span><div><strong>下载交付文件</strong><small>领取主题 ZIP 与本次一次性安装 Key</small></div></li>
               <li><span class="delivery-step-number">4</span><div><strong>安装并正式激活</strong><small>先用安装 Key 解锁，再用固定 Key 激活</small></div></li>
             </ol>
-          </section>
+          </div></details>
 
           <section class="surface table-surface">
-            <div class="surface-head table-title"><div><span class="overline">RECENT BUILDS</span><h3>最近构建</h3></div><button class="text-action" type="button" data-go-view="builds">查看全部 →</button></div>
+            <div class="surface-head table-title"><div><span class="overline">RECENT BUILDS</span><h3>最近构建</h3></div><button class="text-action" type="button" data-go-view="history">查看历史 →</button></div>
             <div class="table-scroll"><table><thead><tr><th>版本</th><th>域名</th><th>状态</th><th>进度</th><th>创建时间</th><th></th></tr></thead><tbody id="recent-build-list"><tr><td colspan="6" class="empty-cell">暂无构建记录</td></tr></tbody></table></div>
           </section>
         </section>
 
         <section class="page-view" data-page="builds">
           <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>打包与下载</h2><p>选择版本开始打包，完成后在下方记录中下载。</p></div></div>
-          <section class="surface version-catalog-panel build-version-catalog"><div class="surface-head"><div><span class="overline">VERSION DELIVERY</span><h3>选择版本</h3><p>提供当前授权可用的最新版本和已激活版本。</p></div><span class="surface-number">01</span></div><div id="version-catalog" class="customer-version-list"><div class="empty-state"><span>▦</span><strong>暂无可用版本</strong><p>授权管理员发布版本后会显示在这里。</p></div></div></section>
+          <section class="surface version-catalog-panel build-version-catalog"><div class="surface-head"><div><span class="overline">VERSION DELIVERY</span><h3>选择版本</h3><p>提供当前授权可用的最新版本和已激活版本。</p></div><button class="text-action" type="button" data-go-view="history">历史记录 →</button></div><div id="version-catalog" class="customer-version-list"><div class="empty-state"><span>▦</span><strong>暂无可用版本</strong><p>授权管理员发布版本后会显示在这里。</p></div></div></section>
           <section class="surface table-surface">
             <div class="toolbar"><label class="search-box"><span>⌕</span><input id="customer-build-search" placeholder="搜索版本或域名"></label><span class="toolbar-note">自动每 5 秒刷新进行中的任务</span></div>
             <div class="table-scroll"><table><thead><tr><th>版本</th><th>授权域名</th><th>状态</th><th>构建进度</th><th>创建时间</th><th>交付</th></tr></thead><tbody id="build-list"><tr><td colspan="6" class="empty-cell">暂无构建记录</td></tr></tbody></table></div>
+          </section>
+        </section>
+
+        <section class="page-view" data-page="history">
+          <div class="page-heading"><div><span class="overline">BUILD HISTORY</span><h2>打包历史</h2><p>查看历次打包结果、安装与激活状态。历史记录长期保留，下载与激活遵循当前授权。</p></div><button id="refresh-build-history" class="button button-secondary" type="button">刷新记录</button></div>
+          <section class="surface table-surface">
+            <div class="toolbar"><label class="search-box"><span>⌕</span><input id="customer-history-search" maxlength="120" placeholder="搜索版本、域名或构建编号"></label><span class="toolbar-note" id="history-count" role="status">尚未加载</span></div>
+            <div class="table-scroll"><table><thead><tr><th>版本</th><th>授权域名</th><th>打包结果 / 激活状态</th><th>进度</th><th>打包时间</th><th>操作</th></tr></thead><tbody id="build-history-list"><tr><td colspan="6" class="empty-cell">正在加载历史记录</td></tr></tbody></table></div>
+            <div class="history-pagination"><p id="history-message" role="status"></p><button id="history-more" class="button button-secondary" type="button" hidden>加载更多</button></div>
           </section>
         </section>
 

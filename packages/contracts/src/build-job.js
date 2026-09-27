@@ -26,5 +26,6 @@ export function publicBuildJob(job) {
     artifact_available: job.status === 'succeeded' && Boolean(job.artifact_ref),
     created_at: job.created_at,
     completed_at: job.completed_at,
+    quota_refunded_at: job.quota_refunded_at ?? null,
   };
 }

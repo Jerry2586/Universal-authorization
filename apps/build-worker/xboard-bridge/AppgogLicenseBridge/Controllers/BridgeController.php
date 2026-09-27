@@ -39,7 +39,7 @@ class BridgeController extends PluginController
         return response()->json([
             'ok' => true,
             'code' => 'appgog_license_bridge',
-            'version' => '1.1.3',
+            'version' => '1.1.4',
             'identity' => $this->bridge->publicIdentity(),
         ]);
     }

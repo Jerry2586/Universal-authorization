@@ -6,15 +6,13 @@ export async function handleOperationsHttp({
     respondJson(response, 200, bridgeUpdates.status(session));
     return true;
   }
-  const bridgeAction = url.pathname.match(/^\/web\/admin\/system\/bridge\/(connect|disconnect|update)$/);
+  const bridgeAction = url.pathname.match(/^\/web\/admin\/system\/bridge\/(update)$/);
   if (bridgeAction && method === 'POST') {
     const session = requireSession(true, 'system.manage');
     const action = bridgeAction[1];
     rateLimit('bridge:' + session.actor_id, 10, 60000);
     const body = await readJson(request);
-    const result = action === 'connect' ? await bridgeUpdates.connect(session, body)
-      : action === 'disconnect' ? bridgeUpdates.disconnect(session)
-      : bridgeUpdates.enqueue(session, body.action);
+    const result = bridgeUpdates.enqueue(session, body.action);
     respondJson(response, action === 'update' ? 202 : 200, result);
     return true;
   }
@@ -36,6 +34,13 @@ export async function handleOperationsHttp({
   if (method === 'GET' && url.pathname === '/web/admin/system/update') {
     requireSession(false, 'system.manage');
     respondJson(response, 200, updates.status());
+    return true;
+  }
+
+  if (method === 'POST' && url.pathname === '/web/admin/system/update/lock') {
+    const session = requireSession(true, 'system.manage');
+    const body = await readJson(request);
+    respondJson(response, 200, updates.setVersionLock(body.locked, event => portal.recordSystemUpdate(event, session.actor_id)));
     return true;
   }
 

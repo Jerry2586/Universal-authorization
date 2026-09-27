@@ -1,10 +1,10 @@
-# APPGOG打包授权系统架构（v1.2.44）
+# APPGOG打包授权系统架构（v1.2.45）
 
 日期：2026-09-26
 
 ## 版本权益边界
 
-v1.2.44 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。两套中心共用 portal-design.css 设计层；版本发布采用表单与目录左右布局，工单采用队列与会话左右布局，窄屏自动上下排列。客户新建工单使用独立对话框，退出登录或会话失效时关闭并清空弹窗。布局与浏览器标题调整不改变领域边界。Licensing 管理每日与总打包额度，Packaging 在签发构建票据前强制校验额度；总额度不进入激活凭证，不改变固定 Key、域名、Installation ID 或签名 Token 的激活边界。Packaging 继续负责向 Xboard 主题注入授权运行时与构建保护，版本权益继续由 Entitlement 统一判定。
+v1.2.45 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。两套中心共用 portal-design.css 设计层；版本发布采用表单与目录左右布局，工单采用队列与会话左右布局，窄屏自动上下排列。客户新建工单使用独立对话框，退出登录或会话失效时关闭并清空弹窗。布局与浏览器标题调整不改变领域边界。Licensing 管理每日与总打包额度，Packaging 在签发构建票据前强制校验额度；总额度不进入激活凭证，不改变固定 Key、域名、Installation ID 或签名 Token 的激活边界。Packaging 继续负责向 Xboard 主题注入授权运行时与构建保护，版本权益继续由 Entitlement 统一判定。
 
 源码保护与授权安全分层：Terser 压缩、JavaScript Obfuscator 按包混淆、CSS 压缩、水印和随机路径只提高静态复制成本；包身份使用 AES-256-GCM，Build/Package 使用 Ed25519 签名和 HMAC；敏感凭证、安装私钥、撤销状态和套餐能力仍由 Xboard 服务端桥与授权中心控制，禁止以前端混淆替代服务端授权。
 
@@ -198,10 +198,16 @@ Ed25519 签名
 
 源端最终快照前进入短暂只读。目标恢复并通过健康检查后提升所有权 generation，源端同时写入数据库状态和含原部署身份的 `source-fenced.json`，普通 restart 不能恢复写入。目标失败则恢复目标迁移前备份，源端自动恢复 Active。切换后回滚必须先把当前目标变为 Fenced 并导出最终加密快照、独立密钥和 SHA-256 manifest，再由旧源固定 `rollback-inbox` 导入并取得更高 generation；导入失败恢复旧源 Fenced 数据且不启动服务。当前 SQLite 架构保证数据一致性，但不承诺完全零停机。
 
-## 授权桥维护边界（1.2.43）
+## 授权桥维护边界（1.2.45）
 
-系统运维 UI → Operations HTTP → bridge-updates 用例 → Xboard / 签名发布适配器。Operations 通过自身 Repository 保存任务与同事务审计，不写客户授权模型。正式部署保持单 license-api 写进程；远端任务串行执行、提交意图后才发起上传，重启或上传结果未知时只允许重新检查，禁止自动重放。目标登录凭证仅存在短期服务端会话中，页面不持有远端 Token。参见 bridge-maintenance.md。
+系统运维 UI → Operations HTTP → bridge-updates 用例 → 签名发布/组件存储适配器。Operations 保存任务与同事务审计，不写客户授权模型。正式部署保持单 license-api 写进程；提交意图后才下载并切换组件，中断不自动重放。已移除旧远程连接流程。参见 bridge-maintenance.md。
 
-## 打包额度展示（1.2.44）
+## 打包额度展示（1.2.45）
 
 两中心共用 quota-view.js 展示投影：当前可打包次数取总额度剩余与滚动 24 小时剩余的较小值；总额度不限仍受滚动上限约束。缺失数据展示待核验。前端不作为授权判定，服务端 Packaging assertBuildQuota 保持原语义。额度编辑仍由 Licensing 写模型执行和审计，不改变套餐、激活、下载或已使用记录。
+
+## 桥组件维护与历史（1.2.45）
+
+Operations 的 `bridgeUpdates` 只管理中心打包用桥组件，不接收客户站点地址或管理员凭证。固定 GitHub Release 经发布公钥验证后，由私有 `artifactRoot/bridge-distribution` 保存不可变证据并原子切换索引。发布检查失败/过期不开放更新；修复使用已选组件的原正式发布版本。磁盘文件变化触发重新验签，损坏组件拒绝构建。读取已验证快照提供给 Packaging；HTTP Worker 领取时用独立 Package 私钥签名组件快照，Worker 验证构建 ID、issuer、摘要与一小时有效期后使用。无需客户服务器登录，不会改动客户已安装的桥。
+
+Customer 历史查询是只读投影，使用会话授权 ID；游标仅包含 created_at/id，查询按双字段降序，限制每页最多 100 条。Packaging 主动作废只允许排队或未使用成功包，撤销、作废、quota_refunded_at 和审计同事务。额度按服务端 COUNT 投影，只有新流程成功写入返还标记的成品才减去消耗；旧历史不盲目追溯返还，清理文件失败仍禁止下载并保留补偿任务。
