@@ -51,7 +51,7 @@ function enforceSurfaceBoundary({ request, response, url, config, portal, auth }
 }
 
 export function createHttpHandler({
-  service, sessions, portal, updates, migrations, artifactStore, config, publicKey, publicKeys = null,
+  service, sessions, portal, updates, bridgeUpdates, migrations, artifactStore, config, publicKey, publicKeys = null,
 }) {
   const rateLimit = createRateLimiter();
 
@@ -89,7 +89,7 @@ export function createHttpHandler({
         requireSession: requireAdminSession, clearAdminCookie: () => auth.clearCookieHeader('admin'),
       })) return;
       if (await handleOperationsHttp({
-        method, url, request, response, portal, updates, readJson, respondJson, requireSession: requireAdminSession,
+        method, url, request, response, portal, updates, bridgeUpdates, rateLimit: scopedRateLimit, readJson, respondJson, requireSession: requireAdminSession,
       })) return;
 
       const workerIdentity = (_incoming, requestedId) => {
@@ -112,7 +112,7 @@ export function createHttpHandler({
         requireWebSession: (_incoming, _sessions, actor, csrf, permission) => auth.requireSession(actor, csrf, permission),
       })) return;
       if (await handleIdentityHttp({
-        method, url, request, response, portal, sessions, auth, readJson, respondJson,
+        method, url, request, response, portal, sessions, bridgeUpdates, auth, readJson, respondJson,
         rateLimit, clientAddress: remoteAddress,
       })) return;
       if (await handleCustomerHttp({

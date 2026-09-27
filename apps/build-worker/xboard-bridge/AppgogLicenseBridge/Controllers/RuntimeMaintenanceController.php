@@ -7,6 +7,19 @@ use Illuminate\Support\Facades\Artisan;
 
 final class RuntimeMaintenanceController extends PluginController
 {
+    /** Restore host registration/scripts from this installed version, preserving private state. */
+    public function repair()
+    {
+        if ($error = $this->beforePluginAction()) return response()->json(['message' => $error[1]], $error[0]);
+        try {
+            \Plugin\AppgogLicenseBridge\Services\HostIntegration::install();
+        } catch (\Throwable $error) {
+            \Illuminate\Support\Facades\Log::warning('APPGOG bridge host repair failed', ['error_type' => get_class($error)]);
+            return response()->json(['ok' => false, 'message' => '宿主注册修复失败，请检查 Xboard 日志及文件权限'], 503);
+        }
+        return $this->reload();
+    }
+
     public function reload()
     {
         if ($error = $this->beforePluginAction()) return response()->json(['message' => $error[1]], $error[0]);

@@ -33,6 +33,7 @@ export function createPortalShell(actor) {
     if (login) login.hidden = authenticated;
     if (dashboard) dashboard.hidden = !authenticated;
     if (!authenticated) {
+      document.dispatchEvent(new Event('appgog-session-cleared'));
       document.querySelectorAll('dialog[open]').forEach((dialog) => {
         dialog.close();
         dialog.querySelectorAll('form').forEach((form) => form.reset());

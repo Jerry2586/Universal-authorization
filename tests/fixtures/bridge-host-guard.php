@@ -112,6 +112,8 @@ namespace {
     $migration->up();$migration->up();
     $singleEntryMigration=require $argv[1].'/database/migrations/2026_09_27_000009_single_activation_entry.php';
     $singleEntryMigration->up();$singleEntryMigration->up();
+    $maintenanceMigration=require $argv[1].'/database/migrations/2026_09_28_000010_bridge_maintenance.php';
+    $maintenanceMigration->up();$maintenanceMigration->up();
     check(file_get_contents(storage_path('app/private/appgog-host/Guard.php'))===file_get_contents($argv[1].'/Host/Guard.php'),'guard upgrade not persisted');
     check(file_get_contents(storage_path('app/private/appgog-host/admin-entry.js'))===file_get_contents($argv[1].'/assets/admin-entry.js'),'admin upgrade not persisted');
     check(file_get_contents($identityPath)===$identityBefore,'upgrade changed identity');
@@ -119,6 +121,6 @@ namespace {
     check(file_get_contents($enrollmentPath)===$enrollmentBefore,'upgrade changed enrollment');
     check(file_get_contents(storage_path('app/private/appgog-host/bootstrap-original.php'))===$original,'upgrade changed recovery backup');
     check(file_get_contents(base_path('bootstrap/app.php'))===$installed,'upgrade changed host registration');
-    check(count($GLOBALS['reloadCallbacks'])===4,'upgrade did not schedule runtime reload');
+    check(count($GLOBALS['reloadCallbacks'])===6,'upgrade did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }

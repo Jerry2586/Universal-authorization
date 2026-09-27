@@ -11,6 +11,7 @@ Route::prefix('api/v1/appgog-license-bridge')->group(function (): void {
     Route::post('/refresh', [BridgeController::class, 'refreshActivation'])->middleware('throttle:60,1,appgog-action-');
     Route::post('/deactivate-theme', [BridgeController::class, 'deactivateTheme'])->middleware(['admin','throttle:10,1,appgog-cleanup-']);
     Route::middleware('admin')->middleware('throttle:60,1,appgog-admin-')->group(function (): void {
+        Route::post('/runtime/repair', [\Plugin\AppgogLicenseBridge\Controllers\RuntimeMaintenanceController::class, 'repair'])->middleware('throttle:2,1,appgog-repair-');
         Route::post('/runtime/reload', [\Plugin\AppgogLicenseBridge\Controllers\RuntimeMaintenanceController::class, 'reload'])->middleware('throttle:2,1,appgog-reload-');
         Route::get('/admin-context', [BridgeController::class, 'adminContext']);
         Route::post('/register', [BridgeController::class, 'registerPackage']);

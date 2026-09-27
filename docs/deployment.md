@@ -2,7 +2,7 @@
 
 日期：2026-09-26。
 
-APPGOG打包授权系统 v1.2.42 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.43 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.42 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.43 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -205,3 +205,7 @@ docker compose exec -T appgog node scripts/docker/health.js
 ## 10. 真实环境验收边界
 
 仓库自动测试覆盖稳定引导器结构、签名与哈希校验入口、配置生成、凭证保留、备份恢复防护、Caddy Compose、两阶段授权和构建流程。正式发布验收还必须在全新 VPS 上执行固定命令完成首装，再在同一 VPS 上逐字重跑同一句命令完成跨版本升级，并确认相同版本重跑安全退出、旧版本被拒绝、业务数据和管理员身份不变。真实公网 DNS、ACME、防火墙、不同 Linux 包管理器和 VPS 网络仍需端到端验证，不能由本地 Windows 测试替代。
+
+## 从系统运维更新客户授权桥
+
+平台升级到 1.2.43 后，在系统运维的「授权桥管理」连接目标 Xboard（公开 HTTPS 根地址、后台安全路径标识、管理员邮箱及密码），检查更新后点击「安全更新最新版本」。查看实际运行桥版本和独立日志确认完成。此操作与平台 Docker 更新独立；不会自动更新所有客户桥。首次安装或后台无法登录时须先恢复原生 Xboard，具体边界见 bridge-maintenance.md。

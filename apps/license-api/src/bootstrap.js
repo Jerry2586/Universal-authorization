@@ -1,3 +1,7 @@
+import { transaction } from './database.js';
+import { createBridgeUpdates } from './modules/operations/bridge-updates.js';
+import { createXboardBridgeClient } from '../../../packages/adapters/src/xboard-bridge-client.js';
+import { createBridgeReleaseSource } from '../../../packages/adapters/src/bridge-release-source.js';
 import { createRepository } from './repository.js';
 import { createLicenseService } from './service.js';
 import { createSessionService } from './session-service.js';
@@ -68,6 +72,10 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
   });
   const sessions = createSessionService({ repository: createSessionRepositoryPort(repository), config, clock });
   const updates = createUpdateControl({ root: config.updateControlPath, currentVersion: PACKAGE_VERSION, clock });
+  const bridgeUpdates = createBridgeUpdates({
+    client: createXboardBridgeClient(), releases: createBridgeReleaseSource(),
+    repository: createOperationsRepositoryPort(repository), atomic: fn => transaction(database, fn), clock,
+  });
   const identity = createIdentityService({ repository: createIdentityRepositoryPort(repository), clock });
   const operations = createOperationsService({
     repository: createOperationsRepositoryPort(repository), config, packageVersion: PACKAGE_VERSION, clock,
@@ -128,5 +136,5 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
     });
   }
   portal.resumePendingErasures();
-  return { repository, service, sessions, portal, updates, migrations, queue, artifactStore, buildEngine };
+  return { repository, service, sessions, portal, updates, bridgeUpdates, migrations, queue, artifactStore, buildEngine };
 }

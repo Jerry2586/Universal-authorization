@@ -1,10 +1,10 @@
-# APPGOG打包授权系统架构（v1.2.42）
+# APPGOG打包授权系统架构（v1.2.43）
 
 日期：2026-09-26
 
 ## 版本权益边界
 
-v1.2.42 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。两套中心共用 portal-design.css 设计层；版本发布采用表单与目录左右布局，工单采用队列与会话左右布局，窄屏自动上下排列。客户新建工单使用独立对话框，退出登录或会话失效时关闭并清空弹窗。布局与浏览器标题调整不改变领域边界。Licensing 管理每日与总打包额度，Packaging 在签发构建票据前强制校验额度；总额度不进入激活凭证，不改变固定 Key、域名、Installation ID 或签名 Token 的激活边界。Packaging 继续负责向 Xboard 主题注入授权运行时与构建保护，版本权益继续由 Entitlement 统一判定。
+v1.2.43 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。两套中心共用 portal-design.css 设计层；版本发布采用表单与目录左右布局，工单采用队列与会话左右布局，窄屏自动上下排列。客户新建工单使用独立对话框，退出登录或会话失效时关闭并清空弹窗。布局与浏览器标题调整不改变领域边界。Licensing 管理每日与总打包额度，Packaging 在签发构建票据前强制校验额度；总额度不进入激活凭证，不改变固定 Key、域名、Installation ID 或签名 Token 的激活边界。Packaging 继续负责向 Xboard 主题注入授权运行时与构建保护，版本权益继续由 Entitlement 统一判定。
 
 源码保护与授权安全分层：Terser 压缩、JavaScript Obfuscator 按包混淆、CSS 压缩、水印和随机路径只提高静态复制成本；包身份使用 AES-256-GCM，Build/Package 使用 Ed25519 签名和 HMAC；敏感凭证、安装私钥、撤销状态和套餐能力仍由 Xboard 服务端桥与授权中心控制，禁止以前端混淆替代服务端授权。
 
@@ -197,3 +197,7 @@ Ed25519 签名
 目标服务器必须先安装同版本程序，通过一次性配对建立上传会话。最终加密备份按 64 MiB 分块上传，每块 SHA-256 校验并允许固定序号重传；全部分块齐全后再次校验整包 SHA-256，才允许宿主机执行固定恢复请求。迁移接口不接受任意路径、SQL 或 Shell。
 
 源端最终快照前进入短暂只读。目标恢复并通过健康检查后提升所有权 generation，源端同时写入数据库状态和含原部署身份的 `source-fenced.json`，普通 restart 不能恢复写入。目标失败则恢复目标迁移前备份，源端自动恢复 Active。切换后回滚必须先把当前目标变为 Fenced 并导出最终加密快照、独立密钥和 SHA-256 manifest，再由旧源固定 `rollback-inbox` 导入并取得更高 generation；导入失败恢复旧源 Fenced 数据且不启动服务。当前 SQLite 架构保证数据一致性，但不承诺完全零停机。
+
+## 授权桥维护边界（1.2.43）
+
+系统运维 UI → Operations HTTP → bridge-updates 用例 → Xboard / 签名发布适配器。Operations 通过自身 Repository 保存任务与同事务审计，不写客户授权模型。正式部署保持单 license-api 写进程；远端任务串行执行、提交意图后才发起上传，重启或上传结果未知时只允许重新检查，禁止自动重放。目标登录凭证仅存在短期服务端会话中，页面不持有远端 Token。参见 bridge-maintenance.md。

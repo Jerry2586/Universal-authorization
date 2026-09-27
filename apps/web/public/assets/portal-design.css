@@ -237,3 +237,14 @@ body[data-portal] .button:active { transform:translateY(1px); }
 .ticket-unread-badge[hidden]{display:none!important}
 .nav-item>.ticket-unread-badge{margin-left:auto}
 .ticket-list-top:has(.ticket-unread-badge){color:#c82d49}
+
+/* Bridge maintenance reuses operations card, form and button tokens. */
+.bridge-connection { margin: 18px 0; }
+.bridge-connection summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.bridge-connect-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; border: 0; padding: 14px 0; margin: 0; min-width: 0; }
+.bridge-connect-fields .field { min-width: 0; }
+.bridge-session-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0; }
+.bridge-session-row p, .bridge-help { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.bridge-help { margin: 14px 0 0; overflow-wrap: anywhere; }
+#bridge-origin, #bridge-message { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .bridge-connect-fields { grid-template-columns: 1fr; } .bridge-session-row { align-items: flex-start; flex-direction: column; } }

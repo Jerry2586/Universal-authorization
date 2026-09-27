@@ -1,7 +1,7 @@
 import { invariant } from '../../../../../packages/core/src/errors.js';
 
 export async function handleIdentityHttp({
-  method, url, request, response, portal, sessions, auth, readJson, respondJson, rateLimit, clientAddress,
+  method, url, request, response, portal, sessions, bridgeUpdates, auth, readJson, respondJson, rateLimit, clientAddress,
 }) {
   if (method === 'POST' && url.pathname === '/web/customer/login') {
     invariant(portal.serviceEnabled('build_center_enabled') && portal.serviceEnabled('customer_login_enabled'),
@@ -51,6 +51,7 @@ export async function handleIdentityHttp({
     const token = auth.sessionToken(actor);
     const session = sessions.requireActor(token, actor);
     sessions.verifyCsrf(session, request.headers['x-csrf-token']);
+    if (actor === 'admin') bridgeUpdates?.forget(session);
     sessions.logout(token);
     respondJson(response, 200, { ok: true }, { 'set-cookie': auth.clearCookieHeader(actor) });
     return true;

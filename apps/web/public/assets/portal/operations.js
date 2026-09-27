@@ -1,6 +1,8 @@
+import { createBridgeUpdateUi } from './bridge-updates.js';
 import { $ } from './core.js';
 
 export function createOperationsUi({ request, notify, can }) {
+  const bridge = createBridgeUpdateUi({ request, notify, can });
   function latestLabel(update) {
     if (update.check_status === 'failed') return '发布源不可用';
     if (update.freshness === 'stale') return '检查结果已过期';
@@ -20,6 +22,7 @@ export function createOperationsUi({ request, notify, can }) {
   }
 
   async function refresh() {
+    void bridge.refresh();
     if (!$('update-state') || !can('system.manage')) return;
     try {
       const update = await request('/web/admin/system/update');
@@ -55,6 +58,7 @@ export function createOperationsUi({ request, notify, can }) {
   }
 
   function bind() {
+    bridge.bind();
     $('check-update')?.addEventListener('click', () => trigger('check-update'));
     $('install-update')?.addEventListener('click', () => trigger('install-version'));
     $('repair-current')?.addEventListener('click', () => trigger('repair-current'));

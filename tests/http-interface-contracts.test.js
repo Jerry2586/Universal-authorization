@@ -204,3 +204,18 @@ test('浏览器跨域两阶段激活预检放行，管理接口不开放跨域',
   const rejected = await fetch(base + '/web/admin/licenses', { method: 'OPTIONS', headers: { origin: 'https://customer.example.com' } });
   assert.equal(rejected.headers.get('access-control-allow-origin'), null);
 });
+
+test('bridge maintenance HTTP requires administrator system permission and CSRF', async t => {
+  const { send, admin, login } = await fixture(t);
+  await send('/web/admin/system/bridge', { status: 401 });
+  const status = (await send('/web/admin/system/bridge', { actor: admin })).data;
+  assert.equal(status.connected, false);
+  await send('/web/admin/system/bridge/connect', { actor: { ...admin, csrf: 'wrong' }, body: {}, status: 403 });
+  await send('/web/admin/system/bridge/update', { actor: admin, body: { action: 'install-version' }, status: 409 });
+  await send('/web/admin/system/bridge/connect', { actor: admin, body: { origin: 'http://127.0.0.1' }, status: 400 });
+  await send('/web/admin/system/bridge/disconnect', { actor: admin, body: {} });
+  await send('/web/admin/admins', { actor: admin, body: { username: 'bridge-support', password: '123456', display_name: 'Support', role: 'support' }, status: 201 });
+  const support = await login('admin', { username: 'bridge-support', password: '123456' });
+  await send('/web/admin/system/bridge', { actor: support, status: 403 });
+  await send('/web/admin/system/bridge/connect', { actor: support, body: {}, status: 403 });
+});

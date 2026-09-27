@@ -1,6 +1,24 @@
 export async function handleOperationsHttp({
-  method, url, request, response, portal, updates, readJson, respondJson, requireSession,
+  method, url, request, response, portal, updates, bridgeUpdates, rateLimit, readJson, respondJson, requireSession,
 }) {
+  if (url.pathname === '/web/admin/system/bridge' && method === 'GET') {
+    const session = requireSession(false, 'system.manage');
+    respondJson(response, 200, bridgeUpdates.status(session));
+    return true;
+  }
+  const bridgeAction = url.pathname.match(/^\/web\/admin\/system\/bridge\/(connect|disconnect|update)$/);
+  if (bridgeAction && method === 'POST') {
+    const session = requireSession(true, 'system.manage');
+    const action = bridgeAction[1];
+    rateLimit('bridge:' + session.actor_id, 10, 60000);
+    const body = await readJson(request);
+    const result = action === 'connect' ? await bridgeUpdates.connect(session, body)
+      : action === 'disconnect' ? bridgeUpdates.disconnect(session)
+      : bridgeUpdates.enqueue(session, body.action);
+    respondJson(response, action === 'update' ? 202 : 200, result);
+    return true;
+  }
+
   if (method === 'POST' && url.pathname === '/web/admin/cms/settings') {
     const session = requireSession(true, 'system.manage');
     const body = await readJson(request);
