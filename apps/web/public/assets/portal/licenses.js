@@ -64,14 +64,35 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     } catch (error) { notify(error.message, true); }
   }
 
+  function updateKeyCopyControl(keyText, revealed) {
+    if (revealed) {
+      keyText.setAttribute('role', 'button');
+      keyText.tabIndex = 0;
+      keyText.setAttribute('aria-label', '复制完整 Key');
+      keyText.title = '点击复制完整 Key';
+    } else {
+      for (const attribute of ['role', 'tabindex', 'aria-label', 'title']) keyText.removeAttribute(attribute);
+    }
+  }
+
+  async function copyLicenseKey(license) {
+    const key = revealedLicenseKeys.get(license.id);
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      notify('已复制');
+    } catch { notify('复制失败，请选中 Key 手动复制', true); }
+  }
+
   async function toggleLicenseKey(license, keyText, eye) {
     if (revealedLicenseKeys.has(license.id)) {
       revealedLicenseKeys.delete(license.id);
       keyText.textContent = `${license.key_prefix}••••`;
-      keyText.removeAttribute('title');
+      updateKeyCopyControl(keyText, false);
       keyText.classList.remove('revealed');
       setEyeIcon(eye, false);
       eye.title = '查看完整 Key';
+      eye.setAttribute('aria-label', eye.title);
       eye.setAttribute('aria-pressed', 'false');
       return;
     }
@@ -80,10 +101,11 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
       const result = await request(`/web/admin/licenses/${encodeURIComponent(license.id)}/key`, { method: 'POST', body: {} });
       revealedLicenseKeys.set(license.id, result.license_key);
       keyText.textContent = result.license_key;
-      keyText.title = result.license_key;
+      updateKeyCopyControl(keyText, true);
       keyText.classList.add('revealed');
       setEyeIcon(eye, true);
       eye.title = '隐藏完整 Key';
+      eye.setAttribute('aria-label', eye.title);
       eye.setAttribute('aria-pressed', 'true');
     } catch (error) { notify(error.message, true); }
     finally { eye.disabled = false; }
@@ -313,7 +335,14 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     customerLine.append(customerName);
     const keyText = element('small', revealedLicenseKeys.get(license.id) ?? `${license.key_prefix}••••`,
       `table-subline license-key-value${revealedLicenseKeys.has(license.id) ? ' revealed' : ''}`);
-    if (revealedLicenseKeys.has(license.id)) keyText.title = revealedLicenseKeys.get(license.id);
+    updateKeyCopyControl(keyText, revealedLicenseKeys.has(license.id));
+    keyText.addEventListener('click', () => copyLicenseKey(license));
+    keyText.addEventListener('keydown', event => {
+      if (revealedLicenseKeys.has(license.id) && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        void copyLicenseKey(license);
+      }
+    });
     customer.append(customerLine, keyText);
     if (state.session?.is_owner && can('license.manage')) {
       const eye = button('', () => toggleLicenseKey(license, keyText, eye), 'license-key-eye');

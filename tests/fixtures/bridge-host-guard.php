@@ -14,7 +14,7 @@ namespace App\Models {
 namespace App\Services {
     class ThemeService {
         public function getThemePath($name){return storage_path('theme/'.$name);}
-        public function getList(){return ['APPGOG'=>['name'=>'APPGOG']];}
+        public function getList(){return ['APPGOG'=>['name'=>'APPGOG'],'Xboard'=>['name'=>'Xboard']];}
     }
 }
 namespace {
@@ -25,7 +25,7 @@ namespace {
     function app($class=null){if($class)return new $class;return new class {public function terminating($callback){$GLOBALS['reloadCallbacks'][]=$callback;}};}
     function admin_setting($key,$default=null){return ['secure_path'=>'secure','frontend_theme'=>'APPGOG'][$key]??$default;}
     function config($key){return 'fixture-only';}
-    class Headers {public function __construct(public $type='text/html'){} public function get($key,$default=''){return $this->type;}public function remove($key){} }
+    class Headers {public function __construct(public $type='text/html'){} public function get($key,$default=''){return $this->type;}public function remove($key){}public function set($key,$value){$this->values[$key]=$value;}public $values=[]; }
     class Response {public $headers; public function __construct(public $body='',public $status=200){$this->headers=new Headers;}public function header(...$args){return $this;}public function json($body,$status=200){return new self(json_encode($body),$status);}public function getStatusCode(){return $this->status;}public function getContent(){return $this->body;}public function setContent($body){$this->body=$body;}}
     function response($body='',$status=200){return new Response($body,$status);}
     class Request {public function __construct(public $route,public $input=[],public $host='demo.example.com',public $verb='POST'){}public function path(){return $this->route;}public function input($name){return $this->input[$name]??null;}public function getHost(){return $this->host;}public function method(){return $this->verb;}}
@@ -95,8 +95,21 @@ namespace {
     $native=$request('secure',[],'demo.example.com','GET');
     check(substr_count($native->body,'data-appgog-admin-entry')===1,'recovery script absent');
     write($manifestPath,json_encode($m));
-    $upload=$request('api/v2/secure/theme/upload');
+    $upload=(new \Appgog\Host\Guard)->handle(new Request('api/v2/secure/theme/upload'),fn()=>response()->json(['status'=>'success','data'=>true,'message'=>'uploaded']));
     check($upload->status===200 && is_file(public_path('theme/APPGOG/appgog-license/build.json')),'activation assets not published');
+    $uploadPayload=json_decode($upload->body,true);
+    check(($uploadPayload['data']??null)===true && ($uploadPayload['message']??'')==='uploaded','native upload fields lost');
+    check(($uploadPayload['appgog_activation']??null)===['schema'=>1,'themes'=>[['name'=>'APPGOG','appgog_activation'=>['schema'=>1]]]],'protected theme metadata missing or unrelated theme tagged');
+    check(($upload->headers->values['Cache-Control']??'')==='no-store','upload metadata cached');
+    $failure=(new \Appgog\Host\Guard)->handle(new Request('api/v1/secure/theme/upload'),fn()=>response()->json(['status'=>'fail','message'=>'invalid zip']));
+    check(!isset(json_decode($failure->body,true)['appgog_activation']),'failed upload decorated as installed');
+    $beforeUploadState=file_get_contents($statePath);
+    unlink($statePath);
+    $first=(new \Appgog\Host\Guard)->handle(new Request('api/v1/secure/theme/upload'),fn()=>response()->json(['status'=>'success','data'=>true]));
+    check($first->status===200 && isset(json_decode($first->body,true)['appgog_activation']),'first upload requires editor registration');
+    check(!is_file($statePath),'upload granted activation');
+    check($request('api/v2/secure/theme/getThemeConfig',['name'=>'APPGOG'])->status===423,'unactivated upload configuration accessible');
+    write($statePath,$beforeUploadState);
     // A replayed public token must not change the persisted identity or customer settings.
     check(json_decode(base64_decode(file_get_contents(storage_path('app/private/appgog-license-bridge/identity.json.enc'))),true)['public_key']===base64_encode($ipublic),'identity changed');
     // Replay an installed 1.1.0 host layout: migration must refresh both persisted files,
@@ -116,6 +129,8 @@ namespace {
     $maintenanceMigration->up();$maintenanceMigration->up();
     $layoutMigration=require $argv[1].'/database/migrations/2026_09_28_000011_activation_layout.php';
     $layoutMigration->up();$layoutMigration->up();
+    $uploadMigration=require $argv[1].'/database/migrations/2026_09_28_000012_upload_activation_entry.php';
+    $uploadMigration->up();$uploadMigration->up();
     check(file_get_contents(storage_path('app/private/appgog-host/Guard.php'))===file_get_contents($argv[1].'/Host/Guard.php'),'guard upgrade not persisted');
     check(file_get_contents(storage_path('app/private/appgog-host/admin-entry.js'))===file_get_contents($argv[1].'/assets/admin-entry.js'),'admin upgrade not persisted');
     check(file_get_contents($identityPath)===$identityBefore,'upgrade changed identity');
@@ -123,6 +138,6 @@ namespace {
     check(file_get_contents($enrollmentPath)===$enrollmentBefore,'upgrade changed enrollment');
     check(file_get_contents(storage_path('app/private/appgog-host/bootstrap-original.php'))===$original,'upgrade changed recovery backup');
     check(file_get_contents(base_path('bootstrap/app.php'))===$installed,'upgrade changed host registration');
-    check(count($GLOBALS['reloadCallbacks'])===8,'upgrade did not schedule runtime reload');
+    check(count($GLOBALS['reloadCallbacks'])===10,'upgrade did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }

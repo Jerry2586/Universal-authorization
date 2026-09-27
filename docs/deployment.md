@@ -2,7 +2,7 @@
 
 日期：2026-09-26。
 
-APPGOG打包授权系统 v1.2.46 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.47 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
 
 ## 1. 前置条件
 
@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.46 sh
+  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.47 sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
@@ -212,7 +212,7 @@ docker compose exec -T appgog node scripts/docker/health.js
 
 ## 1.2.45 授权桥与主题交付
 
-系统页面“授权桥更新”维护打包用组件，源和路径固定，无需输入 Xboard 账号。组件在 ARTIFACT_ROOT 下持久保存并随原制品备份保留；更新/修复均验证正式签名。检查版本、更新、修复不会直接修改客户服务器。客户需安装新构建的主题包及桥 1.1.4；新迁移刷新持久后台入口并触发运行时重载。已有旧 ZIP 不会因中心更新而改写。
+系统页面“授权桥更新”维护打包用组件，源和路径固定，无需输入 Xboard 账号。组件在 ARTIFACT_ROOT 下持久保存并随原制品备份保留；更新/修复均验证正式签名。检查版本、更新、修复不会直接修改客户服务器。客户需安装新构建的主题包及桥 1.1.5；新迁移刷新持久后台入口并触发运行时重载。已有旧 ZIP 不会因中心更新而改写。
 
 ### 平台版本锁定（1.2.45）
 

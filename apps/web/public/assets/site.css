@@ -309,6 +309,9 @@ body[data-portal="admin"], body[data-portal="customer"] { background: var(--canv
 .license-customer-line > strong { flex: 0 0 180px; width: 180px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .license-customer-line .license-key-eye { flex: 0 0 25px; }
 .license-key-value, .license-key-value.revealed { display: block; width: 213px; max-width: 213px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.license-key-value.revealed { cursor: pointer; }
+.license-key-value.revealed:hover { text-decoration: underline; text-underline-offset: 3px; }
+.license-key-value.revealed:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 3px; border-radius: 3px; }
 
 /* Requested workspaces use a consistent full-width top-to-bottom flow. */
 .stacked-workspace { grid-template-columns: minmax(0, 1fr); }

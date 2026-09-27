@@ -4,16 +4,40 @@
   if(!/^[A-Za-z0-9_-]{1,128}$/.test(path||''))return;
   localStorage.setItem('appgog_xboard_admin_path',path);
   const token=()=>{try{return JSON.parse(localStorage.getItem('XBOARD_ACCESS_TOKEN')||'null')?.value||'';}catch{return '';}};
-  let themes=[],loading=false,prepareAfterUpload=false;
-  const valid=name=>/^[A-Za-z0-9_-]{1,100}$/.test(name||'');
+  const originalFetch=window.fetch;
+  let themes=[],loading=false,refreshAgain=false,revision=0;
+  const valid=name=>typeof name==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(name);
+  const protectedThemes=data=>Object.entries(data||{}).flatMap(([key,theme])=>{
+    const name=valid(theme?.name)?theme.name:valid(key)?key:null;
+    return name&&theme?.appgog_activation?.schema===1?[{...theme,name}]:[];
+  });
+  function remember(items,replace=false){
+    const next=new Map((replace?[]:themes).map(t=>[t.name,t]));
+    for(const theme of Array.isArray(items)?items:[])if(valid(theme?.name))next.set(theme.name,theme);
+    themes=[...next.values()];mount();
+  }
   async function refreshThemes(){
-    if(!token()||loading)return;loading=true;
+    if(loading){refreshAgain=true;return;}
+    if(!token())return;
+    loading=true;
     try{
-      const r=await fetch('/api/v2/'+path+'/theme/getThemes',{headers:{authorization:token(),accept:'application/json'}});
-      if(!r.ok)return;const result=await r.json();
-      themes=Object.values(result.data?.themes||{}).filter(t=>t.appgog_activation?.schema===1&&valid(t.name));
-      if(!themes.length){const f=await fetch('/api/v1/appgog-license-bridge/admin-context',{headers:{authorization:token()}});if(f.ok)themes=((await f.json()).themes||[]).filter(t=>valid(t.name));}
-      mount();if(prepareAfterUpload&&themes.length){prepareAfterUpload=false;openActivation(themes[themes.length-1],true);}
+      do{
+        refreshAgain=false;
+        const started=revision,session=token();if(!session)break;
+        try{
+        const r=await originalFetch('/api/v2/'+path+'/theme/getThemes',{headers:{authorization:session,accept:'application/json'},cache:'no-store'});
+        if(!r.ok)continue;
+        const result=await r.json();
+        if(started!==revision||session!==token()){refreshAgain=true;continue;}
+        const discovered=protectedThemes(result.data?.themes);
+        remember(discovered);
+        // Older packages can lack the config hint. Discover them before editor
+        // registration too, even when another protected theme was already found.
+        const f=await originalFetch('/api/v1/appgog-license-bridge/admin-context',{headers:{authorization:session},cache:'no-store'});
+        if(started!==revision||session!==token()){refreshAgain=true;continue;}
+        if(f.ok){const context=await f.json();if(started!==revision||session!==token()){refreshAgain=true;continue;}remember([...discovered,...(context.themes||[])],true);}
+        }catch{/* A queued upload must still get a fresh discovery attempt. */}
+      }while(refreshAgain);
     }finally{loading=false;}
   }
   function openActivation(theme,prepare=false){
@@ -77,11 +101,50 @@
   actionStyle.textContent='[data-appgog-protected-theme] button[data-appgog-native-action]{display:none!important}';
   document.head.append(actionStyle);
   new MutationObserver(mount).observe(document.body,{childList:true,subtree:true});
-  const uploadDone=()=>{prepareAfterUpload=true;void refreshThemes().catch(()=>{});};
-  const originalFetch=window.fetch;
-  window.fetch=async function(input,options){const r=await originalFetch.apply(this,arguments);try{const u=new URL(typeof input==='string'?input:input.url,location.origin);if(u.origin===location.origin&&u.pathname==='/api/v2/'+path+'/theme/upload'&&r.ok)uploadDone();}catch{}return r;};
+  const apiKind=input=>{
+    try{
+      const u=new URL(typeof input==='string'||input instanceof URL?input:input.url,location.origin);
+      if(u.origin!==location.origin)return null;
+      for(const version of ['v1','v2']){
+        const base='/api/'+version+'/'+path+'/theme/';
+        if(u.pathname===base+'upload')return 'upload';
+        if(u.pathname===base+'getThemes')return 'catalog';
+      }
+    }catch{}
+    return null;
+  };
+  const uploadDone=result=>{
+    // A completed upload invalidates any older in-flight list. Do not open an
+    // editor or start activation automatically: the sole entry waits for a click.
+    revision++;
+    if(result?.appgog_activation?.schema===1)remember(result.appgog_activation.themes||[]);
+    void refreshThemes().catch(()=>{});
+  };
+  window.fetch=async function(input,options){
+    const kind=apiKind(input),started=revision,session=token();
+    const r=await originalFetch.apply(this,arguments);
+    if(kind&&r.ok&&session&&session===token()){
+      let result;try{result=await r.clone().json();}catch{}
+      if(result&&result.status!==false&&!['fail','error'].includes(result.status)){
+        if(kind==='upload')uploadDone(result);
+        else if(started===revision&&session===token())remember(protectedThemes(result?.data?.themes));
+      }
+    }
+    return r;
+  };
   const open=XMLHttpRequest.prototype.open,send=XMLHttpRequest.prototype.send,requests=new WeakMap();
   XMLHttpRequest.prototype.open=function(method,url){requests.set(this,{method,url});return open.apply(this,arguments);};
-  XMLHttpRequest.prototype.send=function(){try{const u=new URL(requests.get(this)?.url,location.origin);if(u.origin===location.origin&&u.pathname==='/api/v2/'+path+'/theme/upload')this.addEventListener('load',()=>{if(this.status>=200&&this.status<300)uploadDone();},{once:true});}catch{}return send.apply(this,arguments);};
-  window.addEventListener('hashchange',()=>{mount();void refreshThemes().catch(()=>{});});void refreshThemes().catch(()=>{});
+  XMLHttpRequest.prototype.send=function(){
+    const kind=apiKind(requests.get(this)?.url),started=revision,session=token();
+    if(kind)this.addEventListener('load',()=>{
+      if(this.status<200||this.status>=300||!session||session!==token())return;
+      let result;try{result=this.responseType==='json'?this.response:JSON.parse(this.responseText);}catch{}
+      if(!result||result.status===false||['fail','error'].includes(result.status))return;
+      if(kind==='upload')uploadDone(result);
+      else if(started===revision&&session===token())remember(protectedThemes(result?.data?.themes));
+    },{once:true,capture:true});
+    return send.apply(this,arguments);
+  };
+  window.addEventListener('hashchange',()=>{mount();void refreshThemes().catch(()=>{});});
+  void refreshThemes().catch(()=>{});
 })();

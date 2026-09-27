@@ -135,6 +135,9 @@ final class Guard
             && in_array($path, [$prefixes[0] . '/theme/upload', $prefixes[1] . '/theme/upload'], true)) {
             // Publish activation assets without enabling the theme or executing PHP from uploaded ZIPs.
             try {
+                $payload = json_decode($response->getContent(), true);
+                if (is_array($payload) && in_array($payload['status'] ?? null, [false, 'fail', 'error'], true)) return $response;
+                $prepared = [];
                 $themes = app(\App\Services\ThemeService::class);
                 foreach ($themes->getList() as $name => $config) {
                     $manifest = self::manifest($name);
@@ -143,6 +146,15 @@ final class Guard
                     if (!\Illuminate\Support\Facades\File::copyDirectory($themes->getThemePath($name), public_path('theme/' . $name))) {
                         throw new \RuntimeException('Cannot publish activation assets');
                     }
+                    $prepared[] = ['name' => $name, 'appgog_activation' => ['schema' => 1]];
+                }
+                // The authenticated upload response reaches the extension before
+                // React paints the new card; it must not depend on opening editor.
+                if (is_array($payload)) {
+                    $payload['appgog_activation'] = ['schema' => 1, 'themes' => $prepared];
+                    $response->setContent(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+                    $response->headers->remove('Content-Length');
+                    $response->headers->set('Cache-Control', 'no-store');
                 }
             } catch (\Throwable $error) {
                 \Illuminate\Support\Facades\Log::error('APPGOG activation preparation failed', ['exception' => get_class($error)]);
