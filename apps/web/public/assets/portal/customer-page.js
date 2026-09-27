@@ -48,7 +48,9 @@ export function createCustomerPage(shell) {
     if (job.status === 'succeeded') status.append(element('small', job.activation_label || '未激活', 'table-subline'));
     row.append(version, td(job.domain), status, progressCell(job.progress), td(date(job.created_at)));
     const action = element('td');
-    action.append(button(job.status === 'succeeded' ? (job.can_download ? '下载与激活' : '查看激活详情') : '查看状态', () => showBuild(job.id)));
+    const actionGroup = element('div', null, 'build-row-actions');
+    action.append(actionGroup);
+    actionGroup.append(button(job.status === 'succeeded' ? (job.can_download ? '下载与激活' : '查看激活详情') : '查看状态', () => showBuild(job.id)));
     if (job.can_void) actionGroup.append(button('作废', () => voidBuild(job.id)));
     row.append(action);
     return row;
