@@ -29,13 +29,14 @@
   }
   const label=button=>(button.textContent||'').replace(/\s+/g,'').trim();
   const activates=button=>/^(激活|激活主题|启用|启用主题|使用|使用主题|应用主题|Activate|ActivateTheme|Enable|EnableTheme)$/i.test(label(button));
+  const current=button=>/^(当前主题|CurrentTheme)$/i.test(label(button));
   const settings=button=>/^(主题设置|设置主题|ThemeSettings)$/i.test(label(button));
   function themeCard(heading){
     let node=heading?.parentElement;
     for(let depth=0;node&&depth<6;depth++,node=node.parentElement){
       if(node===document.body||node.querySelectorAll('h3').length>1)return null;
       const buttons=[...node.querySelectorAll('button')];
-      if(buttons.some(button=>activates(button)||settings(button)||/^(当前主题|CurrentTheme)$/i.test(label(button))))return node;
+      if(buttons.some(button=>button.dataset.appgogNativeAction||activates(button)||settings(button)||current(button)))return node;
     }
     return null;
   }
@@ -45,18 +46,15 @@
       const heading=[...document.querySelectorAll('h3')].find(n=>n.textContent.trim()===theme.name);
       const card=themeCard(heading);if(!card)continue;
       card.dataset.appgogProtectedTheme=theme.name;
-      const buttons=[...card.querySelectorAll('button')];
-      const activation=buttons.find(activates);
-      // Reuse the real primary action; never clone the first (possibly delete/icon) button.
-      if(activation){
-        card.querySelector('[data-appgog-theme-action]')?.remove();
-        continue;
-      }
+      const buttons=[...card.querySelectorAll('button')].filter(button=>!button.dataset.appgogThemeAction);
+      const actions=buttons.filter(button=>button.dataset.appgogNativeAction||activates(button)||settings(button)||current(button));
+      const reference=actions.find(settings)||actions[0];if(!reference)continue;
+      // Hide host-owned controls without removing/reparenting React's nodes or text.
+      for(const native of actions)native.dataset.appgogNativeAction='true';
       if(card.querySelector('[data-appgog-theme-action]'))continue;
-      const reference=buttons.find(settings);if(!reference)continue;
       const button=document.createElement('button');button.type='button';button.dataset.appgogThemeAction=theme.name;
-      button.textContent='授权与激活';button.className=reference.className;
-      button.style.cssText='position:static;inset:auto;flex:0 1 auto;width:auto;max-width:100%;height:auto;min-height:36px;white-space:normal;overflow-wrap:anywhere';
+      button.textContent='激活 / 授权管理';button.setAttribute('translate','no');
+      button.style.cssText='position:static;inset:auto;display:inline-flex;align-items:center;justify-content:center;flex:0 1 auto;width:auto;max-width:100%;min-height:40px;padding:10px 18px;border:1px solid #0f172a;border-radius:10px;background:#0f172a;color:#fff;font:inherit;line-height:1.4;white-space:normal;overflow-wrap:anywhere;cursor:pointer';
       reference.parentElement.append(button);
     }
   }
@@ -64,7 +62,7 @@
   document.addEventListener('click',event=>{
     const button=event.target.closest?.('button');if(!button)return;
     const card=button.closest('[data-appgog-protected-theme]');if(!card)return;
-    if(!button.dataset.appgogThemeAction&&!activates(button))return;
+    if(!button.dataset.appgogThemeAction&&!button.dataset.appgogNativeAction&&!activates(button))return;
     const theme=themes.find(t=>t.name===card.dataset.appgogProtectedTheme);if(!theme)return;
     event.preventDefault();event.stopImmediatePropagation();openActivation(theme);
   },true);
@@ -73,6 +71,10 @@
     if(event.origin!==location.origin||event.source!==frame?.contentWindow||event.data?.type!=='appgog-local-activated'||event.data.theme!==d.dataset.theme)return;
     location.assign('/theme/'+encodeURIComponent(d.dataset.theme)+'/editor.html?appgog_admin_path='+encodeURIComponent(path));
   });
+  const actionStyle=document.createElement('style');
+  actionStyle.dataset.appgogAdminActions='true';
+  actionStyle.textContent='[data-appgog-protected-theme] button[data-appgog-native-action]{display:none!important}';
+  document.head.append(actionStyle);
   new MutationObserver(mount).observe(document.body,{childList:true,subtree:true});
   const uploadDone=()=>{prepareAfterUpload=true;void refreshThemes().catch(()=>{});};
   const originalFetch=window.fetch;
