@@ -248,3 +248,20 @@ body[data-portal] .button:active { transform:translateY(1px); }
 .bridge-help { margin: 14px 0 0; overflow-wrap: anywhere; }
 #bridge-origin, #bridge-message { overflow-wrap: anywhere; }
 @media (max-width: 640px) { .bridge-connect-fields { grid-template-columns: 1fr; } .bridge-session-row { align-items: flex-start; flex-direction: column; } }
+
+/* Quota information is shared across both centers; edits stay in the admin dialog. */
+.quota-current { display: grid; gap: 6px; padding: 4px 0 18px; border-bottom: 1px solid var(--line); }
+.quota-current > span, .quota-current small, .quota-usage dt { color: var(--muted); font-size: 12px; }
+.quota-current > strong { font-size: 26px; letter-spacing: -.03em; }
+.quota-usage { display: grid; gap: 10px; margin: 16px 0 22px; }
+.quota-usage > div { display: flex; justify-content: space-between; gap: 18px; }
+.quota-usage dd { margin: 0; font-weight: 600; }
+.license-quota-section .field small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.quota-inline-details { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.quota-inline-details summary, .version-release-details summary, .delivery-flow-disclosure > summary { cursor: pointer; color: var(--accent-deep); }
+.quota-inline-details p { margin-top: 6px; }
+.build-start-card { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 22px; margin-bottom: 16px; }
+.build-start-card h3 { font-size: 16px; }.build-start-card p { margin-top: 6px; color: var(--muted); }
+.delivery-flow-disclosure > summary { font-weight: 600; }.delivery-flow-disclosure[open] > summary { margin-bottom: 16px; }
+.version-release-details { margin-top: 12px; font-size: 12px; }.version-release-details .version-notes { margin-top: 10px; }
+@media(max-width:640px) { .build-start-card { align-items: flex-start; flex-direction: column; }.build-start-card > button { width: 100%; } }

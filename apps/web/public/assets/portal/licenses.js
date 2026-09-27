@@ -1,3 +1,4 @@
+import { buildQuotaView } from './quota-view.js';
 import { badge, button, date, element, td } from './ui.js';
 import { appendDialogActions, createDialog } from './dialog.js';
 import { $ } from './core.js';
@@ -185,7 +186,17 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     return currentLicenses.find((license) => license.id === selectedLicenseId) ?? null;
   }
 
+  let quotaEditingId = null;
+  function syncTotalMode() {
+    const form = $('license-quota-form');
+    const unlimited = form.elements.total_mode.value === 'unlimited';
+    $('quota-total-field').hidden = unlimited;
+    form.elements.max_builds_total.disabled = unlimited;
+    form.elements.max_builds_total.required = !unlimited;
+  }
+
   function closeLicenseManager() {
+    quotaEditingId = null;
     selectedLicenseId = null;
     const panel = $('license-management-panel');
     if (panel) panel.hidden = true;
@@ -227,14 +238,20 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     status.textContent = { active: '正常', suspended: '已暂停', revoked: '已撤销' }[license.status] ?? license.status;
     status.className = `status-pill ${license.status === 'active' ? 'status-success' : ''}`;
     const form = $('license-quota-form');
-    form.elements.max_builds_per_day.value = license.max_builds_per_day ?? 1;
-    form.elements.max_builds_total.value = Number.isInteger(license.max_builds_total) ? license.max_builds_total : '';
-    form.elements.reason.value = '';
-    const used = Number(license.build_count ?? 0);
-    $('managed-license-used').textContent = `${used} 次`;
-    $('managed-license-remaining').textContent = Number.isInteger(license.max_builds_total)
-      ? `${Math.max(0, license.max_builds_total - used)} 次` : '不限';
-    $('managed-license-daily-used').textContent = `${license.builds_used_last_24_hours ?? 0} / ${license.max_builds_per_day ?? 0} 次`;
+    if (quotaEditingId !== license.id) {
+      form.elements.max_builds_per_day.value = license.max_builds_per_day ?? 1;
+      form.elements.max_builds_total.value = Number.isInteger(license.max_builds_total) ? license.max_builds_total : '';
+      form.elements.total_mode.value = license.max_builds_total == null ? 'unlimited' : 'limited';
+      form.elements.reason.value = '';
+      quotaEditingId = license.id;
+      syncTotalMode();
+    }
+    const quota = buildQuotaView(license);
+    $('managed-license-available').textContent = quota.available === null ? '待核验' : quota.available + ' 次';
+    $('managed-license-quota-note').textContent = quota.reason;
+    $('managed-license-used').textContent = quota.totalUsed === null ? '待核验' : quota.totalUsed + ' 次';
+    $('managed-license-remaining').textContent = quota.unlimited ? '不限' : quota.totalRemaining === null ? '待核验' : quota.totalRemaining + ' 次';
+    $('managed-license-daily-used').textContent = quota.dailyUsed === null || quota.dailyLimit === null ? '待核验' : quota.dailyUsed + ' / ' + quota.dailyLimit + ' 次';
     $('managed-license-toggle').textContent = license.status === 'active' ? '暂停授权' : '恢复授权';
     $('managed-license-toggle').disabled = license.status === 'revoked' || !can('license.manage');
     $('managed-license-revoke').disabled = license.status === 'revoked' || !can('license.manage');
@@ -246,6 +263,7 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
   }
 
   function bind() {
+    $('license-quota-form')?.elements.total_mode.addEventListener('change', syncTotalMode);
     $('close-license-manager')?.addEventListener('click', closeLicenseManager);
     $('license-management-panel')?.addEventListener('mousedown', (event) => {
       if (event.target === event.currentTarget) closeLicenseManager();
@@ -265,9 +283,10 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
         const totalValue = String(fields.get('max_builds_total') ?? '').trim();
         await request(`/web/admin/licenses/${encodeURIComponent(license.id)}/quota`, { method: 'POST', body: {
           max_builds_per_day: Number(fields.get('max_builds_per_day')),
-          max_builds_total: totalValue ? Number(totalValue) : null,
+          max_builds_total: fields.get('total_mode') === 'unlimited' ? null : Number(totalValue),
           reason: String(fields.get('reason') ?? '').trim(),
         } });
+        quotaEditingId = null;
         notify('打包额度已保存并同步到打包中心');
         await refresh();
       } catch (error) { notify(error.message, true); }
@@ -305,10 +324,11 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
       eye.disabled = !license.key_recoverable;
       customerLine.append(eye);
     }
+    const quotaView = buildQuotaView(license);
     const quota = element('td'); quota.append(
-      element('strong', `今日 ${license.builds_used_last_24_hours ?? 0} / ${license.max_builds_per_day ?? 0}`),
-      element('small', Number.isInteger(license.max_builds_total)
-        ? `剩余 ${Math.max(0, license.max_builds_total - Number(license.build_count ?? 0))} 次` : '总额度不限', 'table-subline'),
+      element('strong', quotaView.available === null ? '额度待核验' : '可打包 ' + quotaView.available + ' 次'),
+      element('small', quotaView.unlimited ? '总次数不限 · 24 小时上限 ' + quotaView.dailyLimit + ' 次'
+        : '总额度剩余 ' + (quotaView.totalRemaining ?? '—') + ' 次 · 24 小时上限 ' + (quotaView.dailyLimit ?? '—') + ' 次', 'table-subline'),
     );
     const activations = element('td'); activations.append(
       element('strong', `${license.active_activation_count ?? 0} / ${license.max_activations ?? 0}`),

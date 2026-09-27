@@ -86,10 +86,11 @@
           <div class="stats-grid stats-grid-three">
             <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>授权状态</span><strong id="license-status">—</strong><small>实时验证</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-blue">⌁</div><div><span>绑定域名</span><strong id="license-domain">—</strong><small>唯一激活域名</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>过去 24 小时构建额度</span><strong id="license-limit">—</strong><small>剩余 / 总额度</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>当前可打包</span><strong id="license-limit">—</strong><small id="license-quota-note">同时计算总额度与 24 小时上限</small><details class="quota-inline-details"><summary>额度明细</summary><p id="customer-quota-total">—</p><p id="customer-quota-daily">—</p></details></div></article>
           </div>
 
-          <section class="surface delivery-flow-card" aria-labelledby="delivery-flow-title">
+          <section class="surface build-start-card"><div><h3>打包你的主题</h3><p>选择版本，打包完成后下载并激活。</p></div><button class="button button-primary" type="button" data-go-view="builds">开始打包</button></section>
+          <details class="surface delivery-flow-card delivery-flow-disclosure"><summary>安装与激活步骤</summary><div aria-labelledby="delivery-flow-title">
             <div class="surface-head delivery-flow-head"><div><span class="overline">DELIVERY FLOW</span><h3 id="delivery-flow-title">交付步骤</h3><p>从授权验证到安装激活，按以下顺序完成交付。</p></div><span class="delivery-flow-count">4 个步骤</span></div>
             <ol class="delivery-step-list">
               <li class="done"><span class="delivery-step-number">1</span><div><strong>验证授权身份</strong><small>确认固定 Key、绑定域名与更新权限</small></div></li>
@@ -106,8 +107,8 @@
         </section>
 
         <section class="page-view" data-page="builds">
-          <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>构建与下载</h2><p>构建最新版本，或重新构建当前已激活版本，并在同一页面领取交付。</p></div></div>
-          <section class="surface version-catalog-panel build-version-catalog"><div class="surface-head"><div><span class="overline">VERSION DELIVERY</span><h3>可用版本</h3><p>客户构建仅开放最新版本和当前版本，避免错误降级。</p></div><span class="surface-number">01</span></div><div id="version-catalog" class="customer-version-list"><div class="empty-state"><span>▦</span><strong>暂无可用版本</strong><p>授权管理员发布版本后会显示在这里。</p></div></div></section>
+          <div class="page-heading"><div><span class="overline">BUILD & DOWNLOAD</span><h2>打包与下载</h2><p>选择版本开始打包，完成后在下方记录中下载。</p></div></div>
+          <section class="surface version-catalog-panel build-version-catalog"><div class="surface-head"><div><span class="overline">VERSION DELIVERY</span><h3>选择版本</h3><p>提供当前授权可用的最新版本和已激活版本。</p></div><span class="surface-number">01</span></div><div id="version-catalog" class="customer-version-list"><div class="empty-state"><span>▦</span><strong>暂无可用版本</strong><p>授权管理员发布版本后会显示在这里。</p></div></div></section>
           <section class="surface table-surface">
             <div class="toolbar"><label class="search-box"><span>⌕</span><input id="customer-build-search" placeholder="搜索版本或域名"></label><span class="toolbar-note">自动每 5 秒刷新进行中的任务</span></div>
             <div class="table-scroll"><table><thead><tr><th>版本</th><th>授权域名</th><th>状态</th><th>构建进度</th><th>创建时间</th><th>交付</th></tr></thead><tbody id="build-list"><tr><td colspan="6" class="empty-cell">暂无构建记录</td></tr></tbody></table></div>

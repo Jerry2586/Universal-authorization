@@ -72,7 +72,7 @@ test('customer build UI keeps the version catalog in build tasks and removes mig
   assert.match(html, /class="ticket-workspace customer-ticket-workspace support-workspace"/);
   assert.match(html, /打包中心 · <strong id="customer-system-version"/);
   assert.match(html, /id="announcement-toggle"/);
-  assert.match(html, /class="surface delivery-flow-card"/);
+  assert.match(html, /<details class="surface delivery-flow-card delivery-flow-disclosure"/);
   assert.match(html, />交付步骤</);
   assert.match(html, />安装并正式激活</);
   assert.match(html, /data-view="tickets"/);

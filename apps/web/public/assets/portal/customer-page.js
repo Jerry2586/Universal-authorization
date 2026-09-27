@@ -1,3 +1,4 @@
+import { buildQuotaView } from './quota-view.js';
 import { $ } from './core.js';
 import {
   badge, button, channelLabel, date, element, intentLabel, match, progressCell, releaseKindLabel,
@@ -55,14 +56,16 @@ export function createCustomerPage(shell) {
     const footer = element('div', null, 'version-card-footer');
     const eligible = version.eligible !== false;
     let intent = 'update';
-    let label = '构建更新包';
-    if (version.is_current) { intent = 'reinstall'; label = '重新构建当前版本'; }
+    let label = '打包此版本';
+    if (version.is_current) { intent = 'reinstall'; label = '重新打包'; }
     const allowed = eligible && (version.is_latest_eligible || version.is_current);
     const unavailableLabel = !eligible ? (version.eligibility_reason || '当前授权不可用') : '历史版本仅供查看';
     const action = button(allowed ? label : unavailableLabel, () => createCustomerBuild(version, intent, action), `button ${version.is_current ? 'button-secondary' : 'button-primary'}`);
     action.disabled = !allowed;
     footer.append(element('small', date(version.created_at || version.published_at)), action);
-    item.append(top, notes, element('div', null, 'version-meta'), footer);
+    const details = element('details', null, 'version-release-details');
+    details.append(element('summary', '更新说明'), notes);
+    item.append(top, details, footer);
     return item;
   }
 
@@ -75,9 +78,11 @@ export function createCustomerPage(shell) {
     $('license-domain').textContent = license.bound_domain ?? '未绑定';
     $('license-domain').title = license.bound_domain ?? '未绑定';
     $('header-domain').textContent = license.bound_domain ?? '未绑定域名';
-    $('license-limit').textContent = license.max_builds_per_day == null
-      ? '按授权策略'
-      : `${license.builds_remaining ?? license.max_builds_per_day} / ${license.max_builds_per_day} 次`;
+    const quota = buildQuotaView(license);
+    $('license-limit').textContent = quota.available === null ? '待核验' : quota.available + ' 次';
+    $('license-quota-note').textContent = quota.reason;
+    $('customer-quota-total').textContent = '总额度：' + (quota.unlimited ? '不限' : quota.totalLimit ?? '待核验') + '；累计已用 ' + (quota.totalUsed ?? '—') + ' 次';
+    $('customer-quota-daily').textContent = '过去 24 小时：已用 ' + (quota.dailyUsed ?? '—') + ' / ' + (quota.dailyLimit ?? '—') + ' 次，滚动恢复';
     $('license-product').textContent = String(license.product || license.product_code || 'APPGOG').toUpperCase();
     $('license-prefix').textContent = license.key_prefix ? `${license.key_prefix}••••` : '已验证';
     $('license-domain-detail').textContent = license.bound_domain ?? '未绑定';
