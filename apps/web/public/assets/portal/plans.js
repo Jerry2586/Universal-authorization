@@ -1,6 +1,10 @@
 import { $ } from './core.js';
 import { badge, button, element, renderRows, td } from './ui.js';
 
+const VERSION_SCOPES = [['free', '免费版本'], ['paid_only', '付费版本']];
+const selectableScope = value => value === 'paid' ? 'paid_only' : value;
+const scopeLabel = value => VERSION_SCOPES.find(([scope]) => scope === selectableScope(value))?.[1] ?? '未知范围';
+
 const CAPABILITIES = {
   'settings:read': '查看设置', 'settings:write': '修改设置', 'protected:read': '受保护内容',
   'theme:enable': '启用主题', 'xboard:connect': '连接后台', 'updates:read': '版本通知',
@@ -47,7 +51,7 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
         for (const [value, text] of options) { const o = element('option', text); o.value = value; input.append(o); }
         input.value = current; label.append(input); form.append(label);
       };
-      select('access_tier', '可用版本范围', [['free', '免费版本'], ['paid', '免费与付费版本']], plan?.access_tier ?? 'free');
+      select('access_tier', '可用版本范围', VERSION_SCOPES, selectableScope(plan?.access_tier ?? 'free'));
       field('max_builds_per_day', '每日打包上限', plan?.limits?.max_builds_per_day ?? 1, 'number', { min: 1, max: 50, step: 1 });
       field('max_activations', '激活环境上限', plan?.limits?.max_activations ?? 1, 'number', { min: 1, max: 20, step: 1 });
       const group = element('fieldset', null, 'plan-capabilities'); group.append(element('legend', '产品能力'));
@@ -97,7 +101,7 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
     $('plan-count').textContent = `${items.length} 个套餐`;
     renderRows('plan-list', items, 7, plan => {
       const row = element('tr'); const name = element('td'); name.append(element('strong', plan.name), element('small', plan.code, 'table-subline'));
-      row.append(name, td(plan.access_tier === 'paid' ? '免费 + 付费' : '免费'), td(`${plan.limits.max_builds_per_day} 次`), td(`${plan.limits.max_activations} 个`), td(`${plan.capabilities.length} 项`), badge(plan.status));
+      row.append(name, td(scopeLabel(plan.access_tier)), td(`${plan.limits.max_builds_per_day} 次`), td(`${plan.limits.max_activations} 个`), td(`${plan.capabilities.length} 项`), badge(plan.status));
       const cell = element('td', null, 'actions');
       if (can('license.manage')) cell.append(button('编辑套餐', () => editPlan(plan)), button('删除', () => deletePlan(plan), 'button button-secondary danger'));
       else cell.append(element('span', '只读', 'muted'));

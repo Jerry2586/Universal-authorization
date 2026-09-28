@@ -1392,3 +1392,24 @@ test('删除套餐保留既有授权快照，禁止重新签发/编辑，权限�
   assert.equal((await app.send('/web/admin/plans/legacy',{...owner,method:'DELETE'})).status,409);
   assert.equal(app.database.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='plan.deleted'").get().n,1);
 });
+
+test('仅付费套餐 HTTP 保存回显、客户版本列表与构建拒绝免费版本', async (t) => {
+  const app=await fixture(t,'2026-09-25T08:00:00.000Z'),owner=await app.owner();
+  const body={code:'paid_separate',name:'独立付费套餐',access_tier:'paid_only',status:'active',capabilities:['settings:read','updates:read'],limits:{max_builds_per_day:4,max_activations:1}};
+  const created=await app.send('/web/admin/plans',{...owner,method:'POST',body});
+  assert.equal(created.status,201);assert.equal(created.data.plan.access_tier,'paid_only');
+  const edited=await app.send('/web/admin/plans/paid_separate',{...owner,method:'POST',body:{...body,name:'专属付费'}});
+  assert.equal(edited.status,200);assert.equal(edited.data.plan.access_tier,'paid_only');
+  const plans=await app.send('/web/admin/plans',owner);assert.equal(plans.data.plans.find(p=>p.code===body.code).access_tier,'paid_only');
+  addPublishedVersion(app,{version:'8.0.0',publishedAt:'2026-09-24T00:00:00.000Z',accessTier:'paid'});
+  addPublishedVersion(app,{version:'8.1.0',publishedAt:'2026-09-25T00:00:00.000Z',accessTier:'free'});
+  const issueResult=await app.send('/web/admin/licenses',{...owner,method:'POST',body:{customer_ref:'ONLY-PAID',domain:'only-paid.example.com',plan_code:body.code}});
+  assert.equal(issueResult.status,201,JSON.stringify(issueResult.data));const issued=issueResult.data;
+  const customer=await app.customer(issued.license_key);
+  const overview=await app.send('/web/customer/overview',customer);
+  assert.equal(overview.data.latest_eligible_version,'8.0.0');
+  const unavailable=overview.data.versions.find(v=>v.version==='8.1.0');assert.equal(unavailable.eligible,false);assert.equal(unavailable.eligibility_code,'VERSION_PLAN_REQUIRED');
+  const rejected=await app.send('/web/customer/builds',{...customer,method:'POST',body:{version:'8.1.0',domain:'only-paid.example.com',intent:'update'}});
+  assert.equal(rejected.status,403);assert.equal(rejected.data.error.code,'VERSION_PLAN_REQUIRED');
+  const allowed=await app.send('/web/customer/builds',{...customer,method:'POST',body:{version:'8.0.0',domain:'only-paid.example.com',intent:'update'}});assert.equal(allowed.status,201);
+});

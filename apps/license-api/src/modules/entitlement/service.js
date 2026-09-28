@@ -9,11 +9,13 @@ export function createEntitlementService({ database, repository, activationLifec
     const planCode = license?.plan_code ?? 'legacy';
     const tier = parseJsonObject(license?.plan_limits_json ?? license?.entitlement_limits_json, {}).access_tier
       ?? (['paid', 'legacy'].includes(planCode) ? 'paid' : 'free');
-    if (accessTier === 'paid' && tier !== 'paid') {
+    // Historical 'paid' includes both release tiers; paid_only is an explicit new scope.
+    if ((accessTier === 'paid' && !['paid', 'paid_only'].includes(tier))
+      || (accessTier === 'free' && tier === 'paid_only')) {
       return Object.freeze({
         eligible: false,
         code: 'VERSION_PLAN_REQUIRED',
-        reason: '该版本仅限付费授权使用',
+        reason: tier === 'paid_only' ? '当前套餐仅可使用付费版本，不包含免费版本' : '该版本仅限付费授权使用',
         accessTier,
         planCode,
       });
@@ -38,7 +40,7 @@ export function createEntitlementService({ database, repository, activationLifec
     name = String(name ?? '').trim();
     invariant(/^[a-z][a-z0-9_-]{1,39}$/.test(code), 'PLAN_CODE_INVALID', '套餐标识须为 2–40 位小写字母、数字、下划线或短横线');
     invariant(name.length >= 1 && name.length <= 60, 'PLAN_NAME_INVALID', '套餐名称须为 1–60 个字符');
-    invariant(['free', 'paid'].includes(accessTier), 'PLAN_TIER_INVALID', '请选择免费或付费权益');
+    invariant(['free', 'paid_only', 'paid'].includes(accessTier), 'PLAN_TIER_INVALID', '请选择仅免费、仅付费或免费与付费版本');
     invariant(['active', 'disabled'].includes(status), 'PLAN_STATUS_INVALID', '套餐状态无效');
     invariant(Array.isArray(selected) && selected.length <= capabilities.length && selected.every(c => capabilities.includes(c)), 'PLAN_CAPABILITIES_INVALID', '套餐能力无效');
     invariant(Number.isInteger(limits?.max_builds_per_day) && limits.max_builds_per_day >= 1 && limits.max_builds_per_day <= 50, 'PLAN_LIMIT_INVALID', '每日打包上限须为 1–50');

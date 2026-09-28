@@ -1012,3 +1012,31 @@ test('空能力套餐签发后激活仍为零权限，不回退全部能力', ()
   app.database.close();
 });
 
+
+test('套餐版本范围独立：仅免费、仅付费、全部；旧授权快照不随模板修改', () => {
+  const app = fixture();
+  try {
+    const input = { code: 'paid_scope', name: '独立付费', accessTier: 'paid_only', status: 'active', capabilities: ['settings:read', 'updates:read'], limits: { max_builds_per_day: 8, max_activations: 2 }, actorId: 'admin' };
+    app.service.createLicensePlan(input);
+    const created = app.service.listLicensePlans().find(p => p.code === input.code);
+    assert.equal(created.access_tier, 'paid_only');
+    for (const [planCode, freeAllowed, paidAllowed] of [['free', true, false], ['paid_scope', false, true], ['paid', true, true], ['legacy', true, true]]) {
+      const issued = app.service.issueLicense({ customerRef: planCode, planCode });
+      const license = app.repository.licenseById(issued.license.id);
+      assert.equal(app.service.versionEligibility({ license, source: { access_tier: 'free' } }).eligible, freeAllowed, planCode + ' free');
+      assert.equal(app.service.versionEligibility({ license, source: { access_tier: 'paid' } }).eligible, paidAllowed, planCode + ' paid');
+    }
+    const issued = app.service.issueLicense({ customerRef: 'snapshot-paid-only', planCode: 'paid_scope', domain: 'paid-scope.example.com' });
+    const product = app.service.ensureProduct();
+    for (const [version, accessTier] of [['8.0.0','free'],['8.1.0','paid']]) app.repository.createSourceVersion({productId:product.id,version,displayName:version,sourceKind:'official',sourceRef:'sources/'+version+'.zip',status:'active',accessTier,now:'2026-09-22T00:00:00.000Z'});
+    assert.throws(() => app.service.authorizeBuild({ licenseKey: issued.licenseKey, domain: 'paid-scope.example.com', version: '8.0.0' }), {code:'VERSION_PLAN_REQUIRED'});
+    assert.ok(app.service.authorizeBuild({ licenseKey: issued.licenseKey, domain: 'paid-scope.example.com', version: '8.1.0' }).buildTicket);
+    app.service.updateLicensePlan({...input,accessTier:'free'});
+    const old = app.repository.licenseById(issued.license.id);
+    assert.equal(JSON.parse(old.plan_limits_json).access_tier,'paid_only');
+    assert.equal(app.service.versionEligibility({license:old,source:{access_tier:'free'}}).eligible,false);
+    const newer = app.service.issueLicense({customerRef:'new-free-snapshot',planCode:'paid_scope'});
+    assert.equal(app.service.versionEligibility({license:app.repository.licenseById(newer.license.id),source:{access_tier:'paid'}}).eligible,false);
+    assert.throws(() => app.service.createLicensePlan({...input,code:'bad_scope',accessTier:'anything'}),{code:'PLAN_TIER_INVALID'});
+  } finally { app.database.close(); }
+});
