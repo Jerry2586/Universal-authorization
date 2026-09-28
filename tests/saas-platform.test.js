@@ -1415,7 +1415,7 @@ test('旧版已删除套餐升级只改默认名称，不恢复套餐或覆盖�
   let database;
   try {
     database = openDatabase(path);
-    database.exec("UPDATE license_plans SET name='付费版',status='deleted' WHERE code='paid'; DELETE FROM schema_migrations WHERE version IN ('2026-09-29-v1.2.51-default-plan-name','2026-09-29-v1.2.53-restore-default-plan-name')");
+    database.exec("UPDATE license_plans SET name='付费版',status='deleted' WHERE code='paid'; DELETE FROM schema_migrations WHERE version IN ('2026-09-29-v1.2.51-default-plan-name','2026-09-29-v1.2.54-restore-default-plan-name')");
     const before = {...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()};
     database.close(); database = openDatabase(path);
     assert.deepEqual({...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()}, {...before,name:'付费版'});
@@ -1424,7 +1424,7 @@ test('旧版已删除套餐升级只改默认名称，不恢复套餐或覆盖�
     database.exec("UPDATE license_plans SET name='客户专属套餐' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.51-default-plan-name'");
     database.close(); database = openDatabase(path);
     assert.equal(database.prepare("SELECT name FROM license_plans WHERE code='paid'").get().name,'客户专属套餐');
-    database.exec("UPDATE license_plans SET name='定义版' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.53-restore-default-plan-name'");
+    database.exec("UPDATE license_plans SET name='定义版' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.54-restore-default-plan-name'");
     database.prepare("INSERT INTO audit_events (id,actor_type,action,subject_type,subject_id,metadata_json,created_at) SELECT 'custom-name','admin','plan.updated','plan',id,?, '2026-09-29' FROM license_plans WHERE code='paid'").run(JSON.stringify({after:{name:'定义版'}}));
     database.close(); database=openDatabase(path);
     assert.equal(database.prepare("SELECT name FROM license_plans WHERE code='paid'").get().name,'定义版');
@@ -1490,10 +1490,10 @@ test('旧版本套餐关联迁移幂等：无套餐不分配版本且不改变�
  const root=mkdtempSync(join(tmpdir(),'appgog-version-plan-upgrade-')),path=join(root,'old.sqlite');let db;
  try {
   db=openDatabase(path);
-  db.exec("INSERT INTO products(id,code,name,created_at) VALUES('p','fixture','Fixture','2026-09-20'); INSERT INTO source_versions(id,product_id,version,display_name,source_kind,source_ref,status,created_at,access_tier) VALUES('old-free','p','1.0.0','Old','official','source.zip','active','2026-09-20','free'); DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.53-version-plans'");
+  db.exec("INSERT INTO products(id,code,name,created_at) VALUES('p','fixture','Fixture','2026-09-20'); INSERT INTO source_versions(id,product_id,version,display_name,source_kind,source_ref,status,created_at,access_tier) VALUES('old-free','p','1.0.0','Old','official','source.zip','active','2026-09-20','free'); DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.54-version-plans'");
   db.close();db=openDatabase(path);
   assert.deepEqual(JSON.parse(db.prepare("SELECT plan_codes_json FROM source_versions WHERE id='old-free'").get().plan_codes_json),['free','paid']);
-  db.exec("UPDATE license_plans SET status='deleted' WHERE code!='legacy'; UPDATE source_versions SET plan_codes_json=NULL; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.53-version-plans'");
+  db.exec("UPDATE license_plans SET status='deleted' WHERE code!='legacy'; UPDATE source_versions SET plan_codes_json=NULL; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.54-version-plans'");
   db.close();db=openDatabase(path);assert.equal(db.prepare("SELECT plan_codes_json FROM source_versions WHERE id='old-free'").get().plan_codes_json,'[]');
   db.close();db=openDatabase(path);assert.equal(db.prepare("SELECT plan_codes_json FROM source_versions WHERE id='old-free'").get().plan_codes_json,'[]');
  }finally{db?.close();rmSync(root,{recursive:true,force:true});}

@@ -56,6 +56,9 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
   assert.match(operations, /update\.installable/);
   assert.match(operations, /检查结果已过期/);
   assert.match(operations, /发布源落后/);
+  assert.match(operations, /request_id/);
+  assert.match(operations, /正在自动刷新页面/);
+  assert.match(operations, /setTimer\(reload, 250\)/);
 });
 
 test('customer build UI keeps the version catalog in build tasks and removes migration notes', () => {
@@ -84,6 +87,8 @@ test('customer build UI keeps the version catalog in build tasks and removes mig
   assert.doesNotMatch(html, /生成回滚包|回滚构建/);
   assert.match(script, /renderCustomerTickets/);
   assert.match(script, /is_latest_eligible/);
+  assert.doesNotMatch(script, /setInterval\(\(\) =>[\s\S]*queued[\s\S]*5000/);
+  assert.match(html, /进行中任务自动每 2 秒刷新/);
   assert.match(script, /eligibility_reason/);
   assert.doesNotMatch(script, /renderAdminTickets|\/web\/admin\//);
   const ticketModule = read('apps/web/public/assets/portal/tickets.js');

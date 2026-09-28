@@ -144,8 +144,9 @@ export function createUpdateControl({ root, currentVersion, clock = () => new Da
         ...persisted,
         state: 'queued',
         message: '更新请求已排队',
+        request_id: request.id,
         requested_action: action,
-        target_version: normalizedVersion,
+        target_version: request.version,
         updated_at: request.requested_at,
       });
       return request;

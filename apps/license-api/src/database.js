@@ -271,7 +271,7 @@ function migrate(database) {
     }
   });
 
-  runMigration(database, '2026-09-29-v1.2.53-version-plans', () => {
+  runMigration(database, '2026-09-29-v1.2.54-version-plans', () => {
     addMissingColumns(database, { source_versions: [['plan_codes_json', 'TEXT']] });
     const plans = database.prepare("SELECT code,access_tier FROM license_plans WHERE status='active' AND code!='legacy'").all();
     const save = database.prepare('UPDATE source_versions SET plan_codes_json=? WHERE id=?');
@@ -283,7 +283,7 @@ function migrate(database) {
   runMigration(database, '2026-09-29-v1.2.51-default-plan-name', () => {
     database.prepare("UPDATE license_plans SET name = '定义版' WHERE code = 'paid' AND name = '付费版'").run();
   });
-  runMigration(database, '2026-09-29-v1.2.53-restore-default-plan-name', () => {
+  runMigration(database, '2026-09-29-v1.2.54-restore-default-plan-name', () => {
     database.exec(`UPDATE license_plans SET name='付费版' WHERE code='paid' AND name='定义版'
       AND NOT EXISTS (SELECT 1 FROM audit_events WHERE subject_id=license_plans.id AND action='plan.updated'
         AND json_valid(metadata_json) AND json_extract(metadata_json,'$.after.name')='定义版')`);
