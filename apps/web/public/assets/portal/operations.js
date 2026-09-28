@@ -1,3 +1,4 @@
+import { applySystemVersion } from './system-version.js';
 import { createBridgeUpdateUi } from './bridge-updates.js';
 import { $ } from './core.js';
 
@@ -32,7 +33,8 @@ export function createOperationsUi({ request, notify, can }) {
         ? ({ idle: '可用', queued: '已排队', running: '更新中', succeeded: '已完成', failed: '失败' }[update.state] || update.state)
         : '助手离线';
       $('update-state').classList.toggle('status-success', update.available && ['idle', 'succeeded'].includes(update.state));
-      $('update-current-version').textContent = update.current_version ? `v${update.current_version}` : '—';
+      applySystemVersion(update.current_version);
+      if (!update.current_version) $('update-current-version').textContent = '—';
       $('update-latest-version').textContent = latestLabel(update);
       $('update-message').textContent = statusMessage(update);
       if ($('update-checked-at')) $('update-checked-at').textContent = update.checked_at ? new Date(update.checked_at).toLocaleString('zh-CN') : '尚未检查';

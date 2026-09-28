@@ -49,7 +49,7 @@
   <div id="dashboard-view" class="saas-shell" hidden>
     <aside class="app-sidebar">
       <div class="sidebar-brand"><a class="wordmark wordmark-light" href="/build"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a><span class="workspace-badge">打包中心 · <strong id="customer-system-version">v{{APPGOG_VERSION}}</strong></span></div>
-      <nav class="app-nav" aria-label="客户中心导航">
+      <nav id="portal-navigation" class="app-nav" aria-label="客户中心导航">
         <button class="nav-item active" type="button" data-view="overview" data-title="交付工作台"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span>工作台</span></button>
         <div class="nav-section-label">产品交付</div>
         <button class="nav-item" type="button" data-view="builds" data-title="构建与下载"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M9 5V3h6v2m-3 9v4m-2-2h4"/></svg></span><span>构建任务</span></button>
@@ -66,7 +66,7 @@
 
     <main class="workspace">
       <header class="workspace-header">
-        <div class="header-left"><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">主题打包中心</span><h1 id="page-title">交付工作台</h1></div></div>
+        <div class="header-left"><button class="sidebar-toggle icon-button" type="button" aria-label="收起目录" title="收起目录" aria-expanded="true" aria-controls="portal-navigation"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m7-11-3 3 3 3"/></svg></button><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">主题打包中心</span><h1 id="page-title">交付工作台</h1></div></div>
         <div class="header-actions"><span class="header-domain" id="header-domain">未绑定域名</span><button id="logout" class="header-logout" type="button">退出登录</button><button id="refresh-customer" class="icon-button" type="button" title="刷新数据">↻</button></div>
       </header>
 

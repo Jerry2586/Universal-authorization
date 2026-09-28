@@ -1,3 +1,4 @@
+import { applySystemVersion } from './system-version.js';
 import { $, createPermissionCheck, createPortalState } from './core.js';
 import { createApiClient } from './api-client.js';
 import { appendDialogActions, createDialog, showSecretDialog } from './dialog.js';
@@ -18,6 +19,7 @@ export function createPortalShell(actor) {
   }
 
   function applyBranding(branding = {}) {
+    applySystemVersion(branding.system_version);
     const platformName = String(branding.platform_name || 'APPGOG打包授权系统').trim();
     document.querySelectorAll('[data-brand-name]').forEach((item) => { item.textContent = platformName; });
     document.querySelectorAll('.wordmark span').forEach((item) => { item.textContent = platformName; });
@@ -102,7 +104,32 @@ export function createPortalShell(actor) {
     badge.setAttribute('aria-label', count + ' 条未读消息');
   }
 
+  function bindSidebar() {
+    const dashboard = $('dashboard-view');
+    const toggle = document.querySelector('.sidebar-toggle');
+    if (!dashboard || !toggle) return;
+    const preference = 'appgog:' + actor + ':sidebar-collapsed';
+    const apply = collapsed => {
+      dashboard.classList.toggle('sidebar-collapsed', collapsed);
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      toggle.setAttribute('aria-label', collapsed ? '展开目录' : '收起目录');
+      toggle.title = collapsed ? '展开目录' : '收起目录';
+    };
+    try { apply(localStorage.getItem(preference) === 'true'); } catch { apply(false); }
+    toggle.addEventListener('click', () => {
+      const collapsed = !dashboard.classList.contains('sidebar-collapsed');
+      apply(collapsed);
+      try { localStorage.setItem(preference, String(collapsed)); } catch { /* Preferences are optional. */ }
+    });
+    document.querySelectorAll('.nav-item').forEach(item => {
+      const label = item.dataset.title || item.textContent.trim();
+      item.title = label;
+      item.setAttribute('aria-label', label);
+    });
+  }
+
   function bindChrome() {
+    bindSidebar();
     document.addEventListener('appgog:unread-changed', updateUnreadBadge);
     const refreshVisible = () => {
       if (!document.hidden && state.csrf && !document.querySelector('.modal-overlay') && ![...document.querySelectorAll('.ticket-reply-form textarea, .ticket-reply-form input[type=file]')].some(field => field.value || field === document.activeElement)) void refresh();

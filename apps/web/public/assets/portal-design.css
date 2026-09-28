@@ -309,3 +309,23 @@ body[data-portal="admin"] .version-toolbar { flex-wrap: wrap; }
 .customer-plan-summary { margin: 18px 24px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #faf9ff; font-size: 13px; line-height: 1.7; }
 .customer-plan-summary p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 @media(max-width:640px) { .customer-plan-summary { margin: 16px 16px 0; } }
+
+/* Desktop directory collapse keeps navigation available as labelled icons. */
+body[data-portal] .sidebar-toggle { display: grid; place-items: center; flex: none; }
+body[data-portal] .app-sidebar { overflow-y: auto; }
+@media (min-width: 701px) {
+  body[data-portal] .saas-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+  body[data-portal] .sidebar-collapsed .app-sidebar { width: 76px; padding-inline: 12px; }
+  body[data-portal] .sidebar-collapsed .sidebar-brand { padding-inline: 0; justify-items: center; }
+  body[data-portal] .sidebar-collapsed .sidebar-brand .wordmark > span,
+  body[data-portal] .sidebar-collapsed .workspace-badge,
+  body[data-portal] .sidebar-collapsed .nav-section-label,
+  body[data-portal] .sidebar-collapsed .app-nav::before,
+  body[data-portal] .sidebar-collapsed .service-state > div,
+  body[data-portal] .sidebar-collapsed .nav-item > span:not(.nav-icon):not(.ticket-unread-badge) { display: none; }
+  body[data-portal] .sidebar-collapsed .nav-item { position: relative; justify-content: center; padding-inline: 0; }
+  body[data-portal] .sidebar-collapsed .nav-item .ticket-unread-badge { position: absolute; right: -3px; top: -3px; }
+  body[data-portal] .sidebar-collapsed .service-state { justify-content: center; }
+  body[data-portal] .sidebar-collapsed .sidebar-toggle svg { transform: rotate(180deg); }
+}
+@media (max-width: 700px) { body[data-portal] .sidebar-toggle { display: none; } }
