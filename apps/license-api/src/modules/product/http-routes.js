@@ -3,11 +3,30 @@ import { invariant } from '../../../../../packages/core/src/errors.js';
 export async function handleProductHttp({
   method, url, request, response, portal, auth, config, readJson, readBuffer, respondJson,
 }) {
+  if (url.pathname === '/web/admin/products' && method === 'GET') {
+    auth.requireSession('admin', false, 'product.view');
+    respondJson(response, 200, { products: portal.listProducts() });
+    return true;
+  }
+  if (url.pathname === '/web/admin/products' && method === 'POST') {
+    const admin = auth.requireSession('admin', true, 'product.manage');
+    const body = await readJson(request);
+    respondJson(response, 201, portal.createManagedProduct({ code: body.code, name: body.name, actorId: admin.actor_id }));
+    return true;
+  }
+  const productMatch = url.pathname.match(/^\/web\/admin\/products\/([^/]+)$/);
+  if (productMatch && method === 'PATCH') {
+    const admin = auth.requireSession('admin', true, 'product.manage');
+    const body = await readJson(request);
+    invariant(body.code === undefined || body.code === productMatch[1], 'PRODUCT_CODE_IMMUTABLE', '产品标识创建后不能修改');
+    respondJson(response, 200, portal.updateManagedProduct({ code: productMatch[1], name: body.name, status: body.status, actorId: admin.actor_id }));
+    return true;
+  }
   if (method === 'POST' && url.pathname === '/web/admin/versions') {
     auth.requireSession('admin', true, 'version.publish');
     const body = await readJson(request);
     const version = portal.registerSourceVersion({
-      productCode: body.product_code, version: body.version, displayName: body.display_name,
+      allowProductCreation: false, productCode: body.product_code, version: body.version, displayName: body.display_name,
       releaseNotes: body.release_notes, channel: body.channel, releaseKind: body.release_kind,
       accessTier: body.access_tier,
     });
@@ -19,7 +38,7 @@ export async function handleProductHttp({
     const admin = auth.requireSession('admin', true, 'version.publish');
     invariant(request.headers['content-type'] === 'application/zip', 'SOURCE_CONTENT_TYPE_INVALID', '请上传 ZIP 文件', 415);
     const version = portal.publishSourceVersion({
-      productCode: url.searchParams.get('product_code') || 'appgog',
+      allowProductCreation: false, productCode: url.searchParams.get('product_code') || 'appgog',
       version: url.searchParams.get('version'), displayName: url.searchParams.get('display_name'),
       sourceFilename: url.searchParams.get('source_filename'), releaseNotes: url.searchParams.get('release_notes'),
       channel: url.searchParams.get('channel'), releaseKind: url.searchParams.get('release_kind'),

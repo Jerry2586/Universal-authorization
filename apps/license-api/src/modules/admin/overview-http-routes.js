@@ -8,6 +8,7 @@ export async function handleAdminOverviewHttp({ method, url, response, portal, a
       overview.license_plans = [];
       overview.domain_migrations = [];
     }
+    if (!admin.permissions.includes('product.view')) overview.products = [];
     if (!admin.permissions.includes('version.view')) overview.versions = [];
     if (!admin.permissions.includes('build.view')) overview.builds = [];
     if (!admin.permissions.includes('activation.view')) overview.activations = [];

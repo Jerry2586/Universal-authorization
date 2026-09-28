@@ -23,6 +23,8 @@ jobs:
         run: php -v
       - name: Unit and integration tests
         run: npm test
+      - name: Linux dual-tree bridge integrity performance
+        run: node scripts/verify-bridge-integrity-performance.js
       - name: Fresh install, real build, update and complete restore
         run: sh scripts/docker/verify.sh
       - name: Package self-extracting installer
@@ -66,6 +68,53 @@ jobs:
         run: |
           docker compose ps -a
           docker compose logs --tail=100 appgog
+  preflight-sign:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign_preflight
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked production dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
+      - name: Require production signing key
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.APPGOG_RELEASE_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo 'APPGOG_RELEASE_SIGNING_PRIVATE_KEY is required for every production release.' >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/appgog-release-signing-private.pem"
+          printf '%s' "$RELEASE_SIGNING_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+      - name: Build and verify signed production artifacts
+        run: |
+          node scripts/verify-release-contract.js --source
+          npm run cms:package
+          node scripts/verify-release-contract.js --artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appgog-signed-preflight
+          if-no-files-found: error
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.run
+            dist/*.run.sha256
+            dist/install.sh
+            dist/release-manifest.json
+            dist/release-manifest.json.sig
+          retention-days: 7
+      - name: Remove temporary signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/appgog-release-signing-private.pem"
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify

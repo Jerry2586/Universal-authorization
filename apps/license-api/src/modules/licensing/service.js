@@ -32,10 +32,11 @@ export function createLicensingService({
   return Object.freeze({
     internal: Object.freeze({ findActiveLicense, bindDomainForBuild }),
     issueLicense({
-      productCode = 'appgog', customerRef, domain = null, updateUntil = null, planCode = 'legacy',
+      productCode = 'appgog', allowProductCreation = true, customerRef, domain = null, updateUntil = null, planCode = 'legacy',
       maxBuildsPerDay = null, maxBuildsTotal = null, maxActivations = null, actorId = null,
     }) {
-      const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
+      const product = productCatalog.ensureProduct({ code: productCode, name: String(productCode).toUpperCase(), allowCreate: allowProductCreation });
+      invariant(product.status === 'active', 'PRODUCT_ARCHIVED', '产品已归档，不能签发新授权或发布新版本', 409);
       const plan = repository.planByCode(String(planCode ?? 'legacy').trim().toLowerCase());
       invariant(plan && plan.status === 'active', 'LICENSE_PLAN_INVALID', '授权套餐不存在或已停用');
       const planLimits = parseJsonObject(plan.limits_json, {});

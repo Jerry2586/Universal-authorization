@@ -1,3 +1,4 @@
+import { signCompactToken } from '../../../packages/core/src/signing.js';
 import { transaction } from './database.js';
 import { createBridgeUpdates } from './modules/operations/bridge-updates.js';
 import { createBridgeDistribution } from '../../../packages/adapters/src/bridge-distribution.js';
@@ -33,6 +34,8 @@ import { createBuildAuthorizationRepositoryPort } from './modules/packaging/auth
 import { createPackagingService } from './modules/packaging/service.js';
 import { createProductRepositoryPort } from './modules/product/repository-port.js';
 import { createProductCatalogRepositoryPort } from './modules/product/catalog-repository-port.js';
+import { createProductManagementService } from './modules/product/management-service.js';
+import { createProductManagementRepositoryPort } from './modules/product/management-repository-port.js';
 import { createProductService } from './modules/product/service.js';
 import { PACKAGE_VERSION } from '../../../packages/core/src/version.js';
 
@@ -98,6 +101,10 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
       versionEligibility: service.versionEligibility,
     }),
     operations, artifactStore, buildEngine, config, clock,
+    signContent: claims => signCompactToken(claims, signingKeys.package.privateKey),
+  });
+  const productManagement = createProductManagementService({
+    repository: createProductManagementRepositoryPort(repository), atomic: fn => transaction(database, fn), clock,
   });
   const product = createProductService({
     repository: createProductRepositoryPort(repository),
@@ -127,7 +134,7 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
     operations, support, artifactStore, clock,
     packageVersion: PACKAGE_VERSION,
   });
-  const portal = Object.freeze({ ...portalCore, ...identity, ...operations, ...support, ...packaging, ...product });
+  const portal = Object.freeze({ ...portalCore, ...identity, ...operations, ...support, ...packaging, ...product, ...productManagement });
   service.ensureProduct({ code: 'appgog', name: 'APPGOG' });
   const adminUsername = config.adminUsername ?? 'admin';
   const adminPassword = config.adminPassword ?? 'appgog-development-admin';

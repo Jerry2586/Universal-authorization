@@ -1,3 +1,5 @@
+import { invariant } from '../../../../../packages/core/src/errors.js';
+import { normalizeProductCode } from './management-service.js';
 import { signCompactToken } from '../../../../../packages/core/src/signing.js';
 import { iso } from '../shared/service-utils.js';
 
@@ -5,10 +7,11 @@ export function createProductCatalogService({
   repository, config, notificationPrivateKey, clock = () => new Date(),
 }) {
   return Object.freeze({
-    ensureProduct({ code = 'appgog', name = 'APPGOG' } = {}) {
-      const normalized = code.trim().toLowerCase();
-      return repository.productByCode(normalized)
-        ?? repository.createProduct({ code: normalized, name, now: iso(clock) });
+    ensureProduct({ code = 'appgog', name = 'APPGOG', allowCreate = true } = {}) {
+      const normalized = normalizeProductCode(code);
+      const existing = repository.productByCode(normalized);
+      invariant(existing || allowCreate, 'PRODUCT_NOT_FOUND', '请先在产品管理中创建产品', 404);
+      return existing ?? repository.createProduct({ code: normalized, name, now: iso(clock) });
     },
     releaseAnnouncement(productCode = 'appgog') {
       const latest = repository.listActiveSourceVersions(productCode)[0] ?? null;

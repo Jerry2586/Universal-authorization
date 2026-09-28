@@ -13,14 +13,17 @@ const assert = require('node:assert/strict');
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    const script = await fs.readFile('apps/build-worker/xboard-bridge/AppgogLicenseBridge/assets/admin-entry.js', 'utf8');
+    const { createXboardBridgePackage } = await import('../apps/build-worker/src/xboard-bridge-package.js');
+    const { readZip } = await import('../packages/core/src/zip.js');
+    const script = readZip(createXboardBridgePackage()).get('AppgogLicenseBridge/assets/admin-entry.js').toString('utf8');
+    const { protectGeneratedJavaScript } = await import('../apps/build-worker/src/generated-protection.js');
     const { generateKeyPairSync } = require('node:crypto');
     const { browserLicenseRuntime } = await import('../apps/build-worker/src/runtime.js');
     const { signCompactToken } = await import('../packages/core/src/signing.js');
     const keys = generateKeyPairSync('ed25519');
     const der = keys.publicKey.export({type:'spki',format:'der'}).toString('base64');
     const runtimeConfig = {p:'appgog',v:'1.19.11',b:'bld_ui_fixture',i:'pkg_ui_fixture',u:'https://license.example.com',k:der,a:der,q:der,n:der,s:[],o:[],
-      gc:'appgog_license_bridge',gv:'1.1.5',gt:'APPGOG',j:'/fixture-bridge.zip',y:'00',
+      gc:'appgog_license_bridge',gv:'1.1.6',gt:'APPGOG',j:'/fixture-bridge.zip',y:'00',
       m:signCompactToken({typ:'package-manifest',product:'appgog',build_id:'bld_ui_fixture',package_id:'pkg_ui_fixture',version:'1.19.11',domain:'fixture.example.com'},keys.privateKey)};
     let enabled = 0;
     await context.route('**/*', async route => {
@@ -35,7 +38,7 @@ const assert = require('node:assert/strict');
       if (path.endsWith('/plugin/getPlugins')) return route.fulfill({json:{data:[]}});
       if (path.endsWith('/health') || path.endsWith('/admin-context')) return route.fulfill({status:404,json:{}});
       if (path === '/fixture-bridge.zip') return route.fulfill({body:Buffer.from('PK\x03\x04wrong-zip')});
-      if (path.endsWith('/editor.html')) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body><script>('+browserLicenseRuntime.toString()+')('+JSON.stringify(runtimeConfig)+');</script></body>' });
+      if (path.endsWith('/editor.html')) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body><script>'+protectGeneratedJavaScript('('+browserLicenseRuntime.toString()+')('+JSON.stringify(runtimeConfig)+');','ui-fixture')+'</script></body>' });
       return route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><meta charset=utf-8>
 <style>body{font:16px system-ui;background:#f5f6fa;padding:20px}.card{position:relative;background:white;border:1px solid #dfe4ed;border-radius:20px;padding:30px;max-width:550px;margin-bottom:20px}.delete{position:absolute;right:12px;top:12px;width:36px;height:36px;padding:0}footer{display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;margin-top:35px}button{padding:12px 20px;border:1px solid #dfe4ed;border-radius:9px;background:white}.primary{background:#101828;color:white}h3{font-size:26px;margin:0 0 12px}p{color:#667085}</style>
 <article class=card id=protected><button class=delete aria-label=删除>×</button><div><h3>APPGOG</h3><p>APPGOG · 可配置品牌、客户端下载、节日活动与营销弹窗</p><p>版本：1.19.11</p></div><footer><button id=settings>主题设置</button><button class=primary id=activate onclick="fetch('/api/v2/secure/config/save',{method:'POST'})">激活主题</button></footer></article>

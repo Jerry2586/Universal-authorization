@@ -45,14 +45,15 @@ function sourceMetadata(files, sourceFilename) {
 
 export function createProductService({ repository, productCatalog, artifactStore, buildEngine, config, clock = () => new Date() }) {
   return Object.freeze({
-    registerSourceVersion({ productCode = 'appgog', version, displayName, releaseNotes, channel, releaseKind, accessTier }) {
+    registerSourceVersion({ productCode = 'appgog', allowProductCreation = true, version, displayName, releaseNotes, channel, releaseKind, accessTier }) {
       invariant(version?.trim(), 'VERSION_REQUIRED', '必须填写版本号');
-      const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
+      const product = productCatalog.ensureProduct({ code: productCode, name: String(productCode).toUpperCase(), allowCreate: allowProductCreation });
+      invariant(product.status === 'active', 'PRODUCT_ARCHIVED', '产品已归档，不能签发新授权或发布新版本', 409);
       invariant(!repository.sourceVersionByProductVersion(product.code, version.trim()), 'VERSION_EXISTS', '该版本已经存在', 409);
       return repository.createSourceVersion({
         productId: product.id,
         version: version.trim(),
-        displayName: displayName?.trim() || `APPGOG ${version.trim()}`,
+        displayName: displayName?.trim() || `${product.name} ${version.trim()}`,
         sourceKind: SOURCE_KIND.OFFICIAL,
         sourceRef: null,
         status: 'draft',
@@ -63,14 +64,15 @@ export function createProductService({ repository, productCatalog, artifactStore
     },
 
     publishSourceVersion({
-      productCode = 'appgog', version, displayName, sourceFilename, zipBuffer,
+      productCode = 'appgog', allowProductCreation = true, version, displayName, sourceFilename, zipBuffer,
       releaseNotes, channel, releaseKind, accessTier, actorId = null,
     }) {
       invariant(Buffer.isBuffer(zipBuffer) && zipBuffer.length > 0, 'SOURCE_REQUIRED', '必须上传主题 ZIP');
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
       const validation = buildEngine.validateSource(zipBuffer);
       const detected = sourceMetadata(validation.files, sourceFilename);
-      const product = productCatalog.ensureProduct({ code: productCode, name: productCode.toUpperCase() });
+      const product = productCatalog.ensureProduct({ code: productCode, name: String(productCode).toUpperCase(), allowCreate: allowProductCreation });
+      invariant(product.status === 'active', 'PRODUCT_ARCHIVED', '产品已归档，不能签发新授权或发布新版本', 409);
       const requestedVersion = version?.trim() || null;
       invariant(!requestedVersion || !detected.version || requestedVersion === detected.version,
         'SOURCE_VERSION_CONFLICT', `填写的版本号与安装包识别结果 ${detected.version} 不一致`, 409);

@@ -1,3 +1,6 @@
+import { runInThisContext } from 'node:vm';
+import { protectGeneratedJavaScript } from '../apps/build-worker/src/generated-protection.js';
+import { packageContentClaims } from '../packages/core/src/package-content.js';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
@@ -45,7 +48,7 @@ function fakeElement(tagName) {
 
 function installBrowser({
   token, fetchImpl, publicKey, packagePublicKey = publicKey, notificationPublicKey = publicKey,
-  editor = true, manifestToken, bridge = null, initialValues = null, referrer = '', readyState = 'complete', onDomReady = null,
+  editor = true, manifestToken, protectedRuntime = false, bridge = null, initialValues = null, referrer = '', readyState = 'complete', onDomReady = null,
 }) {
   const original = {
     document: globalThis.document, localStorage: globalThis.localStorage,
@@ -81,12 +84,14 @@ function installBrowser({
   };
   globalThis.fetch = fetchImpl;
   Date.now = () => FIXED_NOW;
-  browserLicenseRuntime({
+  const runtimeConfig = {
     p: 'appgog', v: '1.17.1', b: 'bld_runtime', i: 'pkg_runtime',
     u: 'https://license.example.com', k: publicKeyDer(publicKey),
     a: publicKeyDer(publicKey), q: publicKeyDer(packagePublicKey), n: publicKeyDer(notificationPublicKey),
     s: [], o: [], m: manifestToken, ...(bridge || {}),
-  });
+  };
+  if (protectedRuntime) runInThisContext(protectGeneratedJavaScript('(' + browserLicenseRuntime.toString() + ')(' + JSON.stringify(runtimeConfig) + ');', 'runtime-test'));
+  else browserLicenseRuntime(runtimeConfig);
   return {
     values, elements, classes,
     async tickMonitor() { for (const [callback, delay] of intervalCallbacks) if (delay === 30000) await callback(); },
@@ -714,5 +719,41 @@ for (const htmlResponse of [false, true]) {
       assert.equal(downloadUrl.searchParams.get('sha256'), '00');
       assert.equal(uploads, 0); assert.ok(browser.classes.has('__appgog_locked'));
     } finally { browser.restore(); }
+  });
+}
+
+
+for (const variant of ['valid','missing','changed-files','wrong-key','changed-bridge','changed-identity']) {
+  test('混淆后真实运行时核验最终内容签名：' + variant, async () => {
+    const { privateKey, publicKey }=generateKeyPairSync('ed25519');
+    const issuer='https://license.example.com';
+    const identity=packageManifest(privateKey,{iss:issuer,content_signature_required:true});
+    const manifest={schema:2,package_manifest_token:identity,build_id:'bld_runtime',package_id:'pkg_runtime',
+      protection:{bridge_package_sha256:'00'},integrity:{files:[{path:'资源/例子.js',bytes:1,sha256:'a'.repeat(64)}]}};
+    manifest.content_signature=signCompactToken(packageContentClaims(manifest,issuer),privateKey);
+    if(variant==='missing')delete manifest.content_signature;
+    if(variant==='changed-files')manifest.integrity.files[0].sha256='b'.repeat(64);
+    if(variant==='wrong-key')manifest.content_signature=signCompactToken(packageContentClaims(manifest,issuer),generateKeyPairSync('ed25519').privateKey);
+    if(variant==='changed-bridge')manifest.protection.bridge_package_sha256='11';
+    if(variant==='changed-identity')manifest.package_manifest_token=packageManifest(privateKey,{iss:issuer});
+    const token=activation(privateKey,{exp:Math.floor(FIXED_NOW/1000)+100,offline_until:Math.floor(FIXED_NOW/1000)+200});
+    let refreshes=0, writes=0;
+    const browser=installBrowser({publicKey,token,manifestToken:identity,protectedRuntime:true,initialValues:new Map(),
+      bridge:{gc:'appgog_license_bridge',gv:'1.1.6',gt:'APPGOG',j:'../appgog-license-bridge.zip',y:'00'},
+      fetchImpl:async(url,options)=>{
+        const href=String(url);
+        const reply=data=>({ok:true,status:200,json:async()=>data});
+        if(href.endsWith('/build.json'))return reply(manifest);
+        if(href.endsWith('/health'))return reply({ok:true,code:'appgog_license_bridge',version:'1.1.6',identity:{installation_id:'installation_runtime_123',installation_public_key:'fixture'}});
+        if(href.endsWith('/state/runtime'))return reply({state:{activation_id:'act_runtime',activation_token:token,backend_origin:'https://demo.example.com'}});
+        if(href.endsWith('/refresh')){refreshes++;return reply({activation_id:'act_runtime',activation_token:token,backend_origin:'https://demo.example.com'});}
+        if(options?.method==='POST')writes++;
+        throw Error('Unexpected fixture request');
+      }});
+    try{
+      await browser.settle();
+      if(variant==='valid'){assert.equal(globalThis.APPGOGLicense.status,'active');assert.equal(browser.classes.has('__appgog_locked'),false);assert.ok(refreshes>0);}
+      else {assert.equal(browser.classes.has('__appgog_locked'),true);assert.equal(refreshes,0);assert.equal(writes,0);assert.match(browser.elements.map(elementText).join(' '),/完整性验证失败/);}
+    }finally{browser.restore();}
   });
 }

@@ -12,7 +12,7 @@ use RuntimeException;
 
 class BridgeState
 {
-    private const VERSION = '1.1.5';
+    private const VERSION = '1.1.6';
     private const SPKI_PREFIX_HEX = '302a300506032b6570032100';
     private const PURPOSES = [
         'activation', 'refresh', 'migration_issue', 'migration_accept',
@@ -126,7 +126,8 @@ class BridgeState
 
     public function signChallenge(string $packageId, string $packageProof, array $challenge): array
     {
-        $this->assertPackage($packageId, $packageProof);
+        $record = $this->assertPackage($packageId, $packageProof);
+        $this->assertPackageContent($record);
         foreach (['id', 'nonce', 'purpose', 'context_hash', 'installation_id', 'expires_at'] as $field) {
             if (!isset($challenge[$field]) || !is_string($challenge[$field]) || $challenge[$field] === '') {
                 throw ValidationException::withMessages(['challenge' => "授权挑战缺少 {$field}"]);
@@ -197,7 +198,8 @@ class BridgeState
 
     public function runtimePackageState(string $packageId, string $packageProof): ?array
     {
-        $this->assertPackage($packageId, $packageProof);
+        $record = $this->assertPackage($packageId, $packageProof);
+        $this->assertPackageContent($record);
         $state = $this->readEncryptedState($packageId);
         if (!$state) {
             return null;
@@ -211,6 +213,7 @@ class BridgeState
     public function refreshActivation(string $packageId, string $packageProof): array
     {
         $record = $this->assertPackage($packageId, $packageProof);
+        $this->assertPackageContent($record);
         $state = $this->readEncryptedState($packageId) ?? [];
         foreach (['activation_id', 'refresh_secret', 'backend_origin'] as $field) {
             if (!isset($state[$field]) || !is_string($state[$field]) || $state[$field] === '') {
@@ -388,6 +391,14 @@ class BridgeState
             'fallback_theme' => $fallback,
         ]);
         return ['removed' => true, 'theme' => $theme, 'fallback_theme' => $fallback];
+    }
+
+    private function assertPackageContent(array $record): void
+    {
+        if (!class_exists(\Appgog\Host\Guard::class, false)) require_once dirname(__DIR__) . '/Host/Guard.php';
+        if (!\Appgog\Host\Guard::packageIntegrityValid($record['theme_name'])) {
+            throw ValidationException::withMessages(['package' => '安装包内容签名或文件校验失败，请重新安装完整授权包']);
+        }
     }
 
     private function assertPackage(string $packageId, string $packageProof): array

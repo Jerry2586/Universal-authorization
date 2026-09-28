@@ -23,7 +23,7 @@ export async function handleLicensingHttp({
     const admin = auth.requireSession('admin', true, 'license.issue');
     const body = await readJson(request);
     const result = service.issueLicense({
-      productCode: body.product_code, customerRef: body.customer_ref, domain: body.domain,
+      allowProductCreation: false, productCode: body.product_code, customerRef: body.customer_ref, domain: body.domain,
       updateUntil: body.update_until, planCode: body.plan_code,
       maxBuildsPerDay: body.max_builds_per_day, maxBuildsTotal: body.max_builds_total ?? null,
       maxActivations: body.max_activations,

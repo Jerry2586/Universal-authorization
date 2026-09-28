@@ -302,3 +302,6 @@ body[data-portal] .build-version-catalog > .surface-head p { margin-top: 6px; fo
 .history-pagination { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 24px; border-top: 1px solid var(--line); }
 .history-pagination p { margin: 0; font-size: 13px; color: var(--muted); }
 .bridge-log-details { margin-top: 16px; }.bridge-log-details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+
+body[data-portal="admin"] .product-catalog .surface-head { padding: 20px 24px; margin: 0; }
+body[data-portal="admin"] .version-toolbar { flex-wrap: wrap; }

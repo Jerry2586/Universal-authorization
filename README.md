@@ -1,8 +1,8 @@
-# APPGOG打包授权系统 v1.2.47
+# APPGOG打包授权系统 v1.2.48
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.47 新增展开 Key 后点击复制；授权桥 1.1.5 在上传完成后立即识别主题卡片，兼容旧包并防止列表竞态，无需先打开编辑器。此前版本修复含可作废构建记录时的 actionGroup 未定义错误，恢复总览、构建列表和历史记录渲染。按双卡样式优化打包版本面板，修复页面串区，新增完整分页历史、套餐删除和平台版本锁定；未使用成品作废后返还实际打包额度。授权桥维护简化为固定发布源的检查、更新与修复，更新后供新构建使用。授权桥 1.1.5 保留原生主题按钮重叠及激活弹窗滚动修复，摘要校验失败明确停止上传。
+v1.2.48 增加客户包最终内容签名，统一保护授权运行时和桥前端脚本，移除开发预览入口；授权桥 1.1.6 验证文件内容并固定已登记公钥。新增独立产品管理，完善安装指南和作废构建提示。固定 Key、一次性安装 Key、两阶段激活和升级保留数据规则保持不变。详细边界见 `docs/package-content-signature.md`。
 
 ## Linux 安装 + 专业管理菜单
 
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 仓库为公开仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.47` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.48` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -123,7 +123,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.47 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.48 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
@@ -138,7 +138,7 @@ npm run cms:package
 2. 卖家给客户签发长期固定 License Key；可预先绑定域名，也可由客户首次登录后永久绑定。
 3. 客户在 `/build` 使用固定 Key 登录，选择版本并提交打包。
 4. 每次打包生成独立的 Build ID、Package ID、Package Secret 和一次性 Install Key。
-5. 独立 Worker 检查 ZIP 安全性，对客户业务 JavaScript 执行 Terser 压缩、按包种子十六进制标识符混淆和字符串数组编码，压缩 CSS、移除 Source Map、注入每包水印、AES-256-GCM 加密身份载荷、随机运行时路径和构建清单，并生成客户专属 ZIP。
+5. 独立 Worker 检查 ZIP 安全性，对客户业务 JavaScript 执行 Terser 压缩、按包种子十六进制标识符混淆和字符串数组编码，压缩 CSS、移除 Source Map、注入每包水印、AES-256-GCM 加密身份载荷、随机运行时路径和构建清单，并生成客户专属 ZIP 草稿；授权中心校验后签署最终内容清单并记录最终 ZIP 哈希，完成后才开放下载。
 6. 客户把 ZIP 安装到 Xboard，并从已登录的管理员后台第一次打开主题；客户包自动校验、上传、安装并启用 `APPGOG License Bridge`，健康检查失败时不开始倒计时。
 7. 点击“开始激活”创建不可重置的 60 分钟窗口，再输入本次一次性 Install Key；成功后 Key 立即作废，但正式功能仍锁定。
 8. 输入长期固定 License Key 完成正式激活；授权服务器校验 Install Receipt、包身份、域名和安装环境，签发 Ed25519 激活凭证。

@@ -55,4 +55,25 @@ body[data-portal="customer"] .lifecycle-card { border-radius: 18px; }
   body[data-portal="customer"] .delivery-step-list li:not(:last-child)::after { left: 14px; top: 31px; right: auto; bottom: 0; width: 1px; height: auto; }
   body[data-portal="customer"] .delivery-step-list li > div { padding-right: 0; }
 }
-.lifecycle-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.lifecycle-card{display:flex;gap:18px;align-items:flex-start;min-height:180px;padding:24px}.lifecycle-card h3{margin:6px 0 10px;font-size:19px}.lifecycle-card p{margin:0;color:var(--muted);line-height:1.75}.lifecycle-card .surface-number{position:static;flex:0 0 auto}.lifecycle-card-warning{border-color:color-mix(in srgb,#f3b44b 38%,var(--line));background:linear-gradient(145deg,color-mix(in srgb,#f3b44b 8%,var(--surface)),var(--surface))}@media(max-width:860px){.lifecycle-grid{grid-template-columns:1fr}.lifecycle-card{min-height:0}}
+/* Installation guidance: one primary flow, then compact recovery scenarios. */
+body[data-portal="customer"] .lifecycle-start { padding: 24px; margin-bottom: 28px; }
+.lifecycle-section-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.lifecycle-section-head h3 { margin: 5px 0 0; font-size: 16px; }
+.lifecycle-note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.lifecycle-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 24px; list-style: none; margin: 24px 0 0; padding: 20px 0 0; border-top: 1px solid var(--line); }
+.lifecycle-steps li { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.lifecycle-step { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: 10px; background: var(--accent-pale); color: var(--accent-deep); font-size: 12px; font-weight: 700; }
+.lifecycle-steps h4 { margin: 2px 0 8px; font-size: 14px; }
+.lifecycle-steps p, .lifecycle-card p { margin: 0; font-size: 13px; line-height: 1.8; color: var(--muted); }
+.lifecycle-scenarios-heading { margin-bottom: 16px; }
+.lifecycle-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-bottom: 20px; }
+body[data-portal="customer"] .lifecycle-card { display: flex; align-items: flex-start; gap: 14px; padding: 20px; border-radius: 12px; box-shadow: none; }
+.lifecycle-card > div { min-width: 0; }
+.lifecycle-card h3 { margin: 2px 0 9px; font-size: 15px; }
+body[data-portal="customer"] .lifecycle-card .surface-number { position: static; display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-pale); color: var(--accent-deep); font-size: 18px; }
+.lifecycle-card-note { display: block; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); line-height: 1.6; }
+.lifecycle-safety { display: flex; align-items: flex-start; gap: 16px; padding: 16px 20px; background: var(--accent-pale); border: 1px solid var(--line); border-radius: 12px; }
+.lifecycle-safety-label { color: var(--accent-deep); font-size: 12px; font-weight: 700; flex: 0 0 auto; line-height: 1.8; }
+.lifecycle-safety p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.8; }
+@media(max-width:860px) { .lifecycle-steps { grid-template-columns: 1fr; gap: 18px; } .lifecycle-grid { grid-template-columns: 1fr; } }
+@media(max-width:520px) { body[data-portal="customer"] .lifecycle-start, body[data-portal="customer"] .lifecycle-card { padding: 18px; } .lifecycle-safety { flex-direction: column; gap: 5px; padding: 16px; } }

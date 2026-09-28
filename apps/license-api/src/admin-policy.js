@@ -1,10 +1,10 @@
 export const ROLE_PERMISSIONS = Object.freeze({
   owner: ['*'],
   super_admin: ['*'],
-  license_ops: ['dashboard.view', 'license.view', 'license.issue', 'license.manage', 'build.view', 'activation.view', 'ticket.view', 'ticket.manage', 'audit.view'],
-  release_manager: ['dashboard.view', 'version.view', 'version.publish', 'version.manage', 'build.view', 'ticket.view', 'audit.view'],
-  support: ['dashboard.view', 'license.view', 'build.view', 'activation.view', 'ticket.view', 'ticket.manage'],
-  auditor: ['dashboard.view', 'license.view', 'version.view', 'build.view', 'activation.view', 'ticket.view', 'audit.view'],
+  license_ops: ['dashboard.view', 'product.view', 'license.view', 'license.issue', 'license.manage', 'build.view', 'activation.view', 'ticket.view', 'ticket.manage', 'audit.view'],
+  release_manager: ['dashboard.view', 'product.view', 'product.manage', 'version.view', 'version.publish', 'version.manage', 'build.view', 'ticket.view', 'audit.view'],
+  support: ['dashboard.view', 'product.view', 'license.view', 'build.view', 'activation.view', 'ticket.view', 'ticket.manage'],
+  auditor: ['dashboard.view', 'product.view', 'license.view', 'version.view', 'build.view', 'activation.view', 'ticket.view', 'audit.view'],
 });
 
 export function adminPermissions(admin) {

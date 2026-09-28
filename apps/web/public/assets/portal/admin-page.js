@@ -1,3 +1,4 @@
+import { createProductUi } from './products.js';
 import { $ } from './core.js';
 import { createPlanUi } from './plans.js';
 import { button, element, roleLabel } from './ui.js';
@@ -28,6 +29,7 @@ export function createAdminPage(shell) {
     licenseRow, renderLicenseManager: licenseUi.renderLicenseManager,
     membersUi, announcementUi, operationsUi, renderAdminTickets,
   });
+  const productsUi = createProductUi(shell);
   const plansUi = createPlanUi(shell);
   const releaseUpload = createAdminReleaseUpload(shell);
 
@@ -35,7 +37,7 @@ export function createAdminPage(shell) {
     state.session = session;
     state.permissions = Array.isArray(session.permissions) ? session.permissions : [];
     const sections = {
-      licenses: 'license.view', plans: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view',
+      products: 'product.view', licenses: 'license.view', plans: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view',
       activations: 'activation.view', members: 'admin.manage', audit: 'audit.view',
       announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage',
     };
@@ -100,7 +102,7 @@ export function createAdminPage(shell) {
         const fields = new FormData(form);
         const until = fields.get('update_until');
         const result = await request('/web/admin/licenses', { method: 'POST', body: {
-          product_code: 'appgog', customer_ref: fields.get('customer_ref'), domain: fields.get('domain'),
+          product_code: fields.get('product_code'), customer_ref: fields.get('customer_ref'), domain: fields.get('domain'),
           plan_code: fields.get('plan_code'), update_until: until ? new Date(`${until}T23:59:59Z`).toISOString() : null,
           max_builds_per_day: Number(fields.get('max_builds_per_day')),
           max_builds_total: fields.get('max_builds_total') ? Number(fields.get('max_builds_total')) : null,
@@ -132,6 +134,7 @@ export function createAdminPage(shell) {
   }
 
   function bind() {
+    productsUi.bind();
     plansUi.bind();
     migrationUi.bind();
     membersUi.bind();
@@ -144,7 +147,7 @@ export function createAdminPage(shell) {
     $('open-account-center')?.addEventListener('click', openAccountCenter);
     $('refresh-admin')?.addEventListener('click', refresh);
     for (const id of [
-      'license-search', 'license-plan-filter', 'license-status-filter', 'version-search', 'version-status-filter',
+      'license-search', 'license-plan-filter', 'license-status-filter', 'version-search', 'version-status-filter', 'version-product-filter',
       'admin-build-search', 'build-status-filter', 'admin-ticket-search', 'admin-ticket-status-filter',
       'activation-search', 'audit-search',
     ]) {
@@ -156,5 +159,5 @@ export function createAdminPage(shell) {
     if (session.is_owner) await migrationUi.refresh();
   }
 
-  return Object.freeze({ bind, render(data) { plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
+  return Object.freeze({ bind, render(data) { productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
 }

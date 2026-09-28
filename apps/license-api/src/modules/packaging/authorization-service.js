@@ -23,6 +23,7 @@ export function createBuildAuthorizationService({
     return {
       iss: config.publicBaseUrl, typ: 'package-manifest', product,
       build_id: buildId, package_id: packageId, version, domain, watermark,
+      content_signature_required: true,
       iat: Math.floor(nowDate.getTime() / 1000),
     };
   }

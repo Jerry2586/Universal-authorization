@@ -1,7 +1,10 @@
+import { spawnSync } from 'node:child_process';
+import { packageContentClaims } from '../packages/core/src/package-content.js';
+import { signCompactToken } from '../packages/core/src/signing.js';
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { bootstrap } from '../apps/license-api/src/bootstrap.js';
@@ -83,6 +86,9 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
     ['APPGOG/editor.html', Buffer.from('<!doctype html><html><head><title>Theme Studio</title></head><body><main>Editor</main></body></html>')],
     ['APPGOG/dashboard.blade.php', Buffer.from('<!doctype html><html><head></head><body>Dashboard</body></html>')],
     ['APPGOG/assets/app.js', Buffer.from('function calculateProtectedValue(input) { const originalLongVariableName = input + 1; console.log("APPGOG_VISIBLE_SOURCE_STRING"); return originalLongVariableName; } console.log(calculateProtectedValue(1));\n//# sourceMappingURL=app.js.map')],
+    ['APPGOG/preview-panel.html', Buffer.from('<!doctype html><html><body>development preview</body></html>')],
+    ['APPGOG/reports/custom.html', Buffer.from('<!doctype html><html><head></head><body>independent page</body></html>')],
+    ['APPGOG/assets/fragment.html', Buffer.from('<section>not an executable entry</section>')],
     ['APPGOG/assets/app.js.map', Buffer.from('{"version":3,"sources":["src/app.js"]}')],
   ]));
   const version = app.portal.publishSourceVersion({
@@ -118,6 +124,9 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   });
 
   const output = readZip(app.artifactStore.read(artifactRef));
+  assert.equal(output.has('APPGOG/preview-panel.html'), false);
+  assert.match(output.get('APPGOG/reports/custom.html').toString(), /data-appgog-license-runtime/);
+  assert.equal(output.get('APPGOG/assets/fragment.html').toString(), '<section>not an executable entry</section>');
   const index = output.get('APPGOG/index.html').toString('utf8');
   const editor = output.get('APPGOG/editor.html').toString('utf8');
   const dashboard = output.get('APPGOG/dashboard.blade.php').toString('utf8');
@@ -133,24 +142,16 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   const runtimeUrl = new URL(dashboard.match(/data-appgog-license-runtime="[^"]+" src="([^"]+)"/)[1], 'https://demo.example.com/');
   assert.equal(runtimeUrl.pathname, '/theme/' + runtimeName);
   const runtime = output.get(runtimeName).toString('utf8');
-  assert.match(runtime, /开始激活/);
-  assert.match(runtime, /剩余激活时间/);
-  assert.match(runtime, /激活 APPGOG/);
-  assert.match(runtime, /\/api\/v1\/install-windows\/start/);
-  assert.match(runtime, /\/api\/v2\/install-unlocks/);
-  assert.match(runtime, /\/api\/v1\/activations/);
-  assert.match(runtime, /\/plugin\/upload/);
-  assert.match(runtime, /\/plugin\/install/);
-  assert.match(runtime, /\/plugin\/enable/);
-  assert.match(runtime, /\/state\/runtime/);
-  assert.match(runtime, /\/sign-challenge/);
-  assert.match(runtime, /授权桥插件与当前主题包不一致/);
+  assert.match(runtime, /APPGOG-PROTECTED:v1/);
+  assert.doesNotMatch(runtime, /开始激活|packageProof|JSON\.parse\(atob\(/);
   const manifest = JSON.parse(output.get('APPGOG/appgog-license/build.json').toString('utf8'));
   assert.equal(manifest.build_id, leased.build.buildId);
   assert.equal(manifest.domain, 'demo.example.com');
   assert.equal(manifest.schema, 2);
   assert.equal(manifest.watermark, leased.build.watermark);
   assert.equal(manifest.integrity.algorithm, 'HMAC-SHA256');
+  assert.equal(typeof manifest.content_signature, 'string');
+  app.buildEngine.verifyArtifact({buffer: app.artifactStore.read(artifactRef), packageSecret: leased.build.packageSecret, expected: expectedArtifactIdentity(app, leased)});
   assert.ok(manifest.integrity.files.some((file) => file.path === runtimeName));
   assert.equal(manifest.protection.identity_algorithm, 'AES-256-GCM');
   assert.equal(manifest.protection.runtime_path, runtimeName);
@@ -166,6 +167,8 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   assert.ok(output.has(manifest.protection.bridge_package_path));
   const bridgePackage = readZip(output.get(manifest.protection.bridge_package_path));
   assert.ok(bridgePackage.has('AppgogLicenseBridge/config.json'));
+  assert.match(bridgePackage.get('AppgogLicenseBridge/assets/admin-entry.js').toString(), /APPGOG-PROTECTED:v1/);
+  assert.ok(bridgePackage.get('AppgogLicenseBridge/assets/admin-entry.js').toString().split('\n').length < 10);
   assert.ok(bridgePackage.has('AppgogLicenseBridge/Plugin.php'));
   assert.ok(bridgePackage.has('AppgogLicenseBridge/Providers/PluginServiceProvider.php'));
   assert.ok(bridgePackage.has('AppgogLicenseBridge/Services/BridgeState.php'));
@@ -383,7 +386,7 @@ test('未使用构建复用、作废权限与审计回滚', async (t) => {
   assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
   assert.equal(app.portal.buildDetails(built.customer, built.job.id).install_key, null);
   assert.equal(app.portal.customerOverview(built.customer).builds.find(job => job.id === built.job.id).can_void, false);
-  assert.throws(() => app.portal.artifactForDownload(built.customer, built.job.id), { code: 'ARTIFACT_NOT_READY' });
+  assert.throws(() => app.portal.artifactForDownload(built.customer, built.job.id), { code: 'ARTIFACT_NOT_READY', message: '此构建已作废，安装包不可下载，请重新构建' });
   assert.notEqual(app.repository.installKeyByBuildId(built.leased.build.buildId).status, 'available');
   assert.notEqual(repeat().id, built.job.id);
   assert.equal(app.database.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='build_job.voided'").get().n, 1);
@@ -427,7 +430,7 @@ test('作废文件清理失败保留重试记录且不能继续下载', async (t
   app.artifactStore.remove = () => { throw new Error('disk temporarily busy'); };
   assert.equal(app.portal.voidCustomerBuild(built.customer, built.job.id).status, 'cancelled');
   assert.equal(app.repository.buildJobById(built.job.id).artifact_ref, ref);
-  assert.throws(() => app.portal.artifactForDownload(built.customer, built.job.id), { code: 'ARTIFACT_NOT_READY' });
+  assert.throws(() => app.portal.artifactForDownload(built.customer, built.job.id), { code: 'ARTIFACT_NOT_READY', message: '此构建已作废，安装包不可下载，请重新构建' });
   app.artifactStore.remove = remove;
   app.portal.leaseBuild('cleanup-worker');
   assert.equal(app.repository.buildJobById(built.job.id).artifact_ref, null);
@@ -490,4 +493,84 @@ test('打包历史翻页覆盖超过30条、同一时间无重复、搜索与会
   const queued = app.portal.voidCustomerBuild(customer, ids[0]);
   assert.equal(queued.quota_refunded_at, null); assert.equal(app.repository.totalBuildCount(customer.actor_id), 0);
   assert.equal(app.portal.voidCustomerBuild(customer, ids[0]).quota_refunded_at, null);
+});
+
+
+test('中心内容签名拒绝包持有者重算HMAC、降级与替换公钥；未签名草稿不能交付', async () => {
+  const app = fixture();
+  try {
+    const built = await buildProtectedArtifact(app, { customerRef: 'CONTENT-SEAL' });
+    const expected = expectedArtifactIdentity(app, built.leased);
+    const check = buffer => app.buildEngine.verifyArtifact({buffer, packageSecret: built.leased.build.packageSecret, expected});
+    assert.throws(() => check(built.output.buffer), { code: 'PACKAGE_CONTENT_SIGNATURE_MISSING' });
+    const artifactRef = 'builds/' + built.job.id + '/sealed.zip';
+    app.artifactStore.put(artifactRef, built.output.buffer);
+    app.portal.completeBuild(built.workerId, built.job.id, {
+      build_id: built.leased.build.buildId, artifact_ref: artifactRef,
+      artifact_sha256: built.output.sha256, install_key: built.leased.build.installKey,
+      package_proof: built.leased.build.packageSecret,
+    });
+    const sealed = app.artifactStore.read(artifactRef);
+    check(sealed);
+    const detail = app.portal.buildDetails(built.customer, built.job.id);
+    assert.equal(detail.artifact_sha256, createHash('sha256').update(sealed).digest('hex'));
+    assert.notEqual(detail.artifact_sha256, built.output.sha256);
+    const manifestPath = 'APPGOG/appgog-license/build.json';
+    for (const attack of ['file+hmac','strip-seal','replace-key','metadata','remove-requirement']) {
+      const files=readZip(sealed), manifest=JSON.parse(files.get(manifestPath));
+      if (attack === 'file+hmac') {
+        files.set('APPGOG/assets/app.js', Buffer.from('console.log("changed after signing")'));
+        manifest.integrity.files=[...files].filter(([p])=>p!==manifestPath).sort(([a],[b])=>a.localeCompare(b)).map(([path,b])=>({path,bytes:b.length,sha256:createHash('sha256').update(b).digest('hex')}));
+        const {schema,product,version,build_id,package_id,domain,watermark,protection}=manifest;
+        manifest.integrity.digest=createHmac('sha256',built.leased.build.packageSecret).update(JSON.stringify({schema,product,version,build_id,package_id,domain,watermark,protection,files:manifest.integrity.files})).digest('hex');
+      }
+      if (attack === 'strip-seal') delete manifest.content_signature;
+      if (attack === 'replace-key') manifest.verification_keys.package=generateKeyPairSync('ed25519').publicKey.export({type:'spki',format:'pem'});
+      if (attack === 'metadata') manifest.license_server='https://substituted.invalid';
+      if (attack === 'remove-requirement') {const parts=manifest.package_manifest_token.split('.');const payload=JSON.parse(Buffer.from(parts[1],'base64url'));delete payload.content_signature_required;parts[1]=Buffer.from(JSON.stringify(payload)).toString('base64url');manifest.package_manifest_token=parts.join('.');}
+      files.set(manifestPath,Buffer.from(JSON.stringify(manifest)));
+      assert.throws(()=>check(writeZip(files)), e=>['PACKAGE_CONTENT_SIGNATURE_INVALID','PACKAGE_CONTENT_SIGNATURE_MISSING','TOKEN_SIGNATURE_INVALID'].includes(e.code),attack);
+    }
+  } finally {app.close();}
+});
+
+
+test('真实成品中心签名被PHP桥验签，篡改与公钥替换拒绝且旧登记保留', async () => {
+  const app=fixture();
+  try {
+    const built=await buildProtectedArtifact(app,{customerRef:'PHP-SEAL'});
+    const ref='builds/'+built.job.id+'/php.zip';app.artifactStore.put(ref,built.output.buffer);
+    app.portal.completeBuild(built.workerId,built.job.id,{build_id:built.leased.build.buildId,artifact_ref:ref,artifact_sha256:built.output.sha256,install_key:built.leased.build.installKey,package_proof:built.leased.build.packageSecret});
+    const files=readZip(app.artifactStore.read(ref));
+    const themeRoot=join(app.root,'installed','APPGOG'),privateRoot=join(app.root,'private');
+    const manifestPath=join(themeRoot,'appgog-license/build.json');
+    for(const [p,b] of files){const path=join(app.root,'installed',p);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,b);}
+    const publishedRoot=join(privateRoot,'public','theme','APPGOG');
+    for(const [p,b] of files){const path=join(publishedRoot,p.slice('APPGOG/'.length));mkdirSync(dirname(path),{recursive:true});writeFileSync(path,b);}
+    const trustedKeyPath=join(app.root,'trusted-public.pem');writeFileSync(trustedKeyPath,app.publicKey.export({type:'spki',format:'pem'}));
+    const check=()=>{const result=spawnSync(process.env.APPGOG_TEST_PHP||'php',[resolve('tests/fixtures/bridge-content-signature.php'),resolve('apps/build-worker/xboard-bridge/AppgogLicenseBridge/Host/Guard.php'),themeRoot,privateRoot,trustedKeyPath],{encoding:'utf8',timeout:30000});assert.equal(result.status,0,result.stderr);return JSON.parse(result.stdout.replace(/^\uFEFF/,''));};
+    assert.deepEqual(check(),{content_valid:true,enrolled:true});
+    writeFileSync(join(publishedRoot,'assets/app.js'),'public copy only modified');
+    assert.deepEqual(check(),{content_valid:false,enrolled:true});
+    writeFileSync(join(publishedRoot,'assets/app.js'),files.get('APPGOG/assets/app.js'));
+    assert.deepEqual(check(),{content_valid:true,enrolled:true});
+    writeFileSync(join(publishedRoot,'unexpected.js'),'injected script');
+    assert.deepEqual(check(),{content_valid:false,enrolled:true});
+    rmSync(join(publishedRoot,'unexpected.js'));
+    writeFileSync(join(themeRoot,'assets/app.js'),'modified after signing');
+    assert.deepEqual(check(),{content_valid:false,enrolled:false});
+    writeFileSync(join(themeRoot,'assets/app.js'),files.get('APPGOG/assets/app.js'));
+    const manifest=JSON.parse(files.get('APPGOG/appgog-license/build.json'));
+    const missing=structuredClone(manifest);delete missing.content_signature;writeFileSync(manifestPath,JSON.stringify(missing));
+    assert.deepEqual(check(),{content_valid:false,enrolled:false});
+    const other=generateKeyPairSync('ed25519');const replacement=structuredClone(manifest);
+    replacement.verification_keys={activation:other.publicKey.export({type:'spki',format:'pem'}),package:other.publicKey.export({type:'spki',format:'pem'})};
+    const claims=JSON.parse(Buffer.from(manifest.package_manifest_token.split('.')[1],'base64url'));
+    replacement.package_manifest_token=signCompactToken(claims,other.privateKey);
+    replacement.content_signature=signCompactToken(packageContentClaims(replacement,claims.iss),other.privateKey);
+    writeFileSync(manifestPath,JSON.stringify(replacement));
+    assert.deepEqual(check(),{content_valid:false,enrolled:false});
+    writeFileSync(manifestPath,files.get('APPGOG/appgog-license/build.json'));
+    assert.deepEqual(check(),{content_valid:true,enrolled:true});
+  }finally{app.close();}
 });

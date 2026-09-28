@@ -47,3 +47,15 @@ test('main 更新必须自动生成签名 Latest Release 并持续检查漂移',
   assert.match(drift, /schedule:/);
   assert.match(drift, /verify-published-release\.js --tag "v\$version"/);
 });
+
+test('候选签名必须先通过验证且不能提前创建正式发布', () => {
+  const workflow = readFileSync(resolve(root, '.github/workflows/docker.yml'), 'utf8');
+  const preflight = workflow.split('  preflight-sign:')[1]?.split('  release:')[0] ?? '';
+  assert.match(preflight, /workflow_dispatch.*inputs\.sign_preflight/);
+  assert.match(preflight, /needs: verify/);
+  assert.match(preflight, /APPGOG_RELEASE_SIGNING_PRIVATE_KEY/);
+  assert.match(preflight, /verify-release-contract\.js --artifacts/);
+  assert.match(preflight, /if: always\(\)/);
+  assert.doesNotMatch(preflight, /gh release|git tag|git push|APPGOG_ALLOW_UNSIGNED_ARTIFACTS/);
+  assert.match(workflow, /node scripts\/verify-bridge-integrity-performance\.js/);
+});

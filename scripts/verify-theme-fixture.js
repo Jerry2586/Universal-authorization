@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHttpHandler } from '../apps/license-api/src/http.js';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 import { bootstrap } from '../apps/license-api/src/bootstrap.js';
 import { openDatabase } from '../apps/license-api/src/database.js';
 import { readZip, writeZip } from '../packages/core/src/zip.js';
@@ -91,6 +91,32 @@ try {
   const expected = { issuer: config.publicBaseUrl, product: leased.build.product, version,
     build_id: leased.build.buildId, package_id: leased.build.packageId,
     domain: leased.build.domain, watermark: leased.build.watermark };
+  app.buildEngine.verifyArtifact({ buffer: output.buffer, packageSecret: leased.build.packageSecret, expected });
+  assert.equal(typeof manifest.content_signature, 'string');
+  assert.equal(files.has(themeRoot + 'preview-panel.html'), false);
+  assert.match(files.get(manifest.protection.runtime_path).toString(), /APPGOG-PROTECTED:v1/);
+  const protectedBridge = readZip(files.get(manifest.protection.bridge_package_path));
+  assert.match(protectedBridge.get('AppgogLicenseBridge/assets/admin-entry.js').toString(), /APPGOG-PROTECTED:v1/);
+  let phpContentCheck = null;
+  if (process.env.APPGOG_TEST_PHP) {
+    const installedRoot = join(root, 'php-installed'), privateRoot = join(root, 'php-private');
+    const publishedRoot = join(privateRoot, 'public', 'theme', 'APPGOG');
+    for (const [path, bytes] of files) {
+      const relative = path.slice(themeRoot.length);
+      for (const base of [installedRoot, publishedRoot]) {
+        const destination = join(base, relative); mkdirSync(dirname(destination), { recursive: true }); writeFileSync(destination, bytes);
+      }
+    }
+    const trusted = join(root, 'fixture-trusted-public.pem'); writeFileSync(trusted, publicKeyPem);
+    const start = performance.now();
+    const result = spawnSync(process.env.APPGOG_TEST_PHP, [resolve('tests/fixtures/bridge-content-signature.php'),
+      resolve('apps/build-worker/xboard-bridge/AppgogLicenseBridge/Host/Guard.php'), installedRoot, privateRoot, trusted, 'benchmark'],
+      { encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.status, 0, result.stderr);
+    const phpResult = JSON.parse(result.stdout);
+    assert.equal(phpResult.content_valid, true); assert.equal(phpResult.enrolled, true);
+    phpContentCheck = { result: 'passed', dual_tree_ms: phpResult.dual_tree_ms, elapsed_ms_including_php_startup: Math.round(performance.now() - start), files: files.size, trees: 2 };
+  }
   const tampered = new Map(files);
   tampered.set(themeRoot + 'editor.html', Buffer.from('<html>tampered</html>'));
   assert.throws(() => app.buildEngine.verifyArtifact({ buffer: writeZip(tampered), packageSecret: leased.build.packageSecret, expected }));
@@ -117,10 +143,10 @@ try {
   const claims = verifyActivation({ token: activated.token, publicKey, domain: context.domain,
     backendUrl: context.backendUrl, installationId: context.installationId, now: new Date() });
   assert.equal(claims.package_id, leased.build.packageId);
-  console.log(JSON.stringify({ result: 'passed', source: resolve(input), version,
+  console.log(JSON.stringify({ result: 'passed', php_content_check: phpContentCheck, source: resolve(input), version,
     source_sha256: createHash('sha256').update(source).digest('hex'), artifact_sha256: output.sha256,
     files: files.size, entrypoints: 3, protection: manifest.protection.javascript_protection,
-    checks: ['real_http_worker_process', 'real_zip_build', 'three_gated_entries', 'published_runtime_urls', 'bridge_bundle', 'business_js_protection',
+    checks: ['real_http_worker_process', 'real_zip_build', 'three_gated_entries', 'published_runtime_urls', 'bridge_bundle', 'center_content_signature', 'generated_scripts_protected', 'development_preview_excluded', 'business_js_protection',
       'no_source_maps', 'tamper_rejected', 'wrong_key_rejected', 'install_key_single_use', 'signed_install_window', 'fixed_key_activation'] }, null, 2));
 } finally {
   database.close();

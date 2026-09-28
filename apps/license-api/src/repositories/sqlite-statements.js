@@ -1,6 +1,14 @@
 export function createSqliteStatements(database) {
   return {
     insertProduct: database.prepare(`INSERT INTO products (id, code, name, created_at) VALUES (?, ?, ?, ?)`),
+    listProducts: database.prepare(`SELECT products.*,
+      (SELECT COUNT(*) FROM licenses WHERE product_id = products.id) AS license_count,
+      (SELECT COUNT(*) FROM source_versions WHERE product_id = products.id) AS version_count
+      FROM products ORDER BY created_at, code`),
+    updateProduct: database.prepare('UPDATE products SET name = ?, status = ? WHERE code = ?'),
+    listAllSourceVersions: database.prepare(`SELECT source_versions.*, products.code AS product_code, products.name AS product_name
+      FROM source_versions JOIN products ON products.id = source_versions.product_id
+      ORDER BY COALESCE(source_versions.published_at, source_versions.created_at) DESC, source_versions.id`),
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
     planByCode: database.prepare(`SELECT * FROM license_plans WHERE code = ?`),
     listPlans: database.prepare(`SELECT * FROM license_plans WHERE status = 'active' ORDER BY code ASC`),

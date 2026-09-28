@@ -1,3 +1,4 @@
+import { protectGeneratedJavaScript } from './generated-protection.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +32,9 @@ export function createXboardBridgePackage() {
   if (!cachedPackage) {
     const files = new Map();
     collect(PLUGIN_ROOT, `${basename(PLUGIN_ROOT)}/`, files);
+    for (const [path, content] of files) {
+      if (path.endsWith('.js')) files.set(path, Buffer.from(protectGeneratedJavaScript(content.toString('utf8'), xboardBridgeDescriptor().version + ':' + path)));
+    }
     cachedPackage = writeZip(files, { date: new Date('2026-09-25T00:00:00.000Z') });
   }
   return Buffer.from(cachedPackage);

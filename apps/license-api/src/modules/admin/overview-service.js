@@ -16,6 +16,7 @@ export function createAdminOverviewService({ repository, licensing, operations, 
       start.setHours(0, 0, 0, 0);
       const rollingDay = startOfRollingDay(clock());
       return {
+        products: repository.listProducts(),
         stats: repository.dashboardStats(start.toISOString()),
         license_plans: repository.allPlans().map((plan) => ({
           id: plan.id, code: plan.code, name: plan.name, status: plan.status, access_tier: plan.access_tier,
@@ -49,8 +50,8 @@ export function createAdminOverviewService({ repository, licensing, operations, 
           last_seen_at: activation.last_seen_at, created_at: activation.created_at,
         })),
         audit: repository.listAudit(100),
-        versions: repository.listSourceVersions('appgog').map((version) => ({
-          id: version.id, version: version.version, display_name: version.display_name, status: version.status,
+        versions: repository.listAllSourceVersions().map((version) => ({
+          id: version.id, product_code: version.product_code, product_name: version.product_name, version: version.version, display_name: version.display_name, status: version.status,
           source_kind: version.source_kind, release_notes: version.release_notes, channel: version.channel,
           release_kind: version.release_kind, access_tier: version.access_tier ?? 'free',
           min_xboard_version: version.min_xboard_version,

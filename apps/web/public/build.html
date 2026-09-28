@@ -126,16 +126,22 @@
         </section>
 
         <section class="page-view" data-page="lifecycle">
-          <div class="page-heading"><div><span class="overline">PRODUCT LIFECYCLE</span><h2>安装、恢复与迁移</h2><p>所有操作共用同一固定 License Key，但安装身份和一次性凭证严格分离。</p></div><span class="status-pill status-success">安全状态机</span></div>
+          <div class="page-heading"><div><span class="overline">INSTALLATION GUIDE</span><h2>安装、恢复与迁移</h2><p>首次使用按顺序激活；重新部署时，按实际场景选择处理方式。</p></div><span class="status-pill">操作指南</span></div>
+          <section class="surface lifecycle-start"><div class="lifecycle-section-head"><div><span class="overline">START HERE</span><h3>首次安装 · 三步完成激活</h3></div><span class="lifecycle-note">点击开始激活后计时 60 分钟</span></div>
+            <ol class="lifecycle-steps">
+              <li><span class="lifecycle-step">01</span><div><h4>安装主题包</h4><p>上传构建好的 ZIP，确认授权桥已安装并启用。</p></div></li>
+              <li><span class="lifecycle-step">02</span><div><h4>本地解锁</h4><p>点击“开始激活”，输入与此安装包对应的一次性 Install Key。</p></div></li>
+              <li><span class="lifecycle-step">03</span><div><h4>在线激活</h4><p>进入主题后台，输入固定 License Key，完成授权后使用。</p></div></li>
+            </ol>
+          </section>
+          <div class="lifecycle-section-head lifecycle-scenarios-heading"><div><span class="overline">RECOVERY & CHANGES</span><h3>已有安装，按场景处理</h3></div><span class="lifecycle-note">固定 Key 与安装身份分别管理</span></div>
           <div class="lifecycle-grid">
-            <section class="surface lifecycle-card"><span class="surface-number">01</span><div><span class="overline">FIRST INSTALL</span><h3>首次安装激活</h3><p>安装 ZIP 后点击“开始激活”才启动 60 分钟窗口。先使用一次性 Install Key 解锁，再使用固定 License Key 完成正式激活。</p></div></section>
-            <section class="surface lifecycle-card"><span class="surface-number">02</span><div><span class="overline">REINSTALL & REPAIR</span><h3>同服务器重装 / 修复</h3><p>保留 Installation ID 与安装私钥时，可验证官方包后恢复授权并轮换刷新凭证；修复只覆盖同版本程序文件，不改变用户数据。</p></div></section>
-            <section class="surface lifecycle-card"><span class="surface-number">03</span><div><span class="overline">DOMAIN REBIND</span><h3>更换授权域名</h3><p>在“我的授权”自助换绑。旧激活立即撤销，固定 Key 不变；随后为新域名重新构建并激活，避免旧包跨域复制。</p></div></section>
-            <section class="surface lifecycle-card"><span class="surface-number">04</span><div><span class="overline">SERVER MIGRATION</span><h3>迁移到新服务器</h3><p>新服务器必须生成新的 Installation ID。迁移采用短期配对、候选验证、唯一 Active 切换与回滚窗口，旧服务器切换后进入 Fenced。</p></div></section>
-            <section class="surface lifecycle-card"><span class="surface-number">05</span><div><span class="overline">OFFLINE LICENSE</span><h3>离线授权文件</h3><p>由已激活服务器使用安装私钥申请签名文件；文件绑定域名、Build、Package、套餐和离线截止时间，不能复制到另一台服务器。</p></div></section>
-            <section class="surface lifecycle-card lifecycle-card-warning"><span class="surface-number">60</span><div><span class="overline">MINUTE WINDOW</span><h3>超时安全清理</h3><p>倒计时不因刷新或输错 Key 重置。超时后主题保持锁定，并由 Xboard 服务端桥先切回原主题再删除未激活主题，绝不删除业务数据。</p></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number" aria-hidden="true">↻</span><div><h3>同服务器重装 / 修复</h3><p>保留安装身份与私钥，校验官方包后恢复授权。修复覆盖同版本程序文件，保留用户数据。</p><span class="lifecycle-card-note">保留 Installation ID · 刷新凭证可轮换</span></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number" aria-hidden="true">↗</span><div><h3>更换授权域名</h3><p>在“我的授权”自助换绑，再为新域名重新构建并激活。旧激活撤销，固定 Key 保持不变。</p><span class="lifecycle-card-note">旧包不能跨域复制使用</span></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number" aria-hidden="true">⇄</span><div><h3>迁移到新服务器</h3><p>新服务器生成新安装身份，通过迁移配对和验证完成接管。切换后隔离旧安装，并保留回滚窗口。</p><span class="lifecycle-card-note">仅一个活动实例 · 本页为流程说明</span></div></section>
+            <section class="surface lifecycle-card"><span class="surface-number" aria-hidden="true">◇</span><div><h3>离线授权文件</h3><p>由已激活服务器申请签名文件，绑定域名、安装包、套餐及有效期；不能复制到其他服务器使用。</p><span class="lifecycle-card-note">由安装私钥申请 · 到期需重新验证</span></div></section>
           </div>
-          <div class="notice-card"><span>i</span><div><strong>服务端桥是安全边界</strong><p>自动删除、服务器身份恢复、离线文件和迁移签名必须由 Xboard 服务端桥执行；浏览器 JS 只负责展示与发起受控请求。</p></div></div>
+          <aside class="lifecycle-safety"><span class="lifecycle-safety-label">60 分钟窗口</span><p>刷新页面或输错 Key 不会重置计时。超时后主题保持锁定，服务端桥先切回原主题，再清理未激活主题，保留业务数据。</p></aside>
         </section>
 
         <section class="page-view" data-page="tickets">

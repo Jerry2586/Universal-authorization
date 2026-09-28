@@ -343,7 +343,7 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
         void copyLicenseKey(license);
       }
     });
-    customer.append(customerLine, keyText);
+    customer.append(customerLine, keyText, element('small', license.product || 'APPGOG', 'table-subline'));
     if (state.session?.is_owner && can('license.manage')) {
       const eye = button('', () => toggleLicenseKey(license, keyText, eye), 'license-key-eye');
       setEyeIcon(eye, revealedLicenseKeys.has(license.id));

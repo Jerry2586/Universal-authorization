@@ -105,7 +105,8 @@ export function createAdminDashboard(shell, collaborators) {
     if ($('version-draft')) $('version-draft').textContent = versions.filter((item) => item.status !== 'active').length;
     const versionQuery = search('version-search');
     const versionStatus = $('version-status-filter')?.value || '';
-    const visibleVersions = versions.filter((version) => (!versionStatus || version.status === versionStatus)
+    const productCode = $('version-product-filter')?.value || '';
+    const visibleVersions = versions.filter((version) => (!productCode || version.product_code === productCode) && (!versionStatus || version.status === versionStatus)
       && [version.version, version.display_name, version.release_notes].some((value) => match(value, versionQuery)));
     list.replaceChildren();
     if (!visibleVersions.length) {
@@ -113,15 +114,19 @@ export function createAdminDashboard(shell, collaborators) {
       empty.append(element('span', '▦'), element('strong', '尚未发布版本'), element('p', '上传第一个正式主题包后，客户才能创建构建。'));
       list.append(empty);
     }
-    for (const [index, version] of visibleVersions.entries()) {
+    const latestProductVersions = new Map();
+    for (const version of versions) {
+      if (version.status === 'active' && !latestProductVersions.has(version.product_code)) latestProductVersions.set(version.product_code, version.id);
+    }
+    for (const version of visibleVersions) {
       const item = element('article', null, 'release-item compact-release-item');
       const summary = element('div', null, 'release-summary');
       const title = element('div', null, 'version-name-row');
       title.append(element('strong', version.display_name || `APPGOG ${version.version}`));
-      if (index === 0 && version.status === 'active') title.append(element('span', '最新', 'badge success'));
+      if (latestProductVersions.get(version.product_code) === version.id) title.append(element('span', '最新', 'badge success'));
       title.append(element('span', version.access_tier === 'paid' ? '仅付费授权' : '免费授权可用', `badge ${version.access_tier === 'paid' ? '' : 'success'}`));
       summary.append(title,
-        element('small', `${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)} · ${date(version.published_at || version.created_at)}`),
+        element('small', `${version.product_name || version.product_code || 'APPGOG'} · ${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)} · ${date(version.published_at || version.created_at)}`),
         element('p', version.release_notes || '暂无更新公告'));
       const meta = element('div', null, 'release-meta');
       meta.append(element('span', version.source_kind === 'official' ? '真实源码 ZIP' : version.source_kind || '源码未知'));

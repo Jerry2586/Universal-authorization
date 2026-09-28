@@ -7,6 +7,12 @@ export function createProductSqliteRepository(queries) {
       queries.insertProduct.run(id, code, name, now);
       return queries.productByCode.get(code);
     },
+    listProducts: () => queries.listProducts.all(),
+    listAllSourceVersions: () => queries.listAllSourceVersions.all(),
+    updateProduct({ code, name, status }) {
+      queries.updateProduct.run(name, status, code);
+      return queries.productByCode.get(code);
+    },
     productByCode: (code) => queries.productByCode.get(code),
     createSourceVersion(values) {
       const id = values.id ?? newId('src');

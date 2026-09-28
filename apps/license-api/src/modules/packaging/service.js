@@ -9,7 +9,7 @@ import { secretMatches } from '../../../../../packages/core/src/security.js';
 import { publicBuildJob, SOURCE_KIND } from '../../../../../packages/contracts/src/build-job.js';
 
 export function createPackagingService({
-  database, repository, queue, buildAuthorization, entitlementAccess, operations, artifactStore, buildEngine, config, clock = () => new Date(),
+  database, repository, queue, buildAuthorization, entitlementAccess, operations, artifactStore, buildEngine, signContent, config, clock = () => new Date(),
 }) {
   function customerLicense(session) {
     const license = repository.licenseById(session.actor_id);
@@ -104,7 +104,8 @@ export function createPackagingService({
       customerLicense(session);
       const job = repository.buildJobById(jobId);
       invariant(job && job.license_id === session.actor_id, 'BUILD_JOB_NOT_FOUND', '构建任务不存在', 404);
-      invariant(job.status === 'succeeded' && job.artifact_ref, 'ARTIFACT_NOT_READY', '构建成品尚未生成', 409);
+      invariant(job.status === 'succeeded' && job.artifact_ref, 'ARTIFACT_NOT_READY',
+        job.status === 'cancelled' ? '此构建已作废，安装包不可下载，请重新构建' : '构建成品尚未生成', 409);
       const build = repository.buildById(job.build_id);
       const installKey = repository.installKeyByBuildId(job.build_id);
       invariant(build?.status === 'ready' && installKey?.status === 'available'
@@ -195,7 +196,8 @@ export function createPackagingService({
         'BUILD_RESULT_MISMATCH', 'Worker 返回的构建身份与任务不一致', 409,
       );
       invariant(/^[a-f0-9]{64}$/i.test(result.artifact_sha256 ?? ''), 'ARTIFACT_HASH_INVALID', '构建成品 SHA-256 无效');
-      invariant(typeof result.artifact_ref === 'string' && result.artifact_ref.length > 0, 'ARTIFACT_REF_INVALID', '构建成品引用无效');
+      invariant(typeof result.artifact_ref === 'string' && result.artifact_ref.startsWith('builds/' + job.id + '/')
+        && !result.artifact_ref.includes('..') && !result.artifact_ref.includes('\\'), 'ARTIFACT_REF_INVALID', '构建成品引用不属于当前任务');
       let artifactBuffer;
       try { artifactBuffer = artifactStore.read(result.artifact_ref); }
       catch { throw new Error('ARTIFACT_NOT_FOUND'); }
@@ -204,20 +206,24 @@ export function createPackagingService({
       invariant(secretMatches(result.package_proof, build.package_secret_hash, config.pepper),
         'PACKAGE_PROOF_INVALID', 'Worker 返回的 Package Secret 与构建身份不匹配', 409);
       const watermark = createHash('sha256').update(`${build.license_id}:${build.id}:${build.package_id}`).digest('hex');
-      buildEngine.verifyArtifact({
+      const verification = {
         buffer: artifactBuffer,
         packageSecret: result.package_proof,
         expected: {
           issuer: config.publicBaseUrl, product: build.product_code, version: build.version,
           build_id: build.id, package_id: build.package_id, domain: build.domain, watermark,
         },
-      });
+      };
+      buildEngine.verifyArtifact({ ...verification, allowUnsignedDraft: true });
       const installKeyRecord = repository.installKeyByBuildId(build.id);
       invariant(installKeyRecord && secretMatches(result.install_key, installKeyRecord.key_hash, config.pepper),
         'INSTALL_KEY_MISMATCH', 'Worker 安装 Key 与构建身份不匹配', 409);
+      const sealed = buildEngine.sealArtifact({ ...verification, signContent });
+      // Unpublished draft path; it becomes downloadable only after the queue commits success.
+      artifactStore.put(result.artifact_ref, sealed.buffer);
       const completed = queue.complete(jobId, {
         workerId, buildId: result.build_id, artifactRef: result.artifact_ref,
-        artifactSha256: result.artifact_sha256,
+        artifactSha256: sealed.sha256,
         installKeyEncrypted: sealSecret(result.install_key, config.deliveryEncryptionKey),
         message: '构建完成，可以下载安装',
       });

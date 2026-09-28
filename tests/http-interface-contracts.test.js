@@ -72,7 +72,7 @@ async function fixture(t) {
     return { kind, cookie: result.cookie, csrf: result.data.csrf_token };
   }
   const admin = await login('admin', { username: 'admin', password: config.adminPassword });
-  return { config, send, login, admin, base, build };
+  return { config, send, login, admin, base, build, app, database, privateKey, publicKey: pem };
 }
 
 test('HTTP contracts: operations, admin lifecycle, license key rotation and revocation', async t => {
@@ -216,7 +216,7 @@ test('bridge maintenance HTTP requires administrator system permission and CSRF'
   const { send, admin, login } = await fixture(t);
   await send('/web/admin/system/bridge', { status: 401 });
   const status = (await send('/web/admin/system/bridge', { actor: admin })).data;
-  assert.equal(status.current_version, '1.1.5');
+  assert.equal(status.current_version, '1.1.6');
   assert.equal(status.repairable, true);
   await send('/web/admin/system/bridge/update', { actor: { ...admin, csrf: 'wrong' }, body: {}, status: 403 });
   await send('/web/admin/system/bridge/update', { actor: admin, body: { action: 'install-version' }, status: 409 });
@@ -226,4 +226,65 @@ test('bridge maintenance HTTP requires administrator system permission and CSRF'
   const support = await login('admin', { username: 'bridge-support', password: '123456' });
   await send('/web/admin/system/bridge', { actor: support, status: 403 });
   await send('/web/admin/system/bridge/update', { actor: support, body: {}, status: 403 });
+});
+
+
+test('product management: permissions, immutable code, archive preserves activation, product isolation and audit rollback', async t => {
+  const { send, login, admin, app, database, config, privateKey, publicKey } = await fixture(t);
+  const post = (path, body, status = 200) => send(path, { actor: admin, body, status });
+  await send('/web/admin/products', { status: 401 });
+  await send('/web/admin/products', { actor: { ...admin, csrf: 'wrong' }, body: { code: 'other', name: 'Other' }, status: 403 });
+  await post('/web/admin/admins', { username: 'catalog-operator', password: '123456', role: 'license_ops' }, 201);
+  const operator = await login('admin', { username: 'catalog-operator', password: '123456' });
+  await send('/web/admin/products', { actor: operator });
+  await send('/web/admin/products', { actor: operator, body: { code: 'other', name: 'Other' }, status: 403 });
+  for (const code of ['../other', 'bad/code', '', 12]) {
+    assert.equal((await post('/web/admin/products', { code, name: 'Invalid' }, 400)).data.error.code, 'PRODUCT_CODE_INVALID');
+  }
+  await send('/web/admin/licenses', { actor: operator, body: { product_code: 'unknown-product', customer_ref: 'must-not-create-product' }, status: 404 });
+  await post('/web/admin/versions', { product_code: 'unknown-product', version: '1.0.0' }, 404);
+  await post('/web/admin/products', { code: 'other', name: 'Other product' }, 201);
+  await post('/web/admin/products', { code: 'OTHER', name: 'Duplicate' }, 409);
+  const patch = body => send('/web/admin/products/other', { actor: admin, method: 'PATCH', body });
+  await send('/web/admin/products/other', { actor: admin, method: 'PATCH', body: { code: 'changed', name: 'Other', status: 'active' }, status: 400 });
+  await send('/web/admin/products/other', { actor: admin, method: 'DELETE', status: 404 });
+  const zip = writeZip(new Map([['config.json', Buffer.from('{"name":"Theme","version":"2.0.0"}')], ['index.html', Buffer.from('<html><head></head><body>Fixture</body></html>')]]));
+  for (const code of ['appgog', 'other']) {
+    await send('/web/admin/versions/upload?product_code=' + code, { actor: admin, raw: zip, contentType: 'application/zip', status: 201 });
+  }
+  const issued = (await post('/web/admin/licenses', { product_code: 'other', customer_ref: 'product-fixture', domain: 'product.example.com' }, 201)).data;
+  const ticket = (await send('/api/v1/builds/authorize', { body: { license_key: issued.license_key, version: '2.0.0', domain: 'product.example.com' }, status: 201 })).data;
+  const build = (await send('/api/v1/worker/builds/claim', { token: config.workerToken, body: { build_ticket: ticket.build_ticket }, status: 201 })).data;
+  const identity = { build_id: build.build_id, package_proof: build.package_secret, domain: 'product.example.com', backend_url: 'https://product.example.com', installation_id: 'installation_product_contract_1' };
+  const receipt = (await send('/api/v1/install-unlocks', { body: { ...identity, install_key: build.install_key }, status: 201 })).data;
+  const activation = (await send('/api/v1/activations', { body: { ...identity, ...receipt, license_key: issued.license_key }, status: 201 })).data;
+  const before = app.repository.licenseById(issued.license_id);
+  const archived = await patch({ name: 'Renamed product', status: 'archived' });
+  assert.equal(archived.data.code, 'other');
+  assert.deepEqual({ ...app.repository.licenseById(issued.license_id) }, { ...before, product_name: 'Renamed product' });
+  assert.equal((await post('/web/admin/licenses', { product_code: 'other', customer_ref: 'blocked' }, 409)).data.error.code, 'PRODUCT_ARCHIVED');
+  await post('/web/admin/versions', { product_code: 'other', version: '2.1.0' }, 409);
+  await send('/web/admin/versions/upload?product_code=other', { actor: admin, raw: zip, contentType: 'application/zip', status: 409 });
+  await send('/api/v1/activations/refresh', { body: { ...identity, activation_id: activation.activation_id, refresh_secret: activation.refresh_secret } });
+  const customer = await login('customer', { license_key: issued.license_key });
+  const overview = (await send('/web/customer/overview', { actor: customer })).data;
+  assert.equal(overview.versions.length, 1);
+  const adminOverview = (await send('/web/admin/overview', { actor: admin })).data;
+  assert.deepEqual(new Set(adminOverview.versions.map(item => item.product_code)), new Set(['appgog', 'other']));
+  const catalog = (await send('/web/admin/products', { actor: admin })).data.products;
+  assert.equal(catalog.find(item => item.code === 'other').license_count, 1);
+  assert.equal(catalog.find(item => item.code === 'other').version_count, 1);
+  await patch({ name: 'Renamed product', status: 'active' });
+  await post('/web/admin/licenses', { product_code: 'other', customer_ref: 'restored' }, 201);
+  // An existing database and archived default product survive another bootstrap without being re-enabled.
+  app.portal.updateManagedProduct({ code: 'appgog', name: 'Original product', status: 'archived', actorId: null });
+  bootstrap({ database, config, privateKey, publicKey });
+  assert.equal(app.repository.productByCode('appgog').status, 'archived');
+  assert.equal(app.repository.licenseById(issued.license_id).key_hash, before.key_hash);
+  database.exec("CREATE TRIGGER reject_product_audit BEFORE INSERT ON audit_events WHEN NEW.subject_type = 'product' BEGIN SELECT RAISE(ABORT, 'audit failed'); END");
+  assert.throws(() => app.portal.createManagedProduct({ code: 'rollback', name: 'Rollback' }), /audit failed/);
+  assert.equal(app.repository.productByCode('rollback'), undefined);
+  assert.throws(() => app.portal.updateManagedProduct({ code: 'other', name: 'Should rollback', status: 'archived' }), /audit failed/);
+  assert.equal(app.repository.productByCode('other').status, 'active');
+  assert.equal(app.repository.productByCode('other').name, 'Renamed product');
 });

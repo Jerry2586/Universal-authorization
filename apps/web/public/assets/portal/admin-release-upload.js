@@ -88,7 +88,7 @@ export function createAdminReleaseUpload(shell) {
         const file = state.sourceFile ?? fields.get('source_zip');
         if (!(file instanceof File) || !file.size) throw new Error('请选择主题 ZIP');
         const params = new URLSearchParams({
-          product_code: 'appgog', source_filename: file.name,
+          product_code: String(fields.get('product_code') || ''), source_filename: file.name,
           version: String(fields.get('version')), display_name: String(fields.get('display_name') || ''),
           release_notes: String(fields.get('release_notes') || ''), channel: String(fields.get('channel') || 'stable'),
           release_kind: String(fields.get('release_kind') || 'feature'),

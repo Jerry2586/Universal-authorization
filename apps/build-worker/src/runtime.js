@@ -221,6 +221,28 @@ export function browserLicenseRuntime(config, mountPage = null) {
     } catch { return false; }
   }
 
+  function contentCanonical(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return '[' + value.map(contentCanonical).join(',') + ']';
+    return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + contentCanonical(value[key])).join(',') + '}';
+  }
+
+  async function contentSignatureValid(identity) {
+    if (identity.content_signature_required !== true) return true; // Explicit legacy identity contract.
+    try {
+      const response = await nativeFetch(new URL('../build.json', runtimeSource), { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) return false;
+      const manifest = await response.json();
+      if (manifest.package_manifest_token !== config.m || manifest.protection?.protected_identity_sha256 !== config.h
+        || manifest.protection?.bridge_package_sha256 !== config.y) return false;
+      const signature = await signedPayload(manifest.content_signature, packagePublicKey);
+      if (!signature || signature.typ !== 'package-content-v1' || signature.iss !== identity.iss
+        || signature.build_id !== config.b || signature.package_id !== config.i) return false;
+      const { content_signature, ...content } = manifest;
+      return signature.content_sha256 === hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(contentCanonical(content))));
+    } catch { return false; }
+  }
+
   async function packageIdentityValid() {
     const payload = await signedPayload(config.m, packagePublicKey);
     if (!payload || payload.typ !== 'package-manifest' || payload.product !== config.p
@@ -237,6 +259,7 @@ export function browserLicenseRuntime(config, mountPage = null) {
       health: captured(bridgeHealth()),
       runtime: captured(bridgeRequest('/state/runtime', { package_id: config.i, package_proof: packageProof() })),
     };
+    if (!await contentSignatureValid(payload)) return { ok: false, reason: 'content-signature' };
     if (!await protectedIdentityValid()) return { ok: false, reason: 'protected-identity' };
     return { ok: true };
   }

@@ -4,9 +4,11 @@ import JavaScriptObfuscator from 'javascript-obfuscator';
 import { minify } from 'terser';
 import { BuildEngine } from '../../../packages/ports/src/build-engine.js';
 import { invariant } from '../../../packages/core/src/errors.js';
+import { packageContentClaims, verifyPackageContent } from '../../../packages/core/src/package-content.js';
 import { verifyCompactToken } from '../../../packages/core/src/signing.js';
 import { readZip, writeZip } from '../../../packages/core/src/zip.js';
 import { createBuildInjection } from './manifest.js';
+import { protectGeneratedJavaScript } from './generated-protection.js';
 import { createBrowserLicenseRuntime } from './runtime.js';
 import { initialLockMarkup, startupPresentationProfile } from './startup-presentation.js';
 import { versionThemeAssets } from './license-page-adapter.js';
@@ -233,9 +235,16 @@ export class HardenedThemeBuildEngine extends BuildEngine {
 
   async build({ sourceRef, sourceBuffer: providedSourceBuffer, product, version, buildId, packageId, packageSecret, packageManifestToken, watermark, domain }) {
     const sourceBuffer = providedSourceBuffer ?? this.artifactStore.read(sourceRef);
-    const { files, entries } = this.validateSource(sourceBuffer);
+    const { files, entries: primaryEntries } = this.validateSource(sourceBuffer);
+    const entries = [...primaryEntries];
     const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
     const root = roots[0] === '.' ? '' : `${roots[0]}/`;
+    // Development-only preview is not a customer entry. Other standalone HTML documents
+    // are protected even when their names are not index/editor/dashboard.
+    files.delete(root + 'preview-panel.html');
+    for (const [path, content] of files) {
+      if (/\.html?$/i.test(path) && !entries.includes(path) && /<!doctype\s+html|<html[\s>]|<script[\s>]/i.test(content.toString('utf8'))) entries.push(path);
+    }
     const presentations = new Map(entries.map(entry => [entry, startupPresentationProfile(files, root, files.get(entry).toString('utf8'))]));
     versionThemeAssets(files, root, buildId);
     await applyPerPackageSourceProtection(files, watermark);
@@ -281,7 +290,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
         themeName: theme.name,
       },
     });
-    files.set(runtimePath, Buffer.from(runtime, 'utf8'));
+    files.set(runtimePath, Buffer.from(protectGeneratedJavaScript(runtime, packageId), 'utf8'));
     files.set(bridgeContractPath, Buffer.from(JSON.stringify({
       schema: 'appgog-xboard-bridge-v1',
       product, version, build_id: buildId, package_id: packageId,
@@ -366,6 +375,9 @@ export class HardenedThemeBuildEngine extends BuildEngine {
         bridge_plugin_code: bridgeDescriptor.code,
         bridge_plugin_version: bridgeDescriptor.version,
         source_maps_removed: true,
+        generated_javascript_protection: 'obfuscator-v1',
+        protected_entries: entries,
+        excluded_development_entries: [root + 'preview-panel.html'],
         javascript_protection: 'terser-obfuscator-v1',
         stylesheet_protection: 'comment-strip-compact-v1',
         source_watermark: watermark,
@@ -394,7 +406,19 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     };
   }
 
-  verifyArtifact({ buffer, packageSecret, expected }) {
+  sealArtifact({ buffer, packageSecret, expected, signContent }) {
+    this.verifyArtifact({ buffer, packageSecret, expected, allowUnsignedDraft: true });
+    const files = readZip(buffer);
+    const path = manifestPathFor(files);
+    const manifest = JSON.parse(files.get(path));
+    manifest.content_signature = signContent(packageContentClaims(manifest, expected.issuer));
+    files.set(path, Buffer.from(JSON.stringify(manifest, null, 2)));
+    const sealed = writeZip(files);
+    this.verifyArtifact({ buffer: sealed, packageSecret, expected });
+    return { buffer: sealed, sha256: sha256(sealed) };
+  }
+
+  verifyArtifact({ buffer, packageSecret, expected, allowUnsignedDraft = false }) {
     const { files } = this.validateSource(buffer);
     const manifestPath = manifestPathFor(files);
     let manifest;
@@ -448,6 +472,9 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     invariant(JSON.stringify(manifest.integrity.files) === JSON.stringify(actualFiles), 'PACKAGE_FILES_TAMPERED', '成品文件摘要与实际内容不一致', 409);
     const digest = integrityDigest(manifest, actualFiles, packageSecret);
     invariant(equalHex(manifest.integrity.digest, digest), 'PACKAGE_HMAC_INVALID', '成品 Package Secret 完整性校验失败', 409);
+    if (signed.content_signature_required === true || manifest.content_signature) {
+      if (!(allowUnsignedDraft && !manifest.content_signature)) verifyPackageContent(manifest, this.packagePublicKey, expected.issuer);
+    }
     return { manifest, manifestPath, files: actualFiles };
   }
 }

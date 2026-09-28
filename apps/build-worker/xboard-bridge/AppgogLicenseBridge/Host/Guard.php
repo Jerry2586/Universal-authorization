@@ -34,6 +34,13 @@ final class Guard
         }
         \Illuminate\Support\Facades\File::ensureDirectoryExists(self::root() . '/themes', 0700, true);
         $path = self::root() . '/themes/' . $theme . '.json';
+        if (is_file($path)) {
+            $existing = json_decode(file_get_contents($path), true);
+            if (($existing['verification_keys'] ?? null) !== $keys || ($existing['product'] ?? null) !== $manifest['product']) {
+                throw new \RuntimeException('Publisher identity changed; explicit trusted recovery is required');
+            }
+        }
+        if (!self::contentValid($theme, $manifest, $signed, $keys['package'] ?? '')) throw new \RuntimeException('Package content signature invalid');
         $record = ['theme' => $theme, 'product' => $manifest['product'], 'verification_keys' => $keys];
         // Enrollment only runs after authenticated package registration or successful admin upload.
         $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
@@ -72,6 +79,84 @@ final class Guard
         } catch (\Throwable $error) { return null; }
     }
 
+    private static function canonical($value): string
+    {
+        if (is_object($value)) {
+            $fields = get_object_vars($value); ksort($fields, SORT_STRING);
+            $parts = [];
+            foreach ($fields as $key => $item) $parts[] = json_encode((string)$key, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_LINE_TERMINATORS | JSON_THROW_ON_ERROR) . ':' . self::canonical($item);
+            return '{' . implode(',', $parts) . '}';
+        }
+        if (is_array($value)) return '[' . implode(',', array_map([self::class, 'canonical'], $value)) . ']';
+        return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_LINE_TERMINATORS | JSON_THROW_ON_ERROR);
+    }
+
+    public static function contentValid(string $theme, array $manifest, array $identity, string $publicKey, bool $checkPublished = false): bool
+    {
+        if (($identity['content_signature_required'] ?? false) !== true && !isset($manifest['content_signature'])) return true;
+        try {
+            $seal = self::payload($manifest['content_signature'] ?? '', $publicKey);
+            if (!$seal || ($seal['typ'] ?? '') !== 'package-content-v1' || ($seal['iss'] ?? null) !== ($identity['iss'] ?? null)
+                || ($seal['build_id'] ?? '') !== ($manifest['build_id'] ?? null) || ($seal['package_id'] ?? '') !== ($manifest['package_id'] ?? null)) return false;
+            $root = realpath(app(\App\Services\ThemeService::class)->getThemePath($theme));
+            if (!$root) return false;
+            $raw = json_decode(file_get_contents($root . '/appgog-license/build.json'), false, 512, JSON_THROW_ON_ERROR);
+            if (!is_object($raw)) return false;
+            unset($raw->content_signature);
+            if (!hash_equals($seal['content_sha256'] ?? '', hash('sha256', self::canonical($raw)))) return false;
+            $bridgePath = $manifest['protection']['bridge_package_path'] ?? '';
+            $suffix = 'appgog-license/appgog-license-bridge.zip';
+            if (!str_ends_with($bridgePath, $suffix)) return false;
+            $prefix = substr($bridgePath, 0, -strlen($suffix));
+            $files = $manifest['integrity']['files'] ?? null;
+            if (!is_array($files) || count($files) < 2) return false;
+            $roots = [$root];
+            if ($checkPublished) {
+                $published = realpath(public_path('theme/' . $theme));
+                if (!$published || !is_file($published . '/appgog-license/build.json')) return false;
+                if (hash_file('sha256', $published . '/appgog-license/build.json') !== hash_file('sha256', $root . '/appgog-license/build.json')) return false;
+                if ($published !== $root) $roots[] = $published;
+            }
+            foreach ($roots as $root) {
+            $seen = [];
+            foreach ($files as $file) {
+                $path = $file['path'] ?? '';
+                if (!is_string($path) || !str_starts_with($path, $prefix)) return false;
+                $relative = substr($path, strlen($prefix));
+                if ($relative === '' || in_array('..', explode('/', $relative), true) || str_contains($relative, '\\') || str_starts_with($relative, '/') || isset($seen[$relative])) return false;
+                $absolute = realpath($root . '/' . $relative);
+                if (!$absolute || !str_starts_with($absolute, $root . DIRECTORY_SEPARATOR) || !is_file($absolute)) return false;
+                if (filesize($absolute) !== ($file['bytes'] ?? null) || !hash_equals($file['sha256'] ?? '', hash_file('sha256', $absolute))) return false;
+                $seen[$relative] = true;
+            }
+            // Refuse newly injected executable pages/scripts outside the signed inventory.
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+            foreach ($iterator as $entry) {
+                $relative = str_replace(DIRECTORY_SEPARATOR, '/', substr($entry->getPathname(), strlen($root) + 1));
+                if (preg_match('/\.(?:html?|js|php)$/i', $relative) && !isset($seen[$relative])) return false;
+            }
+            }
+            return true;
+        } catch (\Throwable $error) { return false; }
+    }
+
+    public static function packageIntegrityValid(string $theme): bool
+    {
+        try {
+            $manifest = self::manifest($theme);
+            if (!$manifest || !self::enrolled($theme)) return false;
+            $enrollment = json_decode(file_get_contents(self::root() . '/themes/' . $theme . '.json'), true);
+            $keys = $enrollment['verification_keys'] ?? [];
+            if ($keys !== ($manifest['verification_keys'] ?? null)) return false;
+            $identity = self::payload($manifest['package_manifest_token'] ?? '', $keys['package'] ?? '');
+            if (!$identity || ($identity['typ'] ?? '') !== 'package-manifest') return false;
+            foreach (['product','build_id','package_id','domain','version'] as $field) {
+                if (($identity[$field] ?? null) !== ($manifest[$field] ?? null)) return false;
+            }
+            return self::contentValid($theme, $manifest, $identity, $keys['package'] ?? '', true);
+        } catch (\Throwable $error) { return false; }
+    }
+
     public static function licensed(string $theme, string $host, ?string $capability = null): bool
     {
         try {
@@ -86,6 +171,7 @@ final class Guard
             foreach (['product', 'build_id', 'package_id', 'domain', 'version'] as $field) {
                 if (($signed[$field] ?? null) !== ($manifest[$field] ?? null)) return false;
             }
+            if (!self::contentValid($theme, $manifest, $signed, $keys['package'] ?? '', true)) return false;
             $domain = strtolower(trim($host, '.'));
             if (str_starts_with($domain, 'www.') && str_contains(substr($domain, 4), '.')) $domain = substr($domain, 4);
             if ($domain !== $manifest['domain']) return false;
@@ -146,6 +232,7 @@ final class Guard
                     if (!\Illuminate\Support\Facades\File::copyDirectory($themes->getThemePath($name), public_path('theme/' . $name))) {
                         throw new \RuntimeException('Cannot publish activation assets');
                     }
+                    if (!self::packageIntegrityValid($name)) throw new \RuntimeException('Published theme content verification failed');
                     $prepared[] = ['name' => $name, 'appgog_activation' => ['schema' => 1]];
                 }
                 // The authenticated upload response reaches the extension before

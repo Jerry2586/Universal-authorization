@@ -1,5 +1,5 @@
 const METHODS = Object.freeze([
-  'dashboardStats', 'listActivations', 'listAdmins', 'listAudit', 'listBuildJobs',
+  'listProducts', 'listAllSourceVersions', 'dashboardStats', 'listActivations', 'listAdmins', 'listAudit', 'listBuildJobs',
   'listDomainMigrations', 'listLicenses', 'listPlans', 'allPlans', 'listSourceVersions', 'recentBuildCount',
 ]);
 

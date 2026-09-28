@@ -250,10 +250,10 @@ test('队列适配器与业务协议隔离：只可领取一次，返回 Build �
     domain: leased.build.domain,
   });
   const outputHash = output.sha256;
-  app.artifactStore.put('jobs/fake-test.zip', output.buffer);
+  app.artifactStore.put(`builds/${job.id}/fake-test.zip`, output.buffer);
   const completed = app.portal.completeBuild('worker-test', job.id, {
     build_id: leased.build.buildId,
-    artifact_ref: 'jobs/fake-test.zip',
+    artifact_ref: `builds/${job.id}/fake-test.zip`,
     artifact_sha256: outputHash,
     install_key: leased.build.installKey,
     package_proof: leased.build.packageSecret,
@@ -261,7 +261,8 @@ test('队列适配器与业务协议隔离：只可领取一次，返回 Build �
   assert.equal(completed.status, 'succeeded');
   const detail = app.portal.buildDetails(login.session, job.id);
   assert.equal(detail.install_key, leased.build.installKey);
-  assert.equal(detail.artifact_sha256, outputHash);
+  assert.equal(detail.artifact_sha256, createHash('sha256').update(app.artifactStore.read(`builds/${job.id}/fake-test.zip`)).digest('hex'));
+  assert.notEqual(detail.artifact_sha256, outputHash);
   const overview = app.portal.customerOverview(login.session);
   assert.equal(overview.license.builds_used_last_24_hours, 1);
   assert.equal(overview.license.builds_remaining, 2);
@@ -312,10 +313,10 @@ test('客户下载必须使用短期、不可篡改且绑定当前会话的票�
     watermark: leased.build.watermark,
     domain: leased.build.domain,
   });
-  app.artifactStore.put('jobs/download.zip', output.buffer);
+  app.artifactStore.put(`builds/${job.id}/download.zip`, output.buffer);
   app.portal.completeBuild('worker-download', job.id, {
     build_id: leased.build.buildId,
-    artifact_ref: 'jobs/download.zip',
+    artifact_ref: `builds/${job.id}/download.zip`,
     artifact_sha256: output.sha256,
     install_key: leased.build.installKey,
     package_proof: leased.build.packageSecret,
@@ -354,8 +355,9 @@ test('客户下载必须使用短期、不可篡改且绑定当前会话的票�
 
   const download = await fetch(`${base}${ticket.download_url}`, { headers: { cookie: customer.cookie } });
   assert.equal(download.status, 200);
-  assert.equal(download.headers.get('x-appgog-sha256'), output.sha256);
-  assert.deepEqual(Buffer.from(await download.arrayBuffer()), output.buffer);
+  const sealedBuffer = app.artifactStore.read(`builds/${job.id}/download.zip`);
+  assert.equal(download.headers.get('x-appgog-sha256'), createHash('sha256').update(sealedBuffer).digest('hex'));
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), sealedBuffer);
 
   const tamperedUrl = new URL(`${base}${ticket.download_url}`);
   const rawTicket = tamperedUrl.searchParams.get('ticket');

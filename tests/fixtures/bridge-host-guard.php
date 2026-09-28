@@ -138,6 +138,9 @@ namespace {
     check(file_get_contents($enrollmentPath)===$enrollmentBefore,'upgrade changed enrollment');
     check(file_get_contents(storage_path('app/private/appgog-host/bootstrap-original.php'))===$original,'upgrade changed recovery backup');
     check(file_get_contents(base_path('bootstrap/app.php'))===$installed,'upgrade changed host registration');
-    check(count($GLOBALS['reloadCallbacks'])===10,'upgrade did not schedule runtime reload');
+    $contentMigration=require $argv[1].'/database/migrations/2026_09_29_000013_content_signature.php';
+    $contentMigration->up();$contentMigration->up();
+    check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'content seal migration changed identity or activation');
+    check(count($GLOBALS['reloadCallbacks'])===12,'upgrade did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }
