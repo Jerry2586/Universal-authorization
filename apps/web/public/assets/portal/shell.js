@@ -2,11 +2,13 @@ import { applySystemVersion } from './system-version.js';
 import { $, createPermissionCheck, createPortalState } from './core.js';
 import { createApiClient } from './api-client.js';
 import { appendDialogActions, createDialog, showSecretDialog } from './dialog.js';
+import { createLiveRefreshScheduler, hasActiveBuilds } from './live-refresh.js';
 
 export function createPortalShell(actor) {
   const state = createPortalState(actor);
   const can = createPermissionCheck(state);
   let controller = null;
+  let liveRefresh = null;
 
   function notify(message, error = false) {
     const toast = $('message');
@@ -35,6 +37,7 @@ export function createPortalShell(actor) {
     if (login) login.hidden = authenticated;
     if (dashboard) dashboard.hidden = !authenticated;
     if (!authenticated) {
+      liveRefresh?.stop();
       document.dispatchEvent(new Event('appgog-session-cleared'));
       document.querySelectorAll('dialog[open]').forEach((dialog) => {
         dialog.close();
@@ -46,7 +49,7 @@ export function createPortalShell(actor) {
       state.permissions = [];
       state.session = null;
       history.replaceState(null, '', location.pathname);
-    }
+    } else liveRefresh?.start();
   }
 
   function selectView(view) {
@@ -67,6 +70,16 @@ export function createPortalShell(actor) {
 
   const api = createApiClient({ state, onSessionInvalid: () => setView(false) });
 
+  const canRefreshVisible = () => !document.hidden && Boolean(state.csrf)
+    && !document.querySelector('.modal-overlay')
+    && ![...document.querySelectorAll('.ticket-reply-form textarea, .ticket-reply-form input[type=file]')]
+      .some(field => field.value || field === document.activeElement);
+  liveRefresh = createLiveRefreshScheduler({
+    refresh: () => refresh(),
+    canRefresh: canRefreshVisible,
+    isActive: () => hasActiveBuilds(state.data),
+  });
+
   let refreshPending = false;
   async function refresh() {
     if (!state.csrf || !controller) return;
@@ -82,6 +95,7 @@ export function createPortalShell(actor) {
     finally {
       state.loading = false;
       if (refreshPending) { refreshPending = false; void refresh(); }
+      else liveRefresh.reschedule();
     }
   }
 
@@ -131,10 +145,7 @@ export function createPortalShell(actor) {
   function bindChrome() {
     bindSidebar();
     document.addEventListener('appgog:unread-changed', updateUnreadBadge);
-    const refreshVisible = () => {
-      if (!document.hidden && state.csrf && !document.querySelector('.modal-overlay') && ![...document.querySelectorAll('.ticket-reply-form textarea, .ticket-reply-form input[type=file]')].some(field => field.value || field === document.activeElement)) void refresh();
-    };
-    setInterval(refreshVisible, 15000);
+    const refreshVisible = () => { if (canRefreshVisible()) void liveRefresh.refreshNow(); };
     window.addEventListener('focus', refreshVisible);
     document.addEventListener('visibilitychange', refreshVisible);
     document.querySelectorAll('[data-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.view)));

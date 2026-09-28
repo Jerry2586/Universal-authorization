@@ -40,7 +40,11 @@ test('online update control requires a fresh signed release before installation 
   assert.equal(request.version, '1.2.1');
   const requestFiles = readdirSync(join(root, 'requests'));
   assert.deepEqual(requestFiles, [`${request.id}.json`]);
-  assert.equal(JSON.parse(readFileSync(join(root, 'status.json'), 'utf8')).state, 'queued');
+  const queuedStatus = JSON.parse(readFileSync(join(root, 'status.json'), 'utf8'));
+  assert.equal(queuedStatus.state, 'queued');
+  assert.equal(queuedStatus.request_id, request.id);
+  assert.equal(queuedStatus.requested_action, 'install-version');
+  assert.equal(queuedStatus.target_version, '1.2.1');
   assert.throws(() => control.enqueue('repair-current'), (error) => error.code === 'UPDATE_ALREADY_RUNNING');
 });
 

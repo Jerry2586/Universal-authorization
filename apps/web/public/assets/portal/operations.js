@@ -2,10 +2,22 @@ import { applySystemVersion } from './system-version.js';
 import { createBridgeUpdateUi } from './bridge-updates.js';
 import { $ } from './core.js';
 
-export function createOperationsUi({ request, notify, can }) {
+export function createOperationsUi({
+  request,
+  notify,
+  can,
+  reload = () => location.reload(),
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+  pollInterval = 1000,
+  pollTimeout = 15 * 60 * 1000,
+  now = () => Date.now(),
+}) {
   const bridge = createBridgeUpdateUi({ request, notify, can });
   let versionLocked = false;
   let lockPending = false;
+  let activeAction = null;
+  let actionPollTimer = null;
   function latestLabel(update) {
     if (update.check_status === 'failed') return '发布源不可用';
     if (update.freshness === 'stale') return '检查结果已过期';
@@ -24,8 +36,8 @@ export function createOperationsUi({ request, notify, can }) {
     return update.message || '等待操作';
   }
 
-  async function refresh() {
-    void bridge.refresh();
+  async function refresh({ refreshBridge = true } = {}) {
+    if (refreshBridge) void bridge.refresh();
     if (!$('update-state') || !can('system.manage')) return;
     try {
       const update = await request('/web/admin/system/update');
@@ -52,20 +64,62 @@ export function createOperationsUi({ request, notify, can }) {
       $('check-update').disabled = !update.available || busy;
       $('repair-current').disabled = !update.available || busy;
       $('install-update').disabled = versionLocked || !update.installable;
+      return update;
     } catch (error) {
-      $('update-state').textContent = '读取失败';
+      $('update-state').textContent = activeAction ? '重新连接中' : '读取失败';
       for (const id of ['toggle-version-lock', 'install-update', 'repair-current', 'check-update']) if ($(id)) $(id).disabled = true;
-      $('update-message').textContent = error.message;
-      if ($('update-fallback')) $('update-fallback').hidden = false;
+      $('update-message').textContent = activeAction ? '服务正在更新或重启，页面会自动恢复并刷新。' : error.message;
+      if ($('update-fallback')) $('update-fallback').hidden = Boolean(activeAction);
+      return null;
     }
+  }
+
+  function stopActionPoll() {
+    if (actionPollTimer !== null) clearTimer(actionPollTimer);
+    actionPollTimer = null;
+    activeAction = null;
+  }
+
+  async function pollAction() {
+    if (!activeAction) return;
+    const expected = activeAction;
+    const update = await refresh({ refreshBridge: false });
+    if (!activeAction || activeAction.id !== expected.id) return;
+    if (update?.request_id === expected.id) {
+      if (['queued', 'running'].includes(update.state)) expected.busySeen = true;
+      const terminal = ['succeeded', 'failed'].includes(update.state)
+        || (expected.busySeen && update.state === 'idle');
+      if (terminal) {
+        const succeeded = update.state !== 'failed';
+        const action = expected.action;
+        stopActionPoll();
+        if (!succeeded) return notify(update.last_error || update.message || '在线更新任务执行失败', true);
+        if (action === 'check-update') return notify('更新检查已完成，页面状态已同步');
+        notify(action === 'repair-current' ? '修复完成，正在自动刷新页面' : '更新完成，正在自动刷新页面');
+        setTimer(reload, 250);
+        return;
+      }
+    }
+    if (now() - expected.startedAt >= pollTimeout) {
+      stopActionPoll();
+      notify('任务仍在后台执行，请稍候；页面会继续自动刷新状态', true);
+      return;
+    }
+    actionPollTimer = setTimer(pollAction, pollInterval);
+  }
+
+  function startActionPoll(queued) {
+    stopActionPoll();
+    activeAction = { id: queued.id, action: queued.action, startedAt: now(), busySeen: false };
+    void pollAction();
   }
 
   async function trigger(action) {
     const labels = { 'check-update': '检查更新', 'install-version': '安全更新最新版本', 'repair-current': '修复当前版本' };
     try {
-      await request('/web/admin/system/update', { method: 'POST', body: { action } });
+      const queued = await request('/web/admin/system/update', { method: 'POST', body: { action } });
       notify(action === 'check-update' ? '检查更新任务已提交，请等待检查结果' : `${labels[action]}任务已提交，完成后请核对当前运行版本`);
-      await refresh();
+      startActionPoll(queued);
     } catch (error) { notify(error.message, true); }
   }
 

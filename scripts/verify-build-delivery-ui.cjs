@@ -66,6 +66,8 @@ const assert = require('node:assert/strict');
     assert.equal(await page.evaluate(()=>writes[0].body.version),'1.19.11');
     await page.locator('[data-view=history]').click();
     await page.waitForFunction(()=>document.querySelectorAll('#build-history-list tr').length===20);
+    await page.evaluate(()=>{state.data.builds[0]={...state.data.builds[0],status:'processing',progress:42};rerender();});
+    assert.match(await page.locator('#build-history-list tr').first().innerText(),/42%/);
     assert.match(await page.locator('#build-history-list').innerText(), /已返还 1 次/);
     assert.equal(await page.locator('#build-history-list').getByRole('button',{name:'作废',exact:true}).count(),1);
     await page.locator('#history-more').click();

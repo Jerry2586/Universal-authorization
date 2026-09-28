@@ -5,6 +5,7 @@ import {
   renderRows, search, td,
 } from './ui.js';
 import { createTicketUi } from './tickets.js';
+import { mergeLiveBuildHistory } from './live-refresh.js';
 
 export function createCustomerPage(shell) {
   const { state, request, uploadTicketAttachment, notify, refresh, selectView, showSecret, dialog, actions, can } = shell;
@@ -109,6 +110,11 @@ export function createCustomerPage(shell) {
     const versions = Array.isArray(data.versions) ? data.versions : [];
     const builds = Array.isArray(data.builds) ? data.builds : [];
     const tickets = Array.isArray(data.tickets) ? data.tickets : [];
+    if (historyLoaded) {
+      historyItems = mergeLiveBuildHistory(historyItems, builds, $('customer-history-search')?.value);
+      renderRows('build-history-list', historyItems, 6, customerRow, '暂无匹配的打包记录');
+      $('history-count').textContent = '已显示 ' + historyItems.length + ' 条记录';
+    }
     $('license-status').textContent = license.status === 'active' ? '正常' : license.status;
     $('license-domain').textContent = license.bound_domain ?? '未绑定';
     $('license-domain').title = license.bound_domain ?? '未绑定';
@@ -282,9 +288,6 @@ export function createCustomerPage(shell) {
         }, true);
       });
     });
-    setInterval(() => {
-      if (!document.hidden && !$('dashboard-view').hidden && state.data?.builds?.some((job) => ['queued', 'processing'].includes(job.status))) refresh();
-    }, 5000);
   }
 
   return Object.freeze({ bind, render });
