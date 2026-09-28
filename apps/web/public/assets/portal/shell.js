@@ -65,8 +65,10 @@ export function createPortalShell(actor) {
 
   const api = createApiClient({ state, onSessionInvalid: () => setView(false) });
 
+  let refreshPending = false;
   async function refresh() {
-    if (state.loading || !state.csrf || !controller) return;
+    if (!state.csrf || !controller) return;
+    if (state.loading) { refreshPending = true; return; }
     state.loading = true;
     try {
       const data = await api.request(`/web/${actor}/overview`);
@@ -75,7 +77,10 @@ export function createPortalShell(actor) {
       controller.render(data);
       updateUnreadBadge();
     } catch (error) { notify(error.message, true); }
-    finally { state.loading = false; }
+    finally {
+      state.loading = false;
+      if (refreshPending) { refreshPending = false; void refresh(); }
+    }
   }
 
   function actions(card, close, label, onConfirm, danger = false) {
@@ -99,9 +104,12 @@ export function createPortalShell(actor) {
 
   function bindChrome() {
     document.addEventListener('appgog:unread-changed', updateUnreadBadge);
-    setInterval(() => {
-      if (!document.hidden && state.csrf && ![...document.querySelectorAll('.ticket-reply-form textarea, .ticket-reply-form input[type=file]')].some(field => field.value || field === document.activeElement)) void refresh();
-    }, 15000);
+    const refreshVisible = () => {
+      if (!document.hidden && state.csrf && !document.querySelector('.modal-overlay') && ![...document.querySelectorAll('.ticket-reply-form textarea, .ticket-reply-form input[type=file]')].some(field => field.value || field === document.activeElement)) void refresh();
+    };
+    setInterval(refreshVisible, 15000);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
     document.querySelectorAll('[data-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.view)));
     document.querySelectorAll('[data-go-view]').forEach((item) => item.addEventListener('click', () => selectView(item.dataset.goView)));
     document.querySelector('.mobile-menu')?.addEventListener('click', () => $('dashboard-view')?.classList.toggle('nav-open'));

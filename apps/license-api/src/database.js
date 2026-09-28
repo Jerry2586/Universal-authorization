@@ -270,6 +270,10 @@ function migrate(database) {
     }
   });
 
+  runMigration(database, '2026-09-29-v1.2.51-default-plan-name', () => {
+    database.prepare("UPDATE license_plans SET name = '定义版' WHERE code = 'paid' AND name = '付费版'").run();
+  });
+
 }
 
 export function openDatabase(path) {

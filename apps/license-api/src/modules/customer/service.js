@@ -54,7 +54,7 @@ export function createCustomerPortalService({
         license: {
           product: license.product_code, key_prefix: license.key_prefix, status: license.status,
           bound_domain: license.bound_domain, update_until: license.update_until,
-          plan_code: license.plan_code ?? 'legacy', plan_name: license.plan_name ?? '历史兼容版',
+          plan_code: license.plan_code ?? 'legacy', plan_name: license.plan_name ?? '历史兼容版', plan_status: license.plan_status ?? 'active',
           max_builds_per_day: license.max_builds_per_day, max_builds_total: license.max_builds_total,
           builds_used_last_24_hours: buildsUsed, builds_remaining: Math.max(0, license.max_builds_per_day - buildsUsed),
           total_builds_used: repository.totalBuildCount?.(license.id) ?? null, generation: license.generation,

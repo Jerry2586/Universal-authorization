@@ -124,7 +124,7 @@ export function createAdminDashboard(shell, collaborators) {
       const title = element('div', null, 'version-name-row');
       title.append(element('strong', version.display_name || `APPGOG ${version.version}`));
       if (latestProductVersions.get(version.product_code) === version.id) title.append(element('span', '最新', 'badge success'));
-      title.append(element('span', version.access_tier === 'paid' ? '仅付费授权' : '免费授权可用', `badge ${version.access_tier === 'paid' ? '' : 'success'}`));
+      title.append(element('span', version.access_tier === 'paid' ? '付费版本' : '免费版本', `badge ${version.access_tier === 'paid' ? '' : 'success'}`));
       summary.append(title,
         element('small', `${version.product_name || version.product_code || 'APPGOG'} · ${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)} · ${date(version.published_at || version.created_at)}`),
         element('p', version.release_notes || '暂无更新公告'));

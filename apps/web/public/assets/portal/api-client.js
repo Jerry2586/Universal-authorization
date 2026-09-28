@@ -20,6 +20,7 @@ export function createApiClient({ state, onSessionInvalid }) {
       response = await fetch(path, {
         method,
         credentials: 'same-origin',
+        cache: 'no-store',
         headers: {
           ...(raw ? { 'content-type': 'application/zip' } : body ? { 'content-type': 'application/json' } : {}),
           ...(method !== 'GET' && state.csrf && !path.endsWith('/login') ? { 'x-csrf-token': state.csrf } : {}),

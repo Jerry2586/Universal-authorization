@@ -133,10 +133,19 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     });
   }
 
-  function changePlan(license) {
-    const plans = (state.data?.license_plans ?? []).filter(plan => plan.status === 'active' && plan.code !== 'legacy');
-    createDialog('切换授权套餐', '套餐能力由服务端、激活 Token 和产品端共同校验；切换后现有激活立即失效，需要重新激活。', (card, close) => {
+  async function changePlan(license) {
+    let plans;
+    try {
+      const result = await request('/web/admin/plans');
+      plans = (result.plans ?? []).filter(plan => plan.status === 'active' && plan.code !== 'legacy' && plan.code !== license.plan_code);
+    } catch (error) { notify(error.message, true); return; }
+    createDialog('更改套餐', '更改后使用新套餐权益，现有激活需要重新激活。固定 Key 保持不变。', (card, close) => {
       const form = element('form', null, 'form-stack');
+      const current = element('div', null, 'notice notice-info');
+      current.append(element('strong', '当前套餐：' + (license.plan_name || license.plan_code || '—')));
+      if (license.plan_status === 'deleted') current.append(element('p', '套餐已删除 · 保留原权益'));
+      else if (license.plan_status === 'disabled') current.append(element('p', '套餐已停用 · 保留原权益'));
+      form.append(current);
       const label = element('label', null, 'field'); label.append(element('span', '目标套餐'));
       const select = element('select');
       for (const plan of plans) {
@@ -147,14 +156,14 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
       const summary = element('div', null, 'notice notice-info');
       const renderSummary = () => {
         const plan = plans.find((item) => item.code === select.value);
-        if (!plan) { summary.textContent = '未找到套餐配置'; return; }
+        if (!plan) { summary.textContent = '暂无其他可用套餐，请先在套餐管理中创建或启用套餐。'; return; }
         const buildLimit = plan.limits?.max_builds_per_day ?? license.max_builds_per_day;
         const activationLimit = plan.limits?.max_activations ?? license.max_activations;
         summary.textContent = `能力：${(plan.capabilities ?? []).join('、') || '无'} · 每日构建 ${buildLimit} 次 · 激活 ${activationLimit} 个环境`;
       };
       select.addEventListener('change', renderSummary); renderSummary(); form.append(summary);
       const row = element('div', null, 'dialog-actions'); row.append(button('取消', close, 'button button-secondary'));
-      const submit = element('button', '确认切换', 'button button-primary'); submit.type = 'submit'; row.append(submit); form.append(row);
+      const submit = element('button', '确认切换', 'button button-primary'); submit.type = 'submit'; submit.disabled = plans.length === 0; select.disabled = plans.length === 0; row.append(submit); form.append(row);
       form.addEventListener('submit', async (event) => {
         event.preventDefault(); submit.disabled = true;
         try {
@@ -252,7 +261,7 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
     selectedLicenseId = license.id;
     $('managed-license-customer').textContent = license.customer_ref || '—';
     $('managed-license-domain').textContent = license.bound_domain || '尚未绑定域名';
-    $('managed-license-plan').textContent = license.plan_name || license.plan_code || '—';
+    $('managed-license-plan').textContent = (license.plan_name || license.plan_code || '—') + (license.plan_status === 'deleted' ? '（套餐已删除，保留原权益）' : license.plan_status === 'disabled' ? '（套餐已停用，保留原权益）' : '');
     $('managed-license-key').textContent = `${license.key_prefix || '—'}••••`;
     $('managed-license-update').textContent = date(license.update_until);
     $('managed-license-activations').textContent = `${license.active_activation_count ?? 0} / ${license.max_activations ?? 0}`;
@@ -363,7 +372,12 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
       element('strong', `${license.active_activation_count ?? 0} / ${license.max_activations ?? 0}`),
       element('small', license.active_activation_count ? '环境在线' : '尚未激活', 'table-subline'),
     );
-    row.append(customer, td(license.plan_name ?? license.plan_code), td(license.bound_domain || '待客户绑定'), badge(license.status), quota, activations, td(date(license.update_until)));
+    const planCell = element('td', null, 'license-plan-cell');
+    const changePlanButton = button('更改套餐', () => changePlan(license), 'button button-secondary');
+    changePlanButton.disabled = !can('license.manage') || ['revoked', 'deleting'].includes(license.status);
+    if (changePlanButton.disabled) changePlanButton.title = !can('license.manage') ? '没有更改套餐权限' : '当前授权状态不允许更改套餐';
+    planCell.append(changePlanButton);
+    row.append(customer, planCell, td(license.bound_domain || '待客户绑定'), badge(license.status), quota, activations, td(date(license.update_until)));
     const action = element('td', null, 'actions');
     if (can('license.view')) action.append(button('打包额度', () => {
       selectLicense(license, 'quota');

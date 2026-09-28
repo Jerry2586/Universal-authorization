@@ -305,3 +305,7 @@ body[data-portal] .build-version-catalog > .surface-head p { margin-top: 6px; fo
 
 body[data-portal="admin"] .product-catalog .surface-head { padding: 20px 24px; margin: 0; }
 body[data-portal="admin"] .version-toolbar { flex-wrap: wrap; }
+
+.customer-plan-summary { margin: 18px 24px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #faf9ff; font-size: 13px; line-height: 1.7; }
+.customer-plan-summary p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+@media(max-width:640px) { .customer-plan-summary { margin: 16px 16px 0; } }

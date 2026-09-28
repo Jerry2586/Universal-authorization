@@ -124,8 +124,8 @@ test('release publisher requires an explicit free or paid version tier and share
   const upload = read('apps/web/public/assets/portal/admin-release-upload.js');
   const shell = read('apps/web/public/assets/portal/shell.js');
   assert.match(admin, /name="access_tier"/);
-  assert.match(admin, /免费授权可用/);
-  assert.match(admin, /仅付费授权可用/);
+  assert.match(admin, /免费版本/);
+  assert.match(admin, /付费版本/);
   assert.match(upload, /access_tier/);
   assert.match(shell, /\/web\/branding/);
   assert.match(shell, /applyBranding/);

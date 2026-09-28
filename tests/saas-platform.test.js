@@ -1383,7 +1383,9 @@ test('删除套餐保留既有授权快照，禁止重新签发/编辑，权限�
   assert.equal((await app.send(url, {...owner,method:'DELETE'})).status,200);
   assert.equal((await app.send(url, {...owner,method:'DELETE'})).status,200);
   assert.equal(app.repository.planByCode('deletable').status,'deleted');
-  assert.deepEqual(app.repository.licenseById(customer.actor_id),before);
+  assert.deepEqual({...app.repository.licenseById(customer.actor_id)},{...before,plan_status:'deleted'});
+  assert.equal(app.portal.customerOverview(customer).license.plan_status,'deleted');
+  assert.equal(app.portal.adminOverview().licenses.find(item=>item.id===customer.actor_id).plan_status,'deleted');
   assert.equal(app.portal.customerOverview(customer).license.status,'active');
   assert.ok(!(await app.send('/web/admin/plans',owner)).data.plans.some(p=>p.code==='deletable'));
   assert.ok(!app.portal.adminOverview().license_plans.some(p=>p.code==='deletable'));
@@ -1412,4 +1414,40 @@ test('仅付费套餐 HTTP 保存回显、客户版本列表与构建拒绝免�
   const rejected=await app.send('/web/customer/builds',{...customer,method:'POST',body:{version:'8.1.0',domain:'only-paid.example.com',intent:'update'}});
   assert.equal(rejected.status,403);assert.equal(rejected.data.error.code,'VERSION_PLAN_REQUIRED');
   const allowed=await app.send('/web/customer/builds',{...customer,method:'POST',body:{version:'8.0.0',domain:'only-paid.example.com',intent:'update'}});assert.equal(allowed.status,201);
+});
+
+test('旧版已删除套餐升级只改默认名称，不恢复套餐或覆盖自定义名称', () => {
+  const root = mkdtempSync(join(tmpdir(), 'appgog-plan-name-upgrade-'));
+  const path = join(root, 'legacy.sqlite');
+  let database;
+  try {
+    database = openDatabase(path);
+    database.exec("UPDATE license_plans SET name='付费版',status='deleted' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.51-default-plan-name'");
+    const before = {...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()};
+    database.close(); database = openDatabase(path);
+    assert.deepEqual({...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()}, {...before,name:'定义版'});
+    database.close(); database = openDatabase(path);
+    assert.equal(database.prepare("SELECT status FROM license_plans WHERE code='paid'").get().status,'deleted');
+    database.exec("UPDATE license_plans SET name='客户专属套餐' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.51-default-plan-name'");
+    database.close(); database = openDatabase(path);
+    assert.equal(database.prepare("SELECT name FROM license_plans WHERE code='paid'").get().name,'客户专属套餐');
+  } finally { database?.close(); rmSync(root,{recursive:true,force:true}); }
+});
+
+test('已删除套餐授权可手动切换有效套餐，两个中心同步且固定Key不变', async t => {
+  const app=await fixture(t),owner=await app.owner();
+  const issued=app.service.issueLicense({customerRef:'PLAN-SWITCH',domain:'switch.example.com',planCode:'paid'});
+  const session=app.sessions.loginCustomer(issued.licenseKey).session;
+  const before=app.repository.licenseById(session.actor_id);
+  await app.send('/web/admin/plans/paid',{...owner,method:'DELETE'});
+  const created=await app.send('/web/admin/plans',{...owner,method:'POST',body:{code:'replacement',name:'新定义套餐',access_tier:'paid_only',status:'active',capabilities:['settings:read','updates:read'],limits:{max_builds_per_day:7,max_activations:2}}});
+  assert.equal(created.status,201);
+  const switched=await app.send(`/web/admin/licenses/${session.actor_id}/plan`,{...owner,method:'POST',body:{plan_code:'replacement'}});
+  assert.equal(switched.status,200);
+  const after=app.repository.licenseById(session.actor_id);
+  assert.equal(after.key_hash,before.key_hash); assert.equal(after.generation,before.generation+1);
+  assert.equal(after.max_builds_per_day,7); assert.equal(after.plan_status,'active');
+  assert.equal(app.portal.customerOverview(session).license.plan_name,'新定义套餐');
+  assert.equal(app.portal.adminOverview().licenses.find(l=>l.id===session.actor_id).plan_name,'新定义套餐');
+  assert.equal((await app.send(`/web/admin/licenses/${session.actor_id}/plan`,{...owner,method:'POST',body:{plan_code:'paid'}})).status,400);
 });

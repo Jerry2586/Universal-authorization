@@ -25,7 +25,7 @@ export function createSqliteStatements(database) {
     `),
     licenseByHash: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
-        license_plans.code AS plan_code, license_plans.name AS plan_name,
+        license_plans.code AS plan_code, license_plans.name AS plan_name, license_plans.status AS plan_status,
         licenses.entitlement_capabilities_json AS plan_capabilities_json,
         licenses.entitlement_limits_json AS plan_limits_json
       FROM licenses
@@ -35,7 +35,7 @@ export function createSqliteStatements(database) {
     `),
     licenseById: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
-        license_plans.code AS plan_code, license_plans.name AS plan_name,
+        license_plans.code AS plan_code, license_plans.name AS plan_name, license_plans.status AS plan_status,
         licenses.entitlement_capabilities_json AS plan_capabilities_json,
         licenses.entitlement_limits_json AS plan_limits_json
       FROM licenses
@@ -451,7 +451,7 @@ export function createSqliteStatements(database) {
     revokeInstallKeyByBuild: database.prepare(`UPDATE install_keys SET status = 'revoked' WHERE build_id = ? AND status = 'available'`),
     listLicenses: database.prepare(`
       SELECT licenses.*, products.code AS product_code, products.name AS product_name,
-        license_plans.code AS plan_code, license_plans.name AS plan_name,
+        license_plans.code AS plan_code, license_plans.name AS plan_name, license_plans.status AS plan_status,
         licenses.entitlement_capabilities_json AS plan_capabilities_json,
         licenses.entitlement_limits_json AS plan_limits_json,
         (SELECT COUNT(*) FROM builds WHERE builds.license_id = licenses.id AND (builds.status != 'revoked' OR EXISTS (SELECT 1 FROM build_jobs j WHERE j.build_id = builds.id AND j.artifact_sha256 IS NOT NULL AND j.quota_refunded_at IS NULL))) AS build_count,
