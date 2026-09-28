@@ -58,4 +58,4 @@
 
 发布前执行 `node scripts/verify-bridge-integrity-performance.js`：临时生成 513 个文件、约 5MB 的签名测试主题和独立公开镜像，PHP 连续五次清理 stat 缓存后完整校验两棵目录。Linux 单次完整校验预算为 250ms；超出预算即阻断 CI。该预算只约束完整性校验，不代表网络或页面总加载时间。Windows 只输出测量，不据此推断 Linux 耗时。真实客户 ZIP 仍须通过独立打包/激活回归。
 
-本机没有发布私钥时，在候选分支手动运行 `docker.yml` 并设置 `sign_preflight=true`。工作流先完成 verify，再用现有 Release Secret 生成七份签名附件；此路径不创建标签或 Release。将 `appgog-signed-preflight` 下载到本机并用 `verifyPackagedArtifacts` 验证后，才把同一提交快进到 main。main 原有自动验证、签名、发布及回下载检查继续执行。私钥始终只在 Actions 临时目录中使用。
+本机没有发布私钥时，在 `candidate/` 前缀的候选分支手动运行 `docker.yml`。工作流先完成 verify，再用现有 Release Secret 生成七份签名附件；此路径不创建标签或 Release。将 `appgog-signed-preflight` 下载到本机并用 `verifyPackagedArtifacts` 验证后，才把同一提交快进到 main。main 原有自动验证、签名、发布及回下载检查继续执行。私钥始终只在 Actions 临时目录中使用。

@@ -69,7 +69,7 @@ jobs:
           docker compose ps -a
           docker compose logs --tail=100 appgog
   preflight-sign:
-    if: github.event_name == 'workflow_dispatch' && inputs.sign_preflight
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/')
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
