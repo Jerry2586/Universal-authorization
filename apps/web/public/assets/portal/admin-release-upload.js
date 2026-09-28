@@ -132,7 +132,11 @@ export function createAdminReleaseUpload(shell) {
         showStatus(`${result.display_name || result.version} 已发布，版本目录已请求刷新。`);
         notify(`${result.display_name || result.version} 安全检查通过，版本已发布`);
         await refresh();
-      } catch (error) { showStatus(error.message, true); notify(error.message, true); }
+      } catch (error) {
+        showStatus(error.message, true); notify(error.message, true);
+        $('source-file-status').textContent = error.message;
+        $('source-upload-progress-text').textContent = '请检查发布结果';
+      }
       finally { publishing = false; form.removeAttribute('aria-busy'); submit.disabled = false; label.textContent = '安全检查并发布版本'; }
     });
   }

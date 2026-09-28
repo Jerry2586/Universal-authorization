@@ -70,6 +70,8 @@ const { join, resolve } = require('node:path');
     await page.locator('#version-form [type=submit]').click();
     await page.locator('#release-publish-status').getByText('该版本已经发布',{exact:true}).waitFor();
     assert.equal(await page.locator('#version-form [type=submit]').isDisabled(),false);
+    assert.equal(await page.locator('#source-file-status').textContent(),'该版本已经发布');
+    assert.ok(!(await page.locator('#source-upload-progress-text').textContent()).includes('检查中'));
     await customer.locator('[data-view=builds]').click();
     await customer.reload();await customer.locator('#dashboard-view').waitFor();
     await customer.locator('#version-catalog').getByText('APPGOG 9.0.0',{exact:true}).waitFor();
