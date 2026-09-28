@@ -58,8 +58,8 @@ async function buildProtectedArtifact(app, { version = '1.17.0', customerRef = '
     ['APPGOG/index.html', Buffer.from('<!doctype html><html><head></head><body>Theme</body></html>')],
     ['APPGOG/assets/app.js', Buffer.from('console.log("original")')],
   ]));
-  app.portal.publishSourceVersion({ version, displayName: `APPGOG ${version}`, zipBuffer: source });
-  const issued = app.service.issueLicense({ customerRef, domain: 'demo.example.com', maxBuildsPerDay: 3 });
+  app.portal.publishSourceVersion({ planCodes: ['paid'], version, displayName: `APPGOG ${version}`, zipBuffer: source });
+  const issued = app.service.issueLicense({ planCode: 'paid', customerRef, domain: 'demo.example.com', maxBuildsPerDay: 3 });
   const customer = app.sessions.loginCustomer(issued.licenseKey).session;
   const job = app.portal.enqueueCustomerBuild(customer, { version, domain: 'demo.example.com' });
   const workerId = `worker-${customerRef}`;
@@ -91,12 +91,12 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
     ['APPGOG/assets/fragment.html', Buffer.from('<section>not an executable entry</section>')],
     ['APPGOG/assets/app.js.map', Buffer.from('{"version":3,"sources":["src/app.js"]}')],
   ]));
-  const version = app.portal.publishSourceVersion({
+  const version = app.portal.publishSourceVersion({ planCodes: ['paid'],
     version: '1.17.0', displayName: 'APPGOG 1.17.0', zipBuffer: source,
   });
   assert.equal(version.status, 'active');
 
-  const issued = app.service.issueLicense({ customerRef: 'ORDER-FULL-1', domain: 'demo.example.com' });
+  const issued = app.service.issueLicense({ planCode: 'paid', customerRef: 'ORDER-FULL-1', domain: 'demo.example.com' });
   const customer = app.sessions.loginCustomer(issued.licenseKey).session;
   const job = app.portal.enqueueCustomerBuild(customer, { version: '1.17.0', domain: 'demo.example.com' });
   const leased = app.portal.leaseBuild('worker-full-test');
@@ -235,7 +235,7 @@ test('上传安全检查拒绝普通 PHP 与缺少 Xboard 配置的 ZIP', () => 
     ['APPGOG/shell.php', Buffer.from('<?php echo 1;')],
   ]));
   assert.throws(
-    () => app.portal.publishSourceVersion({ version: 'bad-php', zipBuffer: phpZip }),
+    () => app.portal.publishSourceVersion({ planCodes: ['paid'], version: 'bad-php', zipBuffer: phpZip }),
     (error) => error.code === 'SOURCE_PHP_REJECTED',
   );
   const missingConfig = writeZip(new Map([
@@ -243,7 +243,7 @@ test('上传安全检查拒绝普通 PHP 与缺少 Xboard 配置的 ZIP', () => 
     ['APPGOG/assets/app.js', Buffer.from('')],
   ]));
   assert.throws(
-    () => app.portal.publishSourceVersion({ version: 'bad-config', zipBuffer: missingConfig }),
+    () => app.portal.publishSourceVersion({ planCodes: ['paid'], version: 'bad-config', zipBuffer: missingConfig }),
     (error) => error.code === 'SOURCE_CONFIG_NOT_FOUND',
   );
   app.close();
@@ -367,7 +367,7 @@ test('未使用构建复用、作废权限与审计回滚', async (t) => {
   assert.equal(repeat().id, built.job.id);
   assert.equal(app.portal.buildDetails(built.customer, built.job.id).can_void, true);
   assert.equal(app.portal.customerOverview(built.customer).builds.find(job => job.id === built.job.id).can_void, true);
-  const other = app.service.issueLicense({ customerRef: 'OTHER', domain: 'other.example.com' });
+  const other = app.service.issueLicense({ planCode: 'paid', customerRef: 'OTHER', domain: 'other.example.com' });
   const otherSession = app.sessions.loginCustomer(other.licenseKey).session;
   assert.throws(() => app.portal.voidCustomerBuild(otherSession, built.job.id), { code: 'BUILD_JOB_NOT_FOUND' });
   app.database.exec("CREATE TEMP TRIGGER deny_void_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'build_job.voided' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
@@ -469,8 +469,8 @@ test('Blade runtime URL follows Xboard public theme name at root and nested rout
 
 test('打包历史翻页覆盖超过30条、同一时间无重复、搜索与会话隔离', (t) => {
   const app = fixture(); t.after(() => app.close());
-  const first = app.service.issueLicense({ customerRef: 'HISTORY-A', domain: 'demo.example.com' });
-  const second = app.service.issueLicense({ customerRef: 'HISTORY-B', domain: 'other.example.com' });
+  const first = app.service.issueLicense({ planCode: 'paid', customerRef: 'HISTORY-A', domain: 'demo.example.com' });
+  const second = app.service.issueLicense({ planCode: 'paid', customerRef: 'HISTORY-B', domain: 'other.example.com' });
   const customer = app.sessions.loginCustomer(first.licenseKey).session;
   const other = app.sessions.loginCustomer(second.licenseKey).session;
   for (let i = 0; i < 47; i++) app.repository.createBuildJob({ id: `history-${String(i).padStart(3, '0')}`, licenseId: customer.actor_id,

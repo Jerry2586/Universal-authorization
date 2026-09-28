@@ -60,6 +60,28 @@ export function createAdminDashboard(shell, collaborators) {
     });
   }
 
+  async function changeVersionPlans(version) {
+    let plans;
+    try { plans = (await request('/web/admin/plans')).plans.filter(p => p.status === 'active' && p.code !== 'legacy'); }
+    catch (error) { notify(error.message,true); return; }
+    dialog('设置版本套餐', '仅所选套餐名下的有效 Key 可以查看和打包此版本。', (card,close) => {
+      const form=element('form',null,'form-stack');
+      for(const plan of plans) {
+        const label=element('label',null,'release-plan-choice');
+        const check=element('input');check.type='checkbox';check.name='plan_codes';check.value=plan.code;check.checked=(version.plan_codes ?? []).includes(plan.code);
+        label.append(check,element('span',plan.name));form.append(label);
+      }
+      if(!plans.length)form.append(element('p','暂无可用套餐，请先到套餐管理创建。','muted'));
+      const row=element('div',null,'dialog-actions');row.append(button('取消',close,'button button-secondary'));
+      const save=element('button','保存套餐','button button-primary');save.type='submit';row.append(save);form.append(row);
+      const sync=()=>{save.disabled=!form.querySelector('input:checked');};form.addEventListener('change',sync);sync();
+      form.addEventListener('submit',async event=>{event.preventDefault();save.disabled=true;
+        try {await request('/web/admin/versions/'+encodeURIComponent(version.id)+'/plans',{method:'POST',body:{plan_codes:new FormData(form).getAll('plan_codes')}});close();notify('版本套餐已更新');await refresh();}
+        catch(error){notify(error.message,true);}finally{sync();}
+      });card.append(form);
+    });
+  }
+
   function render(data) {
     const stats = data.stats ?? {};
     const licenses = Array.isArray(data.licenses) ? data.licenses : [];
@@ -124,7 +146,8 @@ export function createAdminDashboard(shell, collaborators) {
       const title = element('div', null, 'version-name-row');
       title.append(element('strong', version.display_name || `APPGOG ${version.version}`));
       if (latestProductVersions.get(version.product_code) === version.id) title.append(element('span', '最新', 'badge success'));
-      title.append(element('span', version.access_tier === 'paid' ? '付费版本' : '免费版本', `badge ${version.access_tier === 'paid' ? '' : 'success'}`));
+      const boundPlans = (version.plan_codes ?? []).map(code => (data.license_plans ?? []).find(p => p.code === code)).filter(p => p?.status === 'active');
+      title.append(element('span',boundPlans.length ? boundPlans.map(p=>p.name).join(' · ') : '未关联可用套餐', 'badge'));
       summary.append(title,
         element('small', `${version.product_name || version.product_code || 'APPGOG'} · ${version.version || '—'} · ${channelLabel(version.channel)} · ${releaseKindLabel(version.release_kind)} · ${date(version.published_at || version.created_at)}`),
         element('p', version.release_notes || '暂无更新公告'));
@@ -133,6 +156,7 @@ export function createAdminDashboard(shell, collaborators) {
       summary.append(meta);
       const side = element('div', null, 'release-side');
       side.append(element('span', version.status === 'active' ? '已发布' : '草稿', `badge ${version.status === 'active' ? 'success' : ''}`));
+      if (can('version.manage')) side.append(button('设置套餐', () => changeVersionPlans(version), 'mini-button'));
       if (version.status === 'active' && can('version.manage')) side.append(button('撤回版本', () => withdrawVersion(version), 'mini-button mini-button-danger'));
       item.append(summary, side); list.append(item);
     }

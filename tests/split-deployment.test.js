@@ -84,9 +84,9 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
     ['APPGOG/config.json', Buffer.from('{"name":"APPGOG"}')],
     ['APPGOG/index.html', Buffer.from('<!doctype html><html><head></head><body>APPGOG</body></html>')],
   ]));
-  const upload = await send(centerUrl, '/web/admin/versions/upload?version=1.0.0', { method: 'POST', body: sourceZip, cookie: adminCookie, csrf: adminCsrf, zip: true });
+  const upload = await send(centerUrl, '/web/admin/versions/upload?plan_code=paid&version=1.0.0', { method: 'POST', body: sourceZip, cookie: adminCookie, csrf: adminCsrf, zip: true });
   assert.equal(upload.status, 201);
-  const issued = await send(centerUrl, '/web/admin/licenses', { method: 'POST', cookie: adminCookie, csrf: adminCsrf, body: { customer_ref: 'ORDER-SPLIT', domain: 'example.com' } });
+  const issued = await send(centerUrl, '/web/admin/licenses', { method: 'POST', cookie: adminCookie, csrf: adminCsrf, body: { plan_code: 'paid', customer_ref: 'ORDER-SPLIT', domain: 'example.com' } });
   assert.equal(issued.status, 201);
   const customerLogin = await send(buildUrl, '/web/customer/login', { method: 'POST', body: { license_key: issued.data.license_key } });
   assert.equal(customerLogin.status, 200);

@@ -83,7 +83,7 @@ export function createCustomerPage(shell) {
       : version.is_current ? '当前版本' : version.is_latest ? '最新版本'
         : version.is_latest_eligible ? '授权可用最新版' : '';
     if (currentLabel) labels.append(element('span', currentLabel, 'delivery-version-badge' + (version.is_current && !version.is_latest ? ' current' : '')));
-    labels.append(element('span', version.eligible === false ? '当前套餐不可用' : '当前套餐可用', 'delivery-version-tier'));
+    labels.append(element('span', state.data?.license?.plan_name || state.data?.license?.plan_code || '授权套餐', 'delivery-version-tier'));
     identity.append(title, versionText, labels);
     const eligible = version.eligible !== false;
     const allowed = eligible && (version.is_latest_eligible || version.is_current);
@@ -122,11 +122,12 @@ export function createCustomerPage(shell) {
     $('license-prefix').textContent = license.key_prefix ? `${license.key_prefix}••••` : '已验证';
     $('license-domain-detail').textContent = license.bound_domain ?? '未绑定';
     $('update-until').textContent = date(license.update_until);
-    const planLabel = license.plan_name || license.plan_code || '历史兼容版';
-    const planNote = license.plan_status === 'deleted' ? '套餐已删除，当前授权保留原权益；如需调整请联系管理员更改套餐。' : license.plan_status === 'disabled' ? '套餐已停用，当前授权保留原权益。' : '构建权限以当前授权的套餐权益为准。';
-    $('customer-plan-name').textContent = '当前套餐：' + planLabel;
+    const planLabel = license.plan_name || license.plan_code || '未配置';
+    $('customer-plan-name').textContent = '你的套餐：' + planLabel;
+    const planNote = license.plan_status === 'deleted' ? '套餐已删除，请联系管理员更改套餐。' : license.plan_status === 'disabled' ? '套餐已停用，请联系管理员。' : '';
     $('customer-plan-note').textContent = planNote;
-    $('license-plan-detail').textContent = planLabel + (license.plan_status === 'deleted' ? '（已删除，保留原权益）' : license.plan_status === 'disabled' ? '（已停用，保留原权益）' : '');
+    $('customer-plan-note').hidden = !planNote;
+    $('license-plan-detail').textContent = planLabel + (license.plan_status === 'deleted' ? '（已删除，请联系管理员更改套餐）' : license.plan_status === 'disabled' ? '（已停用，请联系管理员更改套餐）' : '');
 
     const announcement = data.announcement;
     const banner = $('announcement-banner');

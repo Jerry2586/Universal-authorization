@@ -43,29 +43,29 @@ function sourceMetadata(files, sourceFilename) {
   return { version, displayName };
 }
 
-export function createProductService({ repository, productCatalog, artifactStore, buildEngine, config, clock = () => new Date() }) {
+export function createProductService({ repository, productCatalog, artifactStore, buildEngine, config, atomic, entitlementAccess, clock = () => new Date() }) {
   return Object.freeze({
-    registerSourceVersion({ productCode = 'appgog', allowProductCreation = true, version, displayName, releaseNotes, channel, releaseKind, accessTier }) {
+    registerSourceVersion({ productCode = 'appgog', allowProductCreation = true, version, displayName, releaseNotes, channel, releaseKind, accessTier, planCodes }) {
       invariant(version?.trim(), 'VERSION_REQUIRED', '必须填写版本号');
       const product = productCatalog.ensureProduct({ code: productCode, name: String(productCode).toUpperCase(), allowCreate: allowProductCreation });
       invariant(product.status === 'active', 'PRODUCT_ARCHIVED', '产品已归档，不能签发新授权或发布新版本', 409);
       invariant(!repository.sourceVersionByProductVersion(product.code, version.trim()), 'VERSION_EXISTS', '该版本已经存在', 409);
-      return repository.createSourceVersion({
+      return atomic(() => repository.createSourceVersion({
         productId: product.id,
         version: version.trim(),
         displayName: displayName?.trim() || `${product.name} ${version.trim()}`,
         sourceKind: SOURCE_KIND.OFFICIAL,
         sourceRef: null,
         status: 'draft',
-        releaseNotes, channel, releaseKind, accessTier: normalizedAccessTier(accessTier),
+        releaseNotes, channel, releaseKind, accessTier: normalizedAccessTier(accessTier), planCodes: entitlementAccess.validateReleasePlans(planCodes),
         rollbackAllowed: false, rollbackTo: null,
         now: clock().toISOString(),
-      });
+      }));
     },
 
     publishSourceVersion({
       productCode = 'appgog', allowProductCreation = true, version, displayName, sourceFilename, zipBuffer,
-      releaseNotes, channel, releaseKind, accessTier, actorId = null,
+      releaseNotes, channel, releaseKind, accessTier, planCodes, actorId = null,
     }) {
       invariant(Buffer.isBuffer(zipBuffer) && zipBuffer.length > 0, 'SOURCE_REQUIRED', '必须上传主题 ZIP');
       invariant(zipBuffer.length <= config.maxSourceUploadBytes, 'SOURCE_TOO_LARGE', '上传的主题 ZIP 超出大小限制', 413);
@@ -81,35 +81,51 @@ export function createProductService({ repository, productCatalog, artifactStore
       invariant(VERSION_PATTERN.test(normalizedVersion), 'VERSION_INVALID', '版本号格式无效，请使用例如 1.8.11 的格式');
       const normalizedDisplayName = displayName?.trim() || detected.displayName || `APPGOG ${normalizedVersion}`;
       const normalizedTier = normalizedAccessTier(accessTier);
+      const selectedPlans = entitlementAccess.validateReleasePlans(planCodes);
       const existing = repository.sourceVersionByProductVersion(product.code, normalizedVersion);
       invariant(!existing || existing.status === 'draft', 'VERSION_EXISTS', '该版本已经发布', 409);
       const versionId = existing?.id ?? newId('src');
       const sourceRef = `sources/${product.code}/${normalizedVersion.replace(/[^a-zA-Z0-9._-]/g, '_')}/${versionId}.zip`;
       artifactStore.put(sourceRef, zipBuffer);
       try {
-        const values = {
-          id: versionId, productId: product.id, version: normalizedVersion,
-          displayName: normalizedDisplayName, sourceKind: SOURCE_KIND.OFFICIAL, sourceRef,
-          status: 'active', releaseNotes, channel, releaseKind, accessTier: normalizedTier,
-          rollbackAllowed: false, rollbackTo: null, now: clock().toISOString(),
-        };
-        const source = existing ? repository.publishSourceVersion(values) : repository.createSourceVersion(values);
-        invariant(source, 'VERSION_PUBLISH_CONFLICT', '版本状态已发生变化，请刷新后重试', 409);
-        repository.audit({
-          actorType: 'admin', actorId, action: 'source_version.published',
-          subjectType: 'source_version', subjectId: source.id,
-          metadata: {
-            version: source.version, display_name: source.display_name,
-            source_filename: sourceFilename ?? null, source_ref: sourceRef, size: zipBuffer.length,
-            access_tier: source.access_tier,
-          },
-          now: clock().toISOString(),
+        return atomic(() => {
+          if (selectedPlans !== undefined) entitlementAccess.validateReleasePlans(selectedPlans);
+          const values = {
+            id: versionId, productId: product.id, version: normalizedVersion,
+            displayName: normalizedDisplayName, sourceKind: SOURCE_KIND.OFFICIAL, sourceRef,
+            status: 'active', releaseNotes, channel, releaseKind, accessTier: normalizedTier, planCodes: selectedPlans,
+            rollbackAllowed: false, rollbackTo: null, now: clock().toISOString(),
+          };
+          const source = existing ? repository.publishSourceVersion(values) : repository.createSourceVersion(values);
+          invariant(source, 'VERSION_PUBLISH_CONFLICT', '版本状态已发生变化，请刷新后重试', 409);
+          repository.audit({
+            actorType: 'admin', actorId, action: 'source_version.published',
+            subjectType: 'source_version', subjectId: source.id,
+            metadata: {
+              version: source.version, display_name: source.display_name,
+              source_filename: sourceFilename ?? null, source_ref: sourceRef, size: zipBuffer.length,
+              access_tier: source.access_tier, plan_codes: selectedPlans ?? null,
+            },
+            now: clock().toISOString(),
+          });
+          return source;
         });
-        return source;
       } catch (error) {
         artifactStore.remove(sourceRef);
         throw error;
       }
+    },
+
+    changeVersionPlans({ id, planCodes, actorId }) {
+      return atomic(() => {
+        const version = repository.sourceVersionById(id);
+        invariant(version, 'VERSION_NOT_FOUND', '版本不存在', 404);
+        const codes = entitlementAccess.validateReleasePlans(planCodes);
+        const updated = repository.setVersionPlans(id, codes);
+        repository.audit({ actorType:'admin', actorId, action:'source_version.plans_changed', subjectType:'source_version', subjectId:id,
+          metadata:{ previous: version.plan_codes_json ? JSON.parse(version.plan_codes_json) : null, plan_codes:codes }, now:clock().toISOString() });
+        return updated;
+      });
     },
 
     withdrawSourceVersion({ id, reason, actorId }) {

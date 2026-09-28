@@ -9,7 +9,14 @@ function detectedVersionFromFilename(name) {
 export function createAdminReleaseUpload(shell) {
   const { state, uploadZip, notify, refresh } = shell;
 
+  let publishing = false;
+  function showStatus(message, failed = false) {
+    const status = $('release-publish-status');
+    status.textContent = message; status.hidden = false; status.classList.toggle('error', failed);
+  }
+
   function setSourceFile(file) {
+    if (publishing) return;
     const input = $('source-zip');
     const zone = $('source-upload');
     if (!input || !zone) return;
@@ -80,37 +87,53 @@ export function createAdminReleaseUpload(shell) {
     bindDropZone();
     $('version-form')?.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (publishing) return;
       const form = event.currentTarget;
       const submit = form.querySelector('[type="submit"]');
+      const label = submit.querySelector('span');
       submit.disabled = true;
+      showStatus('正在检查发布信息…');
       try {
         const fields = new FormData(form);
+        if (!fields.get('product_code')) throw new Error('请选择有效产品；没有产品时请先创建产品');
         const file = state.sourceFile ?? fields.get('source_zip');
         if (!(file instanceof File) || !file.size) throw new Error('请选择主题 ZIP');
+        const planCodes = fields.getAll('plan_codes');
+        if (!planCodes.length) throw new Error('请选择至少一个可用套餐');
         const params = new URLSearchParams({
           product_code: String(fields.get('product_code') || ''), source_filename: file.name,
           version: String(fields.get('version')), display_name: String(fields.get('display_name') || ''),
           release_notes: String(fields.get('release_notes') || ''), channel: String(fields.get('channel') || 'stable'),
           release_kind: String(fields.get('release_kind') || 'feature'),
-          access_tier: String(fields.get('access_tier') || 'free'),
         });
+        for (const code of planCodes) params.append('plan_code',code);
         const progressWrap = $('source-upload-progress');
         const progressFill = $('source-upload-progress-fill');
         const progressText = $('source-upload-progress-text');
+        publishing = true;
+        form.setAttribute('aria-busy', 'true');
+        label.textContent = '正在上传并检查…';
         progressWrap.hidden = false;
+        progressFill.style.width = '0%';
+        progressText.textContent = '0%';
+        showStatus('正在上传，请等待安全检查完成。');
         $('source-file-status').textContent = '正在上传并执行 ZIP 安全检查…';
         const result = await uploadZip(`/web/admin/versions/upload?${params}`, file, (percent) => {
           progressFill.style.width = `${percent}%`;
-          progressText.textContent = `${percent}%`;
+          progressText.textContent = percent === 100 ? '安全检查中…' : `${percent}%`;
+          if (percent === 100) showStatus('上传已完成，服务器正在安全检查，请稍候。');
         });
         progressFill.style.width = '100%';
         progressText.textContent = '校验通过';
         form.reset();
+        publishing = false;
         setSourceFile(null);
+        for (const id of ['version-search', 'version-product-filter', 'version-status-filter']) { if ($(id)) $(id).value = ''; }
+        showStatus(`${result.display_name || result.version} 已发布，版本目录已请求刷新。`);
         notify(`${result.display_name || result.version} 安全检查通过，版本已发布`);
         await refresh();
-      } catch (error) { notify(error.message, true); }
-      finally { submit.disabled = false; }
+      } catch (error) { showStatus(error.message, true); notify(error.message, true); }
+      finally { publishing = false; form.removeAttribute('aria-busy'); submit.disabled = false; label.textContent = '安全检查并发布版本'; }
     });
   }
 

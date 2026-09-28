@@ -169,17 +169,19 @@ test('HTTP contracts: maintenance controls enqueue only in isolated filesystem',
   const receiver = (await send('/web/admin/system/migrations/receiver', { actor: admin, body: {}, status: 201 })).data;
   assert.ok(receiver.pairing_code);
   await send('/web/admin/system/migrations/receiver/close', { actor: admin, body: {} });
-  const version = (await send('/web/admin/versions', { actor: admin, body: { version: '0.0.1', display_name: 'Contract source' }, status: 201 })).data;
+  const version = (await send('/web/admin/versions', { actor: admin, body: { plan_codes: ['paid'], version: '0.0.1', display_name: 'Contract source' }, status: 201 })).data;
   assert.equal(version.status, 'draft');
   const zip = writeZip(new Map([['config.json', Buffer.from('{"name":"APPGOG"}')], ['index.html', Buffer.from('<html><head></head><body>Contract</body></html>')]]));
-  const published = await send('/web/admin/versions/upload?version=0.0.1', { actor: admin, raw: zip, contentType: 'application/zip', status: 201 });
+  const published = await send('/web/admin/versions/upload?plan_code=paid&version=0.0.1', { actor: admin, raw: zip, contentType: 'application/zip', status: 201 });
   assert.equal(published.data.id, version.id);
   assert.equal((await send(`/web/admin/versions/${version.id}/withdraw`, { actor: admin, body: { reason: 'Withdraw isolated test source' } })).data.status, 'withdrawn');
 });
 
 test('HTTP contracts: public build authorization, unlock, activation and refresh issue verifiable tokens', async t => {
   const { send, admin, config } = await fixture(t);
-  const license = (await send('/web/admin/licenses', { actor: admin, body: { customer_ref: 'activation-contract', domain: 'activate.example.com' }, status: 201 })).data;
+  const fixtureZip=writeZip(new Map([['config.json',Buffer.from('{"name":"APPGOG","version":"1.0.0"}')],['index.html',Buffer.from('<html><body>Fixture</body></html>')]]));
+  await send('/web/admin/versions/upload?plan_code=paid&version=1.0.0',{actor:admin,raw:fixtureZip,contentType:'application/zip',status:201});
+  const license = (await send('/web/admin/licenses', { actor: admin, body: { plan_code:'paid', customer_ref: 'activation-contract', domain: 'activate.example.com' }, status: 201 })).data;
   const ticket = (await send('/api/v1/builds/authorize', { body: { license_key: license.license_key, version: '1.0.0', domain: 'activate.example.com' }, status: 201 })).data;
   const build = (await send('/api/v1/worker/builds/claim', { token: config.workerToken, body: { build_ticket: ticket.build_ticket }, status: 201 })).data;
   const identity = { build_id: build.build_id, package_proof: build.package_secret, domain: 'activate.example.com', backend_url: 'https://panel.example.com', installation_id: 'installation_http_contract_1' };
@@ -250,9 +252,9 @@ test('product management: permissions, immutable code, archive preserves activat
   await send('/web/admin/products/other', { actor: admin, method: 'DELETE', status: 404 });
   const zip = writeZip(new Map([['config.json', Buffer.from('{"name":"Theme","version":"2.0.0"}')], ['index.html', Buffer.from('<html><head></head><body>Fixture</body></html>')]]));
   for (const code of ['appgog', 'other']) {
-    await send('/web/admin/versions/upload?product_code=' + code, { actor: admin, raw: zip, contentType: 'application/zip', status: 201 });
+    await send('/web/admin/versions/upload?plan_code=paid&product_code=' + code, { actor: admin, raw: zip, contentType: 'application/zip', status: 201 });
   }
-  const issued = (await post('/web/admin/licenses', { product_code: 'other', customer_ref: 'product-fixture', domain: 'product.example.com' }, 201)).data;
+  const issued = (await post('/web/admin/licenses', { product_code: 'other', plan_code: 'paid', customer_ref: 'product-fixture', domain: 'product.example.com' }, 201)).data;
   const ticket = (await send('/api/v1/builds/authorize', { body: { license_key: issued.license_key, version: '2.0.0', domain: 'product.example.com' }, status: 201 })).data;
   const build = (await send('/api/v1/worker/builds/claim', { token: config.workerToken, body: { build_ticket: ticket.build_ticket }, status: 201 })).data;
   const identity = { build_id: build.build_id, package_proof: build.package_secret, domain: 'product.example.com', backend_url: 'https://product.example.com', installation_id: 'installation_product_contract_1' };
@@ -264,7 +266,7 @@ test('product management: permissions, immutable code, archive preserves activat
   assert.deepEqual({ ...app.repository.licenseById(issued.license_id) }, { ...before, product_name: 'Renamed product' });
   assert.equal((await post('/web/admin/licenses', { product_code: 'other', customer_ref: 'blocked' }, 409)).data.error.code, 'PRODUCT_ARCHIVED');
   await post('/web/admin/versions', { product_code: 'other', version: '2.1.0' }, 409);
-  await send('/web/admin/versions/upload?product_code=other', { actor: admin, raw: zip, contentType: 'application/zip', status: 409 });
+  await send('/web/admin/versions/upload?plan_code=paid&product_code=other', { actor: admin, raw: zip, contentType: 'application/zip', status: 409 });
   await send('/api/v1/activations/refresh', { body: { ...identity, activation_id: activation.activation_id, refresh_secret: activation.refresh_secret } });
   const customer = await login('customer', { license_key: issued.license_key });
   const overview = (await send('/web/customer/overview', { actor: customer })).data;

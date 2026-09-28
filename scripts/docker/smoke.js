@@ -32,8 +32,8 @@ if (process.argv[2] === 'create') {
     ['APPGOG/config.json', Buffer.from('{"name":"APPGOG"}')],
     ['APPGOG/index.html', Buffer.from('<!doctype html><html><head></head><body>APPGOG</body></html>')],
   ]));
-  await send(center, '/web/admin/versions/upload?version=1.0.0', { ...adminOptions, body: zip, zip: true });
-  const issued = await send(center, '/web/admin/licenses', { ...adminOptions, body: { customer_ref: 'DOCKER-CI', domain: 'customer.test' } });
+  await send(center, '/web/admin/versions/upload?plan_code=paid&version=1.0.0', { ...adminOptions, body: zip, zip: true });
+  const issued = await send(center, '/web/admin/licenses', { ...adminOptions, body: { plan_code: 'paid', customer_ref: 'DOCKER-CI', domain: 'customer.test' } });
   saved = { licenseKey: issued.data.license_key, identityHash: sha(JSON.stringify(identity)), publicKeyHash: sha(readFileSync(config.publicKeyPath)) };
 } else saved = JSON.parse(readFileSync(marker, 'utf8'));
 assert.equal(sha(JSON.stringify(identity)), saved.identityHash);

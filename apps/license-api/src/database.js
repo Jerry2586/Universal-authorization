@@ -19,6 +19,7 @@ const MIGRATIONS = Object.freeze({
     ['channel', "TEXT NOT NULL DEFAULT 'stable'"],
     ['release_kind', "TEXT NOT NULL DEFAULT 'feature'"],
     ['access_tier', "TEXT NOT NULL DEFAULT 'free'"],
+    ['plan_codes_json', 'TEXT'],
     ['min_xboard_version', 'TEXT'],
     ['min_upgrade_version', 'TEXT'],
     ['rollback_allowed', 'INTEGER NOT NULL DEFAULT 1'],
@@ -270,8 +271,22 @@ function migrate(database) {
     }
   });
 
+  runMigration(database, '2026-09-29-v1.2.53-version-plans', () => {
+    addMissingColumns(database, { source_versions: [['plan_codes_json', 'TEXT']] });
+    const plans = database.prepare("SELECT code,access_tier FROM license_plans WHERE status='active' AND code!='legacy'").all();
+    const save = database.prepare('UPDATE source_versions SET plan_codes_json=? WHERE id=?');
+    for (const version of database.prepare('SELECT id,access_tier FROM source_versions WHERE plan_codes_json IS NULL').all()) {
+      const codes = plans.filter(p => p.access_tier === 'paid' || (version.access_tier === 'paid' ? p.access_tier === 'paid_only' : p.access_tier === 'free')).map(p => p.code);
+      save.run(JSON.stringify(codes),version.id);
+    }
+  });
   runMigration(database, '2026-09-29-v1.2.51-default-plan-name', () => {
     database.prepare("UPDATE license_plans SET name = '定义版' WHERE code = 'paid' AND name = '付费版'").run();
+  });
+  runMigration(database, '2026-09-29-v1.2.53-restore-default-plan-name', () => {
+    database.exec(`UPDATE license_plans SET name='付费版' WHERE code='paid' AND name='定义版'
+      AND NOT EXISTS (SELECT 1 FROM audit_events WHERE subject_id=license_plans.id AND action='plan.updated'
+        AND json_valid(metadata_json) AND json_extract(metadata_json,'$.after.name')='定义版')`);
   });
 
 }

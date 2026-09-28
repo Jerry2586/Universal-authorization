@@ -38,8 +38,8 @@ const config = {
 };
 try {
   const app = bootstrap({ database, config, privateKey, publicKey: publicKeyPem });
-  app.portal.publishSourceVersion({ version, zipBuffer: source });
-  const license = app.service.issueLicense({ customerRef: 'REAL-THEME-REGRESSION', domain: 'fixture.example.com' });
+  app.portal.publishSourceVersion({ planCodes: ['paid'], version, zipBuffer: source });
+  const license = app.service.issueLicense({ planCode: 'paid', customerRef: 'REAL-THEME-REGRESSION', domain: 'fixture.example.com' });
   const customer = app.sessions.loginCustomer(license.licenseKey).session;
   const job = app.portal.enqueueCustomerBuild(customer, { version, domain: 'fixture.example.com' });
   // Run the CPU-heavy protector in a separate process, as the production Worker does.

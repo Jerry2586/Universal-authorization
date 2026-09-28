@@ -16,7 +16,7 @@ export function createCustomerPortalService({
       const license = customerLicense(session);
       const builds = repository.listBuildJobsByLicense(license.id, 30);
       const currentVersion = repository.activeActivationByLicense(license.id)?.version ?? null;
-      const versions = repository.listActiveSourceVersions(license.product_code);
+      const versions = repository.listActiveSourceVersions(license.product_code).filter(version => entitlementAccess.versionEligibility({ license, source: version }).eligible);
       const latestVersion = versions[0]?.version ?? null;
       const projectedVersions = versions.map((version) => {
         const entitlement = entitlementAccess.versionEligibility({ license, source: version });

@@ -37,6 +37,11 @@ export function createBuildAuthorizationService({
       invariant(ticket.status === 'created', 'BUILD_TICKET_USED', '打包票据已经使用', 409);
       invariant(new Date(ticket.expires_at) >= nowDate, 'BUILD_TICKET_EXPIRED', '打包票据已过期', 410);
       invariant(ticket.license_status === LICENSE_STATUS.ACTIVE, 'LICENSE_INACTIVE', '授权已暂停或撤销', 403);
+      const license = repository.licenseById(ticket.license_id);
+      const source = repository.sourceVersionByProductVersion(ticket.product_code, ticket.requested_version);
+      invariant(source, 'SOURCE_VERSION_NOT_FOUND', '主题版本未发布，请选择已发布版本', 404);
+      if (source) invariant(source.status === 'active', 'SOURCE_VERSION_NOT_READY', '当前主题版本不可构建', 409);
+      entitlementAccess.assertVersionAccess({ license, source });
       invariant(repository.claimTicket(ticket.id, now), 'BUILD_TICKET_RACE', '打包票据正在被另一个任务使用', 409);
       const packageSecret = newPackageSecret();
       const installKey = newInstallKey();
@@ -77,6 +82,7 @@ export function createBuildAuthorizationService({
       return transaction(database, () => {
         let license = licensingAccess.findActiveLicense(licenseKey);
         const source = repository.sourceVersionByProductVersion(license.product_code, version.trim());
+        invariant(source, 'SOURCE_VERSION_NOT_FOUND', '主题版本未发布，请选择已发布版本', 404);
         if (source) {
           invariant(source.status === 'active', 'SOURCE_VERSION_NOT_READY', '该主题版本不可构建', 409);
           entitlementAccess.assertVersionAccess({ license, source });
@@ -85,6 +91,7 @@ export function createBuildAuthorizationService({
         } else if (license.update_until) {
           invariant(new Date(license.update_until) >= nowDate, 'UPDATE_WINDOW_EXPIRED', '该授权的更新服务已到期', 403);
         }
+        entitlementAccess.assertVersionAccess({ license, source });
         license = licensingAccess.bindDomainForBuild(license, normalizedDomain, now);
         assertBuildQuota(license, nowDate);
         const ticket = newBuildTicket();

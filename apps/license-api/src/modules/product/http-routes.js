@@ -28,7 +28,7 @@ export async function handleProductHttp({
     const version = portal.registerSourceVersion({
       allowProductCreation: false, productCode: body.product_code, version: body.version, displayName: body.display_name,
       releaseNotes: body.release_notes, channel: body.channel, releaseKind: body.release_kind,
-      accessTier: body.access_tier,
+      accessTier: body.access_tier, planCodes: body.plan_codes ?? [],
     });
     respondJson(response, 201, versionResult(version));
     return true;
@@ -42,13 +42,20 @@ export async function handleProductHttp({
       version: url.searchParams.get('version'), displayName: url.searchParams.get('display_name'),
       sourceFilename: url.searchParams.get('source_filename'), releaseNotes: url.searchParams.get('release_notes'),
       channel: url.searchParams.get('channel'), releaseKind: url.searchParams.get('release_kind'),
-      accessTier: url.searchParams.get('access_tier'),
+      accessTier: url.searchParams.get('access_tier'), planCodes: url.searchParams.getAll('plan_code'),
       actorId: admin.actor_id, zipBuffer: await readBuffer(request, config.maxSourceUploadBytes),
     });
     respondJson(response, 201, versionResult(version));
     return true;
   }
 
+  const plansMatch = url.pathname.match(/^\/web\/admin\/versions\/([^/]+)\/plans$/);
+  if (method === 'POST' && plansMatch) {
+    const admin = auth.requireSession('admin', true, 'version.manage');
+    const body = await readJson(request);
+    respondJson(response, 200, versionResult(portal.changeVersionPlans({ id:plansMatch[1], planCodes:body.plan_codes, actorId:admin.actor_id })));
+    return true;
+  }
   const withdrawMatch = url.pathname.match(/^\/web\/admin\/versions\/([^/]+)\/withdraw$/);
   if (method === 'POST' && withdrawMatch) {
     const admin = auth.requireSession('admin', true, 'version.manage');
@@ -66,6 +73,7 @@ export async function handleProductHttp({
 function versionResult(version) {
   return {
     id: version.id, version: version.version, display_name: version.display_name,
+    plan_codes: version.plan_codes_json == null ? null : JSON.parse(version.plan_codes_json),
     source_kind: version.source_kind, status: version.status, access_tier: version.access_tier,
   };
 }

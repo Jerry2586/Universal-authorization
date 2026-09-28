@@ -159,5 +159,17 @@ export function createAdminPage(shell) {
     if (session.is_owner) await migrationUi.refresh();
   }
 
-  return Object.freeze({ bind, render(data) { productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
+  return Object.freeze({ bind, render(data) {
+    const options=$('release-plan-options');
+    if(options) {
+      const selected=new Set([...options.querySelectorAll('input:checked')].map(input=>input.value));
+      options.replaceChildren();
+      const plans=(data.license_plans ?? []).filter(plan=>plan.status==='active'&&plan.code!=='legacy');
+      for(const plan of plans) {
+        const label=element('label',null,'release-plan-choice');const input=element('input');input.type='checkbox';input.name='plan_codes';input.value=plan.code;input.checked=selected.has(plan.code);
+        label.append(input,element('span',plan.name));options.append(label);
+      }
+      if(!plans.length)options.append(element('p','暂无可用套餐，请先创建套餐。','muted'));
+    }
+    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
 }

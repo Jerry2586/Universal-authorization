@@ -21,6 +21,9 @@ function fixture() {
     buildTicketTtlSeconds: 900,
   };
   const core = bootstrap({ database, config, privateKey, clock: () => new Date(now) });
+  // Published legacy catalog entries are required before low-level activation builds.
+  const product = core.service.ensureProduct();
+  for (const version of ['1.0.0','1.0.1','1.17.0']) core.repository.createSourceVersion({productId:product.id,version,displayName:version,sourceKind:'official',sourceRef:'fixture.zip',status:'active',now:now.toISOString()});
   return {
     database,
     publicKey,
@@ -965,7 +968,7 @@ test('套餐模板管理保持已签发权益，自定义付费套餐支持版�
   const old = app.repository.licenseById(issued.license.id);
   assert.equal(old.max_builds_per_day, 8);
   assert.equal(JSON.parse(old.plan_limits_json).access_tier, 'paid');
-  assert.equal(app.service.versionEligibility({ license: old, source: { access_tier: 'paid' } }).eligible, true);
+  assert.equal(app.service.versionEligibility({ license: old, source: { access_tier: 'paid' } }).eligible, false);
   assert.throws(() => app.service.issueLicense({ customerRef: 'disabled', planCode: 'business' }), { code: 'LICENSE_PLAN_INVALID' });
   app.service.changeLicenseQuota({ licenseId: old.id, maxBuildsPerDay: 8, reason: '调整额度' });
   assert.equal(JSON.parse(app.repository.licenseById(old.id).plan_limits_json).access_tier, 'paid');

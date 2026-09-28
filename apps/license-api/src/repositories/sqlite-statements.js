@@ -10,10 +10,10 @@ export function createSqliteStatements(database) {
       FROM source_versions JOIN products ON products.id = source_versions.product_id
       ORDER BY COALESCE(source_versions.published_at, source_versions.created_at) DESC, source_versions.id`),
     productByCode: database.prepare(`SELECT * FROM products WHERE code = ?`),
-    planByCode: database.prepare(`SELECT * FROM license_plans WHERE code = ?`),
+    planByCode: database.prepare(`SELECT license_plans.*, (SELECT COUNT(*) FROM licenses WHERE plan_id = license_plans.id) AS license_count FROM license_plans WHERE code = ?`),
     listPlans: database.prepare(`SELECT * FROM license_plans WHERE status = 'active' ORDER BY code ASC`),
-    allPlans: database.prepare(`SELECT * FROM license_plans WHERE status != 'deleted' ORDER BY created_at, code`),
-    deletePlan: database.prepare(`UPDATE license_plans SET status = 'deleted', updated_at = ? WHERE code = ? AND status != 'deleted'`),
+    allPlans: database.prepare(`SELECT license_plans.*, (SELECT COUNT(*) FROM licenses WHERE plan_id = license_plans.id) AS license_count FROM license_plans WHERE status != 'deleted' ORDER BY created_at, code`),
+    deletePlan: database.prepare(`UPDATE license_plans SET status = 'deleted', updated_at = ? WHERE code = ? AND status != 'deleted' AND NOT EXISTS (SELECT 1 FROM licenses WHERE licenses.plan_id = license_plans.id)`),
     insertPlan: database.prepare(`INSERT INTO license_plans (id, code, name, access_tier, status, capabilities_json, limits_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     updatePlan: database.prepare(`UPDATE license_plans SET name = ?, access_tier = ?, status = ?, capabilities_json = ?, limits_json = ?, updated_at = ? WHERE code = ?`),
     insertLicense: database.prepare(`
@@ -313,9 +313,10 @@ export function createSqliteStatements(database) {
       INSERT INTO source_versions (
         id, product_id, version, display_name, source_kind, source_ref, status,
         release_notes, channel, release_kind, access_tier, min_xboard_version, min_upgrade_version,
-        rollback_allowed, rollback_to, published_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        rollback_allowed, rollback_to, published_at, created_at, plan_codes_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
+    setVersionPlans: database.prepare(`UPDATE source_versions SET plan_codes_json=? WHERE id=?`),
     sourceVersionById: database.prepare(`
       SELECT source_versions.*, products.code AS product_code
       FROM source_versions JOIN products ON products.id = source_versions.product_id
@@ -330,7 +331,7 @@ export function createSqliteStatements(database) {
       UPDATE source_versions
       SET display_name = ?, source_kind = ?, source_ref = ?, release_notes = ?, channel = ?, release_kind = ?,
         access_tier = ?, min_xboard_version = ?, min_upgrade_version = ?, rollback_allowed = ?, rollback_to = ?,
-        published_at = ?, status = 'active', withdrawn_reason = NULL
+        published_at = ?, plan_codes_json = ?, status = 'active', withdrawn_reason = NULL
       WHERE id = ? AND status = 'draft'
     `),
     listActiveSourceVersions: database.prepare(`

@@ -80,14 +80,14 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
     });
   }
   function deletePlan(plan) {
-    dialog('删除套餐', '删除“' + plan.name + '”后，不再用于新授权或切换套餐。已经签发的授权、额度和权益保持不变，历史引用保留。', (card, close) => {
+    dialog('删除套餐', '删除“' + plan.name + '”后，不再用于新授权或版本发布。仅名下没有 Key 的套餐可以删除。', (card, close) => {
       const row = element('div', null, 'dialog-actions');
       const cancel = button('取消', close, 'button button-secondary');
       const confirm = button('删除套餐', async () => {
         confirm.disabled = true; cancel.disabled = true;
         try {
           await request('/web/admin/plans/' + encodeURIComponent(plan.code), { method: 'DELETE' });
-          close(); notify('套餐已删除，已有授权保持不变'); await refresh();
+          close(); notify('套餐已删除'); await refresh();
         } catch (error) { notify(error.message, true); }
         finally { confirm.disabled = false; cancel.disabled = false; }
       }, 'button button-danger');
@@ -103,7 +103,13 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
       const row = element('tr'); const name = element('td'); name.append(element('strong', plan.name), element('small', plan.code, 'table-subline'));
       row.append(name, td(scopeLabel(plan.access_tier)), td(`${plan.limits.max_builds_per_day} 次`), td(`${plan.limits.max_activations} 个`), td(`${plan.capabilities.length} 项`), badge(plan.status));
       const cell = element('td', null, 'actions');
-      if (can('license.manage')) cell.append(button('编辑套餐', () => editPlan(plan)), button('删除', () => deletePlan(plan), 'button button-secondary danger'));
+      if (can('license.manage')) {
+        const remove = button('删除', () => deletePlan(plan), 'button button-secondary danger');
+        remove.disabled = (plan.license_count ?? 0) > 0;
+        if (remove.disabled) remove.title = '名下有 Key，请先更改授权套餐或永久删除授权';
+        cell.append(button('编辑套餐', () => editPlan(plan)), remove);
+        name.append(element('small', '关联 Key：' + (plan.license_count ?? 0), 'table-subline'));
+      }
       else cell.append(element('span', '只读', 'muted'));
       row.append(cell); return row;
     }, '暂无符合条件的套餐');

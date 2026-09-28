@@ -108,6 +108,8 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
   });
   const product = createProductService({
     repository: createProductRepositoryPort(repository),
+    atomic: operation => transaction(database, operation),
+    entitlementAccess: Object.freeze({ validateReleasePlans: service.validateReleasePlans }),
     productCatalog: Object.freeze({ ensureProduct: service.ensureProduct }),
     artifactStore, buildEngine, config, clock,
   });

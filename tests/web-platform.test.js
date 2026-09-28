@@ -135,7 +135,7 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
 
   const draftVersion = await send('/web/admin/versions', {
     method: 'POST', cookie: adminCookie, csrf: adminCsrf,
-    body: { version: '1.17.0', display_name: 'APPGOG 1.17.0' },
+    body: { plan_codes: ['paid'], version: '1.17.0', display_name: 'APPGOG 1.17.0' },
   });
   assert.equal(draftVersion.status, 201);
   assert.equal(draftVersion.data.status, 'draft');
@@ -276,12 +276,12 @@ test('主题 ZIP 自动识别 config.json 与文件名版本并拒绝冲突', (t
     ['APPGOG-1.8.11-xboard/config.json', Buffer.from('{"name":"APPGOG","version":"1.8.11"}')],
     ['APPGOG-1.8.11-xboard/index.html', Buffer.from('<!doctype html><html><head></head><body>APPGOG</body></html>')],
   ]));
-  const published = app.portal.publishSourceVersion({
+  const published = app.portal.publishSourceVersion({ planCodes: ['paid'],
     productCode: 'appgog', sourceFilename: 'APPGOG-1.8.11-xboard.zip', zipBuffer: sourceZip,
   });
   assert.equal(published.version, '1.8.11');
   assert.equal(published.display_name, 'APPGOG 1.8.11');
-  assert.throws(() => app.portal.publishSourceVersion({
+  assert.throws(() => app.portal.publishSourceVersion({ planCodes: ['paid'],
     productCode: 'appgog', version: '1.8.12', sourceFilename: 'APPGOG-1.8.11-xboard.zip', zipBuffer: sourceZip,
   }), /不一致/);
 });

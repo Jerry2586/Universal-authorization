@@ -20,6 +20,8 @@ function fixture() {
     installActivationWindowSeconds: 3600,
   };
   const app = bootstrap({ database, config, privateKey: signing.privateKey, publicKey: signing.publicKey, clock: () => new Date(now) });
+  const product = app.service.ensureProduct();
+  app.repository.createSourceVersion({productId:product.id,version:'1.19.0',displayName:'Lifecycle fixture',sourceKind:'official',sourceRef:'fixture.zip',status:'active',now:now.toISOString()});
   return {
     ...app, database, publicKey: signing.publicKey,
     now: () => new Date(now),

@@ -43,6 +43,7 @@ export function createApiClient({ state, onSessionInvalid }) {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', path);
       xhr.responseType = 'json';
+      xhr.timeout = 300000;
       xhr.withCredentials = true;
       xhr.setRequestHeader('content-type', 'application/zip');
       if (state.csrf) xhr.setRequestHeader('x-csrf-token', state.csrf);
@@ -50,13 +51,15 @@ export function createApiClient({ state, onSessionInvalid }) {
         if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
       });
       xhr.addEventListener('load', () => {
-        const result = xhr.response ?? (() => { try { return JSON.parse(xhr.responseText); } catch { return {}; } })();
+        const result = xhr.response;
+        if (!result || typeof result !== 'object') return reject(new Error(`服务器返回了无效的上传结果 (${xhr.status})，请刷新版本目录确认后再重试`));
         if (xhr.status >= 200 && xhr.status < 300) return resolve(result);
         if (xhr.status === 401 || (xhr.status === 403 && result.error?.code === 'SESSION_INVALID')) invalidateSession();
         reject(new Error(result.error?.message ?? `上传失败 (${xhr.status})`));
       });
       xhr.addEventListener('error', () => reject(new Error('网络连接中断，主题 ZIP 上传失败')));
       xhr.addEventListener('abort', () => reject(new Error('主题 ZIP 上传已取消')));
+      xhr.addEventListener('timeout', () => reject(new Error('上传或安全检查超时，请刷新版本目录确认是否已发布后再重试')));
       xhr.send(file);
     });
   }

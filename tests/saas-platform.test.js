@@ -289,6 +289,7 @@ test('release metadata hides rollback policy, historical customer builds are blo
 
 test('安装解锁与正式激活必须分两次提交，禁止双 Key 一步激活', async (t) => {
   const app = await fixture(t);
+  addPublishedVersion(app,{version:'1.0.0',publishedAt:'2026-09-20T00:00:00.000Z'});
   const licensed = app.service.issueLicense({ customerRef: 'ORDER-DOUBLE-KEY', domain: 'activate.example.com' });
   const unrelated = app.service.issueLicense({ customerRef: 'ORDER-OTHER', domain: 'other.example.com' });
   function makeBuild() {
@@ -365,12 +366,10 @@ test('版本发布权益决定客户最新可用版本，并在构建接口再�
   const freeOverview = await app.send('/web/customer/overview', { cookie: freeCustomer.cookie });
   assert.equal(freeOverview.status, 200);
   assert.equal(freeOverview.data.license.plan_code, 'free');
-  assert.equal(freeOverview.data.latest_version, '2.1.0');
+  assert.equal(freeOverview.data.latest_version, '2.0.0');
   assert.equal(freeOverview.data.latest_eligible_version, '2.0.0');
   const locked = freeOverview.data.versions.find((item) => item.version === '2.1.0');
-  assert.equal(locked.access_tier, 'paid');
-  assert.equal(locked.eligible, false);
-  assert.equal(locked.eligibility_code, 'VERSION_PLAN_REQUIRED');
+  assert.equal(locked, undefined);
   assert.equal(freeOverview.data.versions.find((item) => item.version === '2.0.0').is_latest_eligible, true);
   const denied = await app.send('/web/customer/builds', {
     method: 'POST', cookie: freeCustomer.cookie, csrf: freeCustomer.csrf,
@@ -1363,36 +1362,30 @@ test('旧工单数据库升级保留消息，已读游标在重开数据库和VA
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 
-test('删除套餐保留既有授权快照，禁止重新签发/编辑，权限与审计原子', async (t) => {
-  const app = await fixture(t), owner = await app.owner();
-  const body = { code: 'deletable', name: '可删除套餐', access_tier: 'paid', status: 'active', capabilities: ['settings:read'], limits: { max_builds_per_day: 4, max_activations: 1 } };
-  await app.send('/web/admin/plans', { ...owner, method:'POST', body });
-  const issued = app.service.issueLicense({customerRef:'PLAN-PRESERVE',domain:'plan.example.com',planCode:'deletable'});
-  const customer = app.sessions.loginCustomer(issued.licenseKey).session;
-  const before = app.repository.licenseById(customer.actor_id);
-  const url = '/web/admin/plans/deletable';
-  assert.equal((await app.send(url, {method:'DELETE'})).status,401);
-  assert.equal((await app.send(url, {cookie:owner.cookie,method:'DELETE'})).status,403);
-  await app.send('/web/admin/admins', {...owner,method:'POST',body:{username:'plan-delete-reader',password:'123456',role:'support'}});
-  const login = await app.send('/web/admin/login',{method:'POST',body:{username:'plan-delete-reader',password:'123456'}});
-  assert.equal((await app.send(url,{method:'DELETE',cookie:login.cookie.split(';')[0],csrf:login.data.csrf_token})).status,403);
-  app.database.exec("CREATE TEMP TRIGGER deny_plan_delete BEFORE INSERT ON audit_events WHEN NEW.action='plan.deleted' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
-  assert.throws(()=>app.service.deleteLicensePlan({code:'deletable',actorId:'owner'}),/audit unavailable/);
-  assert.equal(app.repository.planByCode('deletable').status,'active');
-  app.database.exec('DROP TRIGGER deny_plan_delete');
-  assert.equal((await app.send(url, {...owner,method:'DELETE'})).status,200);
-  assert.equal((await app.send(url, {...owner,method:'DELETE'})).status,200);
-  assert.equal(app.repository.planByCode('deletable').status,'deleted');
-  assert.deepEqual({...app.repository.licenseById(customer.actor_id)},{...before,plan_status:'deleted'});
-  assert.equal(app.portal.customerOverview(customer).license.plan_status,'deleted');
-  assert.equal(app.portal.adminOverview().licenses.find(item=>item.id===customer.actor_id).plan_status,'deleted');
-  assert.equal(app.portal.customerOverview(customer).license.status,'active');
-  assert.ok(!(await app.send('/web/admin/plans',owner)).data.plans.some(p=>p.code==='deletable'));
-  assert.ok(!app.portal.adminOverview().license_plans.some(p=>p.code==='deletable'));
-  assert.equal((await app.send(url,{...owner,method:'POST',body})).status,404);
-  assert.throws(()=>app.service.issueLicense({customerRef:'PLAN-DENY',domain:'denied.example.com',planCode:'deletable'}));
-  assert.equal((await app.send('/web/admin/plans/legacy',{...owner,method:'DELETE'})).status,409);
-  assert.equal(app.database.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='plan.deleted'").get().n,1);
+test('套餐有关联Key禁止删除，迁出全部授权后才允许删除且审计原子', async t => {
+ const app=await fixture(t),owner=await app.owner();
+ app.service.createLicensePlan({code:'deletable',name:'可删除套餐',accessTier:'paid',capabilities:['settings:read'],limits:{max_builds_per_day:4,max_activations:1}});
+ const issued=app.service.issueLicense({customerRef:'PLAN-PRESERVE',domain:'plan.example.com',planCode:'deletable'});
+ const id=issued.license.id,before=app.repository.licenseById(id),url='/web/admin/plans/deletable';
+ assert.equal((await app.send(url,{method:'DELETE'})).status,401);
+ assert.equal((await app.send(url,{cookie:owner.cookie,method:'DELETE'})).status,403);
+ const blocked=await app.send(url,{...owner,method:'DELETE'});assert.equal(blocked.status,409);assert.equal(blocked.data.error.code,'PLAN_HAS_LICENSES');
+ assert.deepEqual(app.repository.licenseById(id),before);
+ for(const status of ['suspended','revoked']) {
+  app.database.prepare('UPDATE licenses SET status=? WHERE id=?').run(status,id);
+  assert.equal((await app.send(url,{...owner,method:'DELETE'})).data.error.code,'PLAN_HAS_LICENSES');
+ }
+ app.database.prepare('UPDATE licenses SET status=? WHERE id=?').run(before.status,id);
+ assert.equal((await app.send('/web/admin/plans',owner)).data.plans.find(p=>p.code==='deletable').license_count,1);
+ app.service.changeLicensePlan({licenseId:id,planCode:'paid'});
+ app.database.exec("CREATE TEMP TRIGGER deny_plan_delete BEFORE INSERT ON audit_events WHEN NEW.action='plan.deleted' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+ assert.throws(()=>app.service.deleteLicensePlan({code:'deletable'}),/audit unavailable/);
+ assert.equal(app.repository.planByCode('deletable').status,'active');app.database.exec('DROP TRIGGER deny_plan_delete');
+ assert.equal((await app.send(url,{...owner,method:'DELETE'})).status,200);
+ assert.equal((await app.send(url,{...owner,method:'DELETE'})).status,200);
+ assert.ok(!(await app.send('/web/admin/plans',owner)).data.plans.some(p=>p.code==='deletable'));
+ assert.equal((await app.send('/web/admin/plans/legacy',{...owner,method:'DELETE'})).status,409);
+ assert.equal(app.database.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='plan.deleted'").get().n,1);
 });
 
 test('仅付费套餐 HTTP 保存回显、客户版本列表与构建拒绝免费版本', async (t) => {
@@ -1410,7 +1403,7 @@ test('仅付费套餐 HTTP 保存回显、客户版本列表与构建拒绝免�
   const customer=await app.customer(issued.license_key);
   const overview=await app.send('/web/customer/overview',customer);
   assert.equal(overview.data.latest_eligible_version,'8.0.0');
-  const unavailable=overview.data.versions.find(v=>v.version==='8.1.0');assert.equal(unavailable.eligible,false);assert.equal(unavailable.eligibility_code,'VERSION_PLAN_REQUIRED');
+  const unavailable=overview.data.versions.find(v=>v.version==='8.1.0');assert.equal(unavailable,undefined);
   const rejected=await app.send('/web/customer/builds',{...customer,method:'POST',body:{version:'8.1.0',domain:'only-paid.example.com',intent:'update'}});
   assert.equal(rejected.status,403);assert.equal(rejected.data.error.code,'VERSION_PLAN_REQUIRED');
   const allowed=await app.send('/web/customer/builds',{...customer,method:'POST',body:{version:'8.0.0',domain:'only-paid.example.com',intent:'update'}});assert.equal(allowed.status,201);
@@ -1422,15 +1415,19 @@ test('旧版已删除套餐升级只改默认名称，不恢复套餐或覆盖�
   let database;
   try {
     database = openDatabase(path);
-    database.exec("UPDATE license_plans SET name='付费版',status='deleted' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.51-default-plan-name'");
+    database.exec("UPDATE license_plans SET name='付费版',status='deleted' WHERE code='paid'; DELETE FROM schema_migrations WHERE version IN ('2026-09-29-v1.2.51-default-plan-name','2026-09-29-v1.2.53-restore-default-plan-name')");
     const before = {...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()};
     database.close(); database = openDatabase(path);
-    assert.deepEqual({...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()}, {...before,name:'定义版'});
+    assert.deepEqual({...database.prepare("SELECT * FROM license_plans WHERE code='paid'").get()}, {...before,name:'付费版'});
     database.close(); database = openDatabase(path);
     assert.equal(database.prepare("SELECT status FROM license_plans WHERE code='paid'").get().status,'deleted');
     database.exec("UPDATE license_plans SET name='客户专属套餐' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.51-default-plan-name'");
     database.close(); database = openDatabase(path);
     assert.equal(database.prepare("SELECT name FROM license_plans WHERE code='paid'").get().name,'客户专属套餐');
+    database.exec("UPDATE license_plans SET name='定义版' WHERE code='paid'; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.53-restore-default-plan-name'");
+    database.prepare("INSERT INTO audit_events (id,actor_type,action,subject_type,subject_id,metadata_json,created_at) SELECT 'custom-name','admin','plan.updated','plan',id,?, '2026-09-29' FROM license_plans WHERE code='paid'").run(JSON.stringify({after:{name:'定义版'}}));
+    database.close(); database=openDatabase(path);
+    assert.equal(database.prepare("SELECT name FROM license_plans WHERE code='paid'").get().name,'定义版');
   } finally { database?.close(); rmSync(root,{recursive:true,force:true}); }
 });
 
@@ -1439,7 +1436,8 @@ test('已删除套餐授权可手动切换有效套餐，两个中心同步且�
   const issued=app.service.issueLicense({customerRef:'PLAN-SWITCH',domain:'switch.example.com',planCode:'paid'});
   const session=app.sessions.loginCustomer(issued.licenseKey).session;
   const before=app.repository.licenseById(session.actor_id);
-  await app.send('/web/admin/plans/paid',{...owner,method:'DELETE'});
+  // Simulate a real old database where a referenced template was already soft-deleted.
+  app.database.exec("UPDATE license_plans SET status='deleted' WHERE code='paid'");
   const created=await app.send('/web/admin/plans',{...owner,method:'POST',body:{code:'replacement',name:'新定义套餐',access_tier:'paid_only',status:'active',capabilities:['settings:read','updates:read'],limits:{max_builds_per_day:7,max_activations:2}}});
   assert.equal(created.status,201);
   const switched=await app.send(`/web/admin/licenses/${session.actor_id}/plan`,{...owner,method:'POST',body:{plan_code:'replacement'}});
@@ -1450,4 +1448,53 @@ test('已删除套餐授权可手动切换有效套餐，两个中心同步且�
   assert.equal(app.portal.customerOverview(session).license.plan_name,'新定义套餐');
   assert.equal(app.portal.adminOverview().licenses.find(l=>l.id===session.actor_id).plan_name,'新定义套餐');
   assert.equal((await app.send(`/web/admin/licenses/${session.actor_id}/plan`,{...owner,method:'POST',body:{plan_code:'paid'}})).status,400);
+});
+
+test('版本绑定实际套餐，未关联客户不可见且直接构建与旧票据不能绕过', async t => {
+ const app=await fixture(t),owner=await app.owner();
+ const makePlan=code=>app.service.createLicensePlan({code,name:code==='plan_a'?'付费专属':'免费专属',accessTier:'paid',capabilities:['settings:read','updates:read'],limits:{max_builds_per_day:5,max_activations:2}});
+ makePlan('plan_a');makePlan('plan_b');
+ const first=app.service.issueLicense({customerRef:'PLAN-A',domain:'a.example.com',planCode:'plan_a'});
+ const other=app.service.issueLicense({customerRef:'PLAN-B',domain:'b.example.com',planCode:'plan_b'});
+ const session=app.sessions.loginCustomer(first.licenseKey).session;
+ const zip=writeZip(new Map([['config.json',Buffer.from(JSON.stringify({name:'APPGOG',version:'9.0.1'}))],['index.html',Buffer.from('<!doctype html><html><body>Plan test</body></html>')]]));
+ assert.throws(()=>app.portal.publishSourceVersion({version:'9.0.1',zipBuffer:zip}),{code:'VERSION_PLANS_REQUIRED'});
+ assert.throws(()=>app.portal.registerSourceVersion({version:'9.0.2'}),{code:'VERSION_PLANS_REQUIRED'});
+ assert.throws(()=>app.service.authorizeBuild({licenseKey:first.licenseKey,domain:'a.example.com',version:'99.0.0'}),{code:'SOURCE_VERSION_NOT_FOUND'});
+ const source=app.portal.publishSourceVersion({version:'9.0.1',zipBuffer:zip,planCodes:['plan_a']});
+ assert.deepEqual(JSON.parse(source.plan_codes_json),['plan_a']);
+ assert.deepEqual(app.portal.customerOverview(session).versions.map(v=>v.version),['9.0.1']);
+ assert.deepEqual(app.portal.customerOverview(app.sessions.loginCustomer(other.licenseKey).session).versions,[]);
+ assert.throws(()=>app.service.authorizeBuild({licenseKey:other.licenseKey,domain:'b.example.com',version:'9.0.1'}),{code:'VERSION_PLAN_REQUIRED'});
+ const ticket=app.service.authorizeBuild({licenseKey:first.licenseKey,domain:'a.example.com',version:'9.0.1'});
+ const endpoint='/web/admin/versions/'+source.id+'/plans';
+ assert.equal((await app.send(endpoint,{method:'POST',body:{plan_codes:['plan_b']}})).status,401);
+ assert.equal((await app.send(endpoint,{...owner,method:'POST',body:{plan_codes:[]}})).status,400);
+ app.database.exec("CREATE TEMP TRIGGER deny_version_plans BEFORE INSERT ON audit_events WHEN NEW.action='source_version.plans_changed' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+ assert.throws(()=>app.portal.changeVersionPlans({id:source.id,planCodes:['plan_b']}),/audit unavailable/);
+ assert.deepEqual(JSON.parse(app.repository.sourceVersionById(source.id).plan_codes_json),['plan_a']);
+ app.database.exec('DROP TRIGGER deny_version_plans');
+ assert.equal((await app.send(endpoint,{...owner,method:'POST',body:{plan_codes:['plan_b']}})).status,200);
+ assert.deepEqual(app.portal.customerOverview(session).versions,[]);
+ assert.throws(()=>app.service.claimBuild({buildTicket:ticket.buildTicket}),{code:'VERSION_PLAN_REQUIRED'});
+ const switched=await app.send('/web/admin/licenses/'+first.license.id+'/plan',{...owner,method:'POST',body:{plan_code:'plan_b'}});assert.equal(switched.status,200);
+ assert.deepEqual(app.portal.customerOverview(session).versions.map(v=>v.version),['9.0.1']);
+ assert.equal(app.repository.licenseById(first.license.id).key_hash,first.license.key_hash);
+ assert.equal((await app.send('/web/admin/plans/plan_b',{...owner,method:'DELETE'})).status,409);
+ app.database.exec("UPDATE license_plans SET status='deleted' WHERE code='plan_b'"); // real pre-upgrade orphaned template
+ assert.deepEqual(app.portal.customerOverview(session).versions,[]);
+ assert.throws(()=>app.service.authorizeBuild({licenseKey:first.licenseKey,domain:'a.example.com',version:'9.0.1'}),{code:'LICENSE_PLAN_UNAVAILABLE'});
+});
+
+test('旧版本套餐关联迁移幂等：无套餐不分配版本且不改变授权', () => {
+ const root=mkdtempSync(join(tmpdir(),'appgog-version-plan-upgrade-')),path=join(root,'old.sqlite');let db;
+ try {
+  db=openDatabase(path);
+  db.exec("INSERT INTO products(id,code,name,created_at) VALUES('p','fixture','Fixture','2026-09-20'); INSERT INTO source_versions(id,product_id,version,display_name,source_kind,source_ref,status,created_at,access_tier) VALUES('old-free','p','1.0.0','Old','official','source.zip','active','2026-09-20','free'); DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.53-version-plans'");
+  db.close();db=openDatabase(path);
+  assert.deepEqual(JSON.parse(db.prepare("SELECT plan_codes_json FROM source_versions WHERE id='old-free'").get().plan_codes_json),['free','paid']);
+  db.exec("UPDATE license_plans SET status='deleted' WHERE code!='legacy'; UPDATE source_versions SET plan_codes_json=NULL; DELETE FROM schema_migrations WHERE version='2026-09-29-v1.2.53-version-plans'");
+  db.close();db=openDatabase(path);assert.equal(db.prepare("SELECT plan_codes_json FROM source_versions WHERE id='old-free'").get().plan_codes_json,'[]');
+  db.close();db=openDatabase(path);assert.equal(db.prepare("SELECT plan_codes_json FROM source_versions WHERE id='old-free'").get().plan_codes_json,'[]');
+ }finally{db?.close();rmSync(root,{recursive:true,force:true});}
 });

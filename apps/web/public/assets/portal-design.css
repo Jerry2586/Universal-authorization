@@ -306,9 +306,6 @@ body[data-portal] .build-version-catalog > .surface-head p { margin-top: 6px; fo
 body[data-portal="admin"] .product-catalog .surface-head { padding: 20px 24px; margin: 0; }
 body[data-portal="admin"] .version-toolbar { flex-wrap: wrap; }
 
-.customer-plan-summary { margin: 18px 24px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #faf9ff; font-size: 13px; line-height: 1.7; }
-.customer-plan-summary p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-@media(max-width:640px) { .customer-plan-summary { margin: 16px 16px 0; } }
 
 /* Desktop directory collapse keeps navigation available as labelled icons. */
 body[data-portal] .sidebar-toggle { display: grid; place-items: center; flex: none; }
@@ -329,3 +326,17 @@ body[data-portal] .app-sidebar { overflow-y: auto; }
   body[data-portal] .sidebar-collapsed .sidebar-toggle svg { transform: rotate(180deg); }
 }
 @media (max-width: 700px) { body[data-portal] .sidebar-toggle { display: none; } }
+
+.release-plan-field { border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.release-plan-field legend { padding: 0 5px; font-size: 12px; font-weight: 600; }
+.release-plan-field small { display: block; color: var(--muted); line-height: 1.7; margin-top: 10px; }
+.release-plan-options { display: grid; gap: 10px; }
+.release-plan-choice { display: flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; }
+.release-plan-choice input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.customer-plan-summary { margin: 18px 24px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #faf9ff; font-size: 13px; line-height: 1.7; }
+.customer-plan-summary p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+@media(max-width:640px) { .customer-plan-summary { margin: 16px 16px 0; } }
+
+.release-publish-status { margin: 0; padding: 12px 14px; border-radius: 10px; background: #f3f0ff; color: #51418b; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.release-publish-status.error { background: #fff1f2; color: #a51f38; }

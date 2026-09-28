@@ -7,6 +7,13 @@ export function createEntitlementService({ database, repository, activationLifec
   function versionEligibility({ license, source }) {
     const accessTier = source?.access_tier === 'paid' ? 'paid' : 'free';
     const planCode = license?.plan_code ?? 'legacy';
+    const plan = repository.planByCode(planCode);
+    if (!plan || plan.status !== 'active') return Object.freeze({ eligible: false, code: 'LICENSE_PLAN_UNAVAILABLE', reason: '当前套餐不存在或已停用，请联系管理员更改套餐', accessTier, planCode });
+    if (source?.plan_codes_json != null) {
+      const codes = parseJsonObject(source.plan_codes_json, []);
+      const eligible = Array.isArray(codes) && codes.includes(planCode);
+      return Object.freeze({ eligible, code: eligible ? null : 'VERSION_PLAN_REQUIRED', reason: eligible ? null : '该版本未关联当前套餐', accessTier, planCode });
+    }
     const tier = parseJsonObject(license?.plan_limits_json ?? license?.entitlement_limits_json, {}).access_tier
       ?? (['paid', 'legacy'].includes(planCode) ? 'paid' : 'free');
     // Historical 'paid' includes both release tiers; paid_only is an explicit new scope.
@@ -31,7 +38,7 @@ export function createEntitlementService({ database, repository, activationLifec
 
   function publicPlan(plan) {
     return { id: plan.id, code: plan.code, name: plan.name, access_tier: plan.access_tier,
-      status: plan.status, capabilities: parseJsonObject(plan.capabilities_json, []),
+      status: plan.status, license_count: plan.license_count ?? 0, capabilities: parseJsonObject(plan.capabilities_json, []),
       limits: parseJsonObject(plan.limits_json, {}), updated_at: plan.updated_at };
   }
   const capabilities = ['settings:read', 'settings:write', 'protected:read', 'theme:enable', 'xboard:connect', 'updates:read'];
@@ -59,6 +66,15 @@ export function createEntitlementService({ database, repository, activationLifec
   }
 
   return Object.freeze({
+    validateReleasePlans(codes) {
+      invariant(Array.isArray(codes) && codes.length > 0 && codes.length <= 100, 'VERSION_PLANS_REQUIRED', '请选择至少一个可用套餐');
+      const unique = [...new Set(codes)];
+      for (const code of unique) {
+        const plan = typeof code === 'string' ? repository.planByCode(code) : null;
+        invariant(plan && plan.status === 'active' && code !== 'legacy', 'VERSION_PLAN_INVALID', '所选套餐不存在或已停用，请刷新后重选');
+      }
+      return unique;
+    },
     listLicensePlans: () => repository.allPlans().map(publicPlan),
     createLicensePlan: input => savePlan(input, true),
     updateLicensePlan: input => savePlan(input, false),
@@ -69,6 +85,7 @@ export function createEntitlementService({ database, repository, activationLifec
         invariant(plan, 'PLAN_NOT_FOUND', '套餐不存在', 404);
         invariant(code !== 'legacy', 'PLAN_RESERVED', '历史兼容套餐由系统维护', 409);
         if (plan.status === 'deleted') return { code, deleted: true };
+        invariant(plan.license_count === 0, 'PLAN_HAS_LICENSES', `套餐名下仍有 ${plan.license_count} 个 Key，请先更改这些授权的套餐或永久删除授权`, 409);
         const now = iso(clock);
         invariant(repository.deletePlan(code, now), 'PLAN_STATE_CHANGED', '套餐状态已变化，请刷新后重试', 409);
         audit.record({ actorType: 'admin', actorId, action: 'plan.deleted', subjectType: 'plan', subjectId: plan.id,
