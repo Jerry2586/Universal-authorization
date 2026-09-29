@@ -75,6 +75,7 @@ const { join, resolve } = require('node:path');
     await page.locator('.modal-overlay').waitFor({ state: 'detached' });
     await page.locator('[data-view=versions]').click();
     await page.locator('#version-product').selectOption('catalog-fixture');
+    await page.locator('#release-plan-options input[value="paid"]').check();
     const zip = writeZip(new Map([['config.json', Buffer.from('{"name":"独立主题","version":"3.0.0"}')], ['index.html', Buffer.from('<html><head></head><body>Fixture</body></html>')]]));
     await page.locator('#source-zip').setInputFiles({ name: 'theme.zip', mimeType: 'application/zip', buffer: zip });
     const published = page.waitForResponse(response => response.url().includes('/web/admin/versions/upload'));

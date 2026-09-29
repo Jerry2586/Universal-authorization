@@ -80,7 +80,7 @@ export function createPlanUi({ can, request, notify, refresh, dialog }) {
     });
   }
   function deletePlan(plan) {
-    dialog('删除套餐', '删除“' + plan.name + '”后，不再用于新授权或版本发布。仅名下没有 Key 的套餐可以删除。', (card, close) => {
+    dialog('删除套餐', '删除“' + plan.name + '”后，不再用于新授权或版本发布。仅名下没有 Key 的套餐可以删除；已经签发的授权、额度和权益保持不变。', (card, close) => {
       const row = element('div', null, 'dialog-actions');
       const cancel = button('取消', close, 'button button-secondary');
       const confirm = button('删除套餐', async () => {

@@ -113,6 +113,7 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
     watermark: leased.build.watermark,
     domain: leased.build.domain,
   });
+  assert.ok(app.artifactStore.read(leased.source.source_ref).equals(source), '构建后官方源 ZIP 必须逐字节保持不变');
   const artifactRef = `builds/${job.id}/APPGOG.zip`;
   app.artifactStore.put(artifactRef, result.buffer);
   app.portal.completeBuild('worker-full-test', job.id, {
@@ -155,6 +156,7 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   assert.ok(manifest.integrity.files.some((file) => file.path === runtimeName));
   assert.equal(manifest.protection.identity_algorithm, 'AES-256-GCM');
   assert.equal(manifest.protection.runtime_path, runtimeName);
+  assert.equal(manifest.protection.generated_javascript_protection, 'obfuscator-v1');
   assert.equal(manifest.protection.javascript_protection, 'terser-obfuscator-v1');
   assert.equal(manifest.lifecycle.install_window_seconds, 3600);
   assert.equal(manifest.lifecycle.server_migration, 'new_installation_identity_and_controlled_handoff');
@@ -167,8 +169,10 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   assert.ok(output.has(manifest.protection.bridge_package_path));
   const bridgePackage = readZip(output.get(manifest.protection.bridge_package_path));
   assert.ok(bridgePackage.has('AppgogLicenseBridge/config.json'));
-  assert.match(bridgePackage.get('AppgogLicenseBridge/assets/admin-entry.js').toString(), /APPGOG-PROTECTED:v1/);
-  assert.ok(bridgePackage.get('AppgogLicenseBridge/assets/admin-entry.js').toString().split('\n').length < 10);
+  const protectedAdminEntry = bridgePackage.get('AppgogLicenseBridge/assets/admin-entry.js').toString();
+  assert.match(protectedAdminEntry, /APPGOG-PROTECTED:v1/);
+  assert.doesNotMatch(protectedAdminEntry, /refreshThemes|XBOARD_ACCESS_TOKEN|appgog_xboard_admin_path/);
+  assert.ok(protectedAdminEntry.split('\n').length < 10);
   assert.ok(bridgePackage.has('AppgogLicenseBridge/Plugin.php'));
   assert.ok(bridgePackage.has('AppgogLicenseBridge/Providers/PluginServiceProvider.php'));
   assert.ok(bridgePackage.has('AppgogLicenseBridge/Services/BridgeState.php'));
@@ -225,6 +229,45 @@ test('完整成品链路：上传主题 ZIP、注入授权门、安装解锁后�
   });
   assert.equal(payload.package_id, leased.build.packageId);
   app.close();
+});
+
+test('官方源包只读：拒绝把客户加密成品重新发布为源码并阻断构建期间回写', async () => {
+  const app = fixture();
+  const originalStore = app.buildEngine.artifactStore;
+  try {
+    const built = await buildProtectedArtifact(app, { customerRef: 'ORDER-PRISTINE-SOURCE' });
+    const sourceRef = built.leased.source.source_ref;
+    const before = originalStore.read(sourceRef);
+    const after = originalStore.read(sourceRef);
+    assert.ok(after.equals(before));
+    assert.doesNotMatch(after.toString('latin1'), /APPGOG-(?:WM|PROTECTED):|data-appgog-license-runtime/);
+    assert.throws(() => app.portal.publishSourceVersion({
+      planCodes: ['paid'], version: '1.17.1', displayName: 'APPGOG 1.17.1', zipBuffer: built.output.buffer,
+    }), { code: 'SOURCE_ALREADY_PROTECTED' });
+
+    let reads = 0;
+    app.buildEngine.artifactStore = {
+      read(key) {
+        const value = originalStore.read(key);
+        reads += 1;
+        return reads === 1 ? value : Buffer.concat([value, Buffer.from('unexpected-source-write')]);
+      },
+    };
+    await assert.rejects(() => app.buildEngine.build({
+      sourceRef,
+      product: built.leased.build.product,
+      version: built.leased.build.version,
+      buildId: built.leased.build.buildId,
+      packageId: built.leased.build.packageId,
+      packageSecret: built.leased.build.packageSecret,
+      packageManifestToken: built.leased.build.packageManifestToken,
+      watermark: built.leased.build.watermark,
+      domain: built.leased.build.domain,
+    }), { code: 'SOURCE_INPUT_MUTATED' });
+  } finally {
+    app.buildEngine.artifactStore = originalStore;
+    app.close();
+  }
 });
 
 test('上传安全检查拒绝普通 PHP 与缺少 Xboard 配置的 ZIP', () => {

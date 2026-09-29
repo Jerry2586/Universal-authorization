@@ -23,7 +23,7 @@ const assert = require('node:assert/strict');
     const keys = generateKeyPairSync('ed25519');
     const der = keys.publicKey.export({type:'spki',format:'der'}).toString('base64');
     const runtimeConfig = {p:'appgog',v:'1.19.11',b:'bld_ui_fixture',i:'pkg_ui_fixture',u:'https://license.example.com',k:der,a:der,q:der,n:der,s:[],o:[],
-      gc:'appgog_license_bridge',gv:'1.1.6',gt:'APPGOG',j:'/fixture-bridge.zip',y:'00',
+      gc:'appgog_license_bridge',gv:'1.1.7',gt:'APPGOG',j:'/fixture-bridge.zip',y:'00',
       m:signCompactToken({typ:'package-manifest',product:'appgog',build_id:'bld_ui_fixture',package_id:'pkg_ui_fixture',version:'1.19.11',domain:'fixture.example.com'},keys.privateKey)};
     let enabled = 0;
     await context.route('**/*', async route => {

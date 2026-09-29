@@ -8,7 +8,7 @@ import { packageContentClaims, verifyPackageContent } from '../../../packages/co
 import { verifyCompactToken } from '../../../packages/core/src/signing.js';
 import { readZip, writeZip } from '../../../packages/core/src/zip.js';
 import { createBuildInjection } from './manifest.js';
-import { protectGeneratedJavaScript } from './generated-protection.js';
+import { assertProtectedGeneratedJavaScript, protectGeneratedJavaScript } from './generated-protection.js';
 import { createBrowserLicenseRuntime } from './runtime.js';
 import { initialLockMarkup, startupPresentationProfile } from './startup-presentation.js';
 import { versionThemeAssets } from './license-page-adapter.js';
@@ -17,6 +17,8 @@ import { createXboardBridgePackage, xboardBridgeDescriptor } from './xboard-brid
 const BLOCKED_EXTENSIONS = new Set(['.exe', '.dll', '.so', '.dylib', '.bat', '.cmd', '.ps1', '.sh', '.phar', '.jar']);
 const BUILD_MANIFEST_SUFFIX = '/appgog-license/build.json';
 const PROTECTED_IDENTITY_AAD = Buffer.from('APPGOG-PROTECTED-IDENTITY-v1');
+const GENERATED_SOURCE_PATH_PATTERN = /(?:^|\/)appgog-license\/(?:build\.json|appgog-license-bridge\.zip|xboard-bridge-contract\.json|p-[^/]+\/)/i;
+const GENERATED_SOURCE_TEXT_PATTERN = /APPGOG-(?:WM|PROTECTED):|data-appgog-license-runtime|appgog-initial-lock/;
 
 function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
@@ -56,6 +58,18 @@ function integrityDigest(manifest, files, packageSecret) {
 function equalHex(left, right) {
   if (!/^[a-f0-9]{64}$/i.test(left ?? '') || !/^[a-f0-9]{64}$/i.test(right ?? '')) return false;
   return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+}
+
+function assertPristineSource(files) {
+  for (const [name, content] of files.entries()) {
+    invariant(!GENERATED_SOURCE_PATH_PATTERN.test(name) && !/(?:^|\/)APPGOG-ACTIVATION\.txt$/i.test(name),
+      'SOURCE_ALREADY_PROTECTED', `上传源包包含客户构建文件，必须改用原生态源码：${name}`, 409);
+    const ext = extension(name);
+    if (['.js', '.css', '.html', '.htm', '.php', '.json', '.txt'].includes(ext)) {
+      invariant(!GENERATED_SOURCE_TEXT_PATTERN.test(content.toString('utf8')),
+        'SOURCE_ALREADY_PROTECTED', `上传源包包含授权注入或混淆成品，必须改用原生态源码：${name}`, 409);
+    }
+  }
 }
 
 function protectIdentity(identity, packageSecret) {
@@ -218,7 +232,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     this.publicBaseUrl = publicBaseUrl;
   }
 
-  validateSource(buffer) {
+  validateSource(buffer, { allowProtected = false } = {}) {
     const files = readZip(buffer);
     invariant(files.size >= 2, 'SOURCE_EMPTY', '主题 ZIP 内容过少', 400);
     for (const name of files.keys()) {
@@ -230,11 +244,14 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     invariant(entries.length > 0, 'SOURCE_ENTRY_NOT_FOUND', '主题 ZIP 必须包含 index.html、editor.html 或 dashboard.blade.php', 400);
     const hasConfig = [...files.keys()].some((name) => posix.basename(name).toLowerCase() === 'config.json');
     invariant(hasConfig, 'SOURCE_CONFIG_NOT_FOUND', '主题 ZIP 必须包含 Xboard 主题 config.json', 400);
+    if (!allowProtected) assertPristineSource(files);
     return { files, entries };
   }
 
   async build({ sourceRef, sourceBuffer: providedSourceBuffer, product, version, buildId, packageId, packageSecret, packageManifestToken, watermark, domain }) {
-    const sourceBuffer = providedSourceBuffer ?? this.artifactStore.read(sourceRef);
+    const sourceInput = providedSourceBuffer ?? this.artifactStore.read(sourceRef);
+    const sourceDigest = sha256(sourceInput);
+    const sourceBuffer = Buffer.from(sourceInput);
     const { files, entries: primaryEntries } = this.validateSource(sourceBuffer);
     const entries = [...primaryEntries];
     const roots = entries.map((entry) => posix.dirname(entry)).sort((a, b) => a.length - b.length);
@@ -399,6 +416,11 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     };
     files.set(manifestPath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
     const output = writeZip(files);
+    invariant(sha256(sourceInput) === sourceDigest, 'SOURCE_INPUT_MUTATED', '构建过程修改了上传源包，已停止交付', 409);
+    if (!providedSourceBuffer) {
+      invariant(sha256(this.artifactStore.read(sourceRef)) === sourceDigest,
+        'SOURCE_INPUT_MUTATED', '构建后上传源包摘要发生变化，已停止交付', 409);
+    }
     return {
       buffer: output,
       sha256: sha256(output),
@@ -419,7 +441,7 @@ export class HardenedThemeBuildEngine extends BuildEngine {
   }
 
   verifyArtifact({ buffer, packageSecret, expected, allowUnsignedDraft = false }) {
-    const { files } = this.validateSource(buffer);
+    const { files } = this.validateSource(buffer, { allowProtected: true });
     const manifestPath = manifestPathFor(files);
     let manifest;
     try {
@@ -433,6 +455,8 @@ export class HardenedThemeBuildEngine extends BuildEngine {
     invariant(typeof manifest.package_manifest_token === 'string', 'PACKAGE_MANIFEST_TOKEN_MISSING', '成品缺少签名包身份', 409);
     invariant(manifest.protection?.profile === 'appgog-v1' && manifest.protection.identity_algorithm === 'AES-256-GCM',
       'PACKAGE_PROTECTION_INVALID', '成品缺少 APPGOG v1 加密保护信息', 409);
+    invariant(manifest.protection.generated_javascript_protection === 'obfuscator-v1',
+      'PACKAGE_PROTECTION_INVALID', '成品缺少生成授权脚本保护声明', 409);
     invariant(typeof manifest.protection.protected_identity_path === 'string' && typeof manifest.protection.runtime_path === 'string',
       'PACKAGE_PROTECTION_INVALID', '成品保护路径无效', 409);
     invariant(typeof manifest.protection.bridge_package_path === 'string'
@@ -457,6 +481,40 @@ export class HardenedThemeBuildEngine extends BuildEngine {
       'PACKAGE_PROTECTION_INVALID', '加密包身份摘要不匹配', 409);
     invariant(equalHex(manifest.protection.bridge_package_sha256, sha256(bridgePackage)),
       'PACKAGE_PROTECTION_INVALID', 'Xboard 授权桥插件摘要不匹配', 409);
+    assertProtectedGeneratedJavaScript(
+      files.get(manifest.protection.runtime_path).toString('utf8'), manifest.package_id, '授权运行时',
+    );
+    let bridgeFiles;
+    try {
+      bridgeFiles = readZip(bridgePackage);
+    } catch {
+      invariant(false, 'PACKAGE_BRIDGE_INVALID', 'Xboard 授权桥 ZIP 无法读取', 409);
+    }
+    const bridgeDescriptors = [...bridgeFiles.entries()].filter(([path]) => path.endsWith('/config.json'));
+    invariant(bridgeDescriptors.length === 1, 'PACKAGE_BRIDGE_INVALID', 'Xboard 授权桥配置文件无效', 409);
+    let actualBridgeDescriptor;
+    try {
+      actualBridgeDescriptor = JSON.parse(bridgeDescriptors[0][1].toString('utf8'));
+    } catch {
+      invariant(false, 'PACKAGE_BRIDGE_INVALID', 'Xboard 授权桥配置无法解析', 409);
+    }
+    invariant(actualBridgeDescriptor.code === manifest.protection.bridge_plugin_code
+      && actualBridgeDescriptor.version === manifest.protection.bridge_plugin_version,
+    'PACKAGE_BRIDGE_INVALID', 'Xboard 授权桥身份与成品清单不一致', 409);
+    const bridgeScripts = [...bridgeFiles.entries()].filter(([path]) => extension(path) === '.js');
+    invariant(bridgeScripts.length > 0, 'PACKAGE_BRIDGE_INVALID', 'Xboard 授权桥缺少受保护的前端脚本', 409);
+    for (const [path, content] of bridgeScripts) {
+      assertProtectedGeneratedJavaScript(
+        content.toString('utf8'), `${actualBridgeDescriptor.version}:${path}`, `Xboard 授权桥脚本 ${path}`,
+      );
+    }
+    for (const [path, content] of bridgeFiles.entries()) {
+      invariant(extension(path) !== '.map', 'PACKAGE_SOURCE_MAP_FORBIDDEN', 'Xboard 授权桥不得包含 Source Map', 409);
+      if (extension(path) === '.js') {
+        invariant(!/[#@]\s*sourceMappingURL=/.test(content.toString('utf8')),
+          'PACKAGE_SOURCE_MAP_FORBIDDEN', 'Xboard 授权桥不得引用 Source Map', 409);
+      }
+    }
     const protectedClaims = openProtectedIdentity(protectedIdentity, packageSecret);
     for (const field of identityFields) {
       invariant(protectedClaims[field] === expected[field], 'PACKAGE_PROTECTION_INVALID', `加密包身份字段 ${field} 不匹配`, 409);

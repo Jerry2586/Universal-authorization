@@ -7,7 +7,7 @@ import { readZip } from '../packages/core/src/zip.js';
 const root = resolve(import.meta.dirname, '..');
 
 function read(path) {
-  return readFileSync(join(root, path), 'utf8');
+  return readFileSync(join(root, path), 'utf8').replace(/\r\n/g, '\n');
 }
 
 function json(path) {

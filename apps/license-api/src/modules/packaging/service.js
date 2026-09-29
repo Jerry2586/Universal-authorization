@@ -175,7 +175,9 @@ export function createPackagingService({
     saveWorkerArtifact(workerId, jobId, buffer) {
       const job = repository.buildJobById(jobId);
       invariant(job && job.status === 'processing' && job.lease_owner === workerId, 'BUILD_LEASE_INVALID', '构建任务租约无效', 409);
-      buildEngine.validateSource(buffer);
+      // Worker uploads a protected customer artifact, not a publishable source ZIP.
+      // Full identity, signature and content verification runs in completeBuild.
+      buildEngine.validateSource(buffer, { allowProtected: true });
       const sha256 = createHash('sha256').update(buffer).digest('hex');
       const artifactRef = `builds/${job.id}/worker-upload-${sha256.slice(0, 12)}.zip`;
       artifactStore.put(artifactRef, buffer);

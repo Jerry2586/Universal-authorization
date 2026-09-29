@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { invariant } from '../../../../../packages/core/src/errors.js';
 import { newId } from '../../../../../packages/core/src/identifiers.js';
 import { SOURCE_KIND } from '../../../../../packages/contracts/src/build-job.js';
@@ -86,8 +87,11 @@ export function createProductService({ repository, productCatalog, artifactStore
       invariant(!existing || existing.status === 'draft', 'VERSION_EXISTS', '该版本已经发布', 409);
       const versionId = existing?.id ?? newId('src');
       const sourceRef = `sources/${product.code}/${normalizedVersion.replace(/[^a-zA-Z0-9._-]/g, '_')}/${versionId}.zip`;
+      const sourceSha256 = createHash('sha256').update(zipBuffer).digest('hex');
       artifactStore.put(sourceRef, zipBuffer);
       try {
+        invariant(createHash('sha256').update(artifactStore.read(sourceRef)).digest('hex') === sourceSha256,
+          'SOURCE_PERSISTENCE_MISMATCH', '上传源包落盘后摘要不一致，版本发布已停止', 500);
         return atomic(() => {
           if (selectedPlans !== undefined) entitlementAccess.validateReleasePlans(selectedPlans);
           const values = {
@@ -104,6 +108,7 @@ export function createProductService({ repository, productCatalog, artifactStore
             metadata: {
               version: source.version, display_name: source.display_name,
               source_filename: sourceFilename ?? null, source_ref: sourceRef, size: zipBuffer.length,
+              source_sha256: sourceSha256, source_kind: 'pristine-source',
               access_tier: source.access_tier, plan_codes: selectedPlans ?? null,
             },
             now: clock().toISOString(),

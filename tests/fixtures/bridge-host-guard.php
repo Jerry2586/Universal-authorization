@@ -141,6 +141,9 @@ namespace {
     $contentMigration=require $argv[1].'/database/migrations/2026_09_29_000013_content_signature.php';
     $contentMigration->up();$contentMigration->up();
     check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'content seal migration changed identity or activation');
-    check(count($GLOBALS['reloadCallbacks'])===12,'upgrade did not schedule runtime reload');
+    $generatedProtectionMigration=require $argv[1].'/database/migrations/2026_09_29_000014_generated_js_protection.php';
+    $generatedProtectionMigration->up();$generatedProtectionMigration->up();
+    check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'generated protection migration changed identity or activation');
+    check(count($GLOBALS['reloadCallbacks'])===14,'upgrade did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }

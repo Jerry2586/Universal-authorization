@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { bootstrap } from '../apps/license-api/src/bootstrap.js';
@@ -11,6 +11,7 @@ import { openDatabase } from '../apps/license-api/src/database.js';
 import { createHttpHandler } from '../apps/license-api/src/http.js';
 import { createBuildCenterHandler } from '../apps/build-center/src/server.js';
 import { runWorkerOnce } from '../apps/build-worker/src/server.js';
+import { protectGeneratedJavaScript } from '../apps/build-worker/src/generated-protection.js';
 import { LocalArtifactStore } from '../packages/adapters/src/local-artifact-store.js';
 import { writeZip, readZip } from '../packages/core/src/zip.js';
 
@@ -108,6 +109,11 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   const bridgeFiles = readZip(component.buffer);
   const selectedDescriptor = { ...component.descriptor, version: '1.1.99' };
   bridgeFiles.set('AppgogLicenseBridge/config.json', Buffer.from(JSON.stringify(selectedDescriptor)));
+  const adminEntryPath = 'AppgogLicenseBridge/assets/admin-entry.js';
+  bridgeFiles.set(adminEntryPath, Buffer.from(protectGeneratedJavaScript(
+    readFileSync(resolve('apps/build-worker/xboard-bridge/AppgogLicenseBridge/assets/admin-entry.js'), 'utf8'),
+    `${selectedDescriptor.version}:${adminEntryPath}`,
+  )));
   app.bridgeUpdates.snapshot = () => ({ ...component, descriptor: selectedDescriptor, version: '1.1.99', buffer: writeZip(bridgeFiles) });
   const remoteWorkerStore = new LocalArtifactStore(join(tempRoot, 'worker-artifacts'));
   const worked = await runWorkerOnce({
