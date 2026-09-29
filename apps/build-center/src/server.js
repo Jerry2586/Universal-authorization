@@ -6,7 +6,7 @@ import { loadLocalEnvironment } from '../../../packages/core/src/environment.js'
 import { clientAddress } from '../../../packages/core/src/client-address.js';
 import { createRequestContext } from '../../../packages/core/src/request-context.js';
 
-import { PACKAGE_VERSION, renderVersionedHtml } from '../../../packages/core/src/version.js';
+import { PACKAGE_VERSION, renderVersionedHtml, portalAssetPath } from '../../../packages/core/src/version.js';
 
 const root = resolve(process.cwd(), 'apps/web/public');
 // Explicit customer surface: never expose admin modules or arbitrary publicRoot paths.
@@ -85,7 +85,7 @@ export function createBuildCenterHandler({
       }
       return;
     }
-    const file = files.get(url.pathname);
+    const file = files.get(portalAssetPath(url.pathname));
     if (request.method === 'GET' && file) {
       const path = resolve(publicRoot, file[0]);
       try {

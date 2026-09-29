@@ -2,7 +2,7 @@ import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { securityHeaders } from './middleware/response.js';
 
-import { renderVersionedHtml } from '../../../../packages/core/src/version.js';
+import { renderVersionedHtml, portalAssetPath } from '../../../../packages/core/src/version.js';
 
 const PUBLIC_ROOT = resolve(process.cwd(), 'apps/web/public');
 const MIME = Object.freeze({
@@ -15,6 +15,7 @@ const MIME = Object.freeze({
 });
 
 export function serveStatic(pathname, response, requestId) {
+  pathname = portalAssetPath(pathname);
   const routeMap = { '/': 'admin.html', '/index.html': 'admin.html', '/build': 'build.html', '/admin': 'admin.html' };
   const relative = routeMap[pathname] ?? pathname.replace(/^\/+/, '');
   const file = resolve(PUBLIC_ROOT, relative);

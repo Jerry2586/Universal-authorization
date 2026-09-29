@@ -74,7 +74,14 @@ test('分层部署：管理、客户和独立 Worker 的真实构建链路与访
   assert.equal((await fetch(`${buildUrl}/admin`)).status, 404);
   assert.equal((await fetch(`${centerUrl}/build`)).status, 404);
   assert.equal((await send(centerUrl, '/web/customer/overview')).status, 403);
-  assert.equal((await fetch(`${buildUrl}/build`)).status, 200);
+  const buildHtml=await (await fetch(buildUrl+'/build')).text();
+  const modulePath=buildHtml.match(/src="([^" ]*customer-portal\.js)"/)[1];
+  assert.ok(modulePath.includes('/assets/v/'));
+  assert.equal((await fetch(buildUrl+modulePath)).status,200);
+  const sharedPath=new URL('./portal/system-version.js',buildUrl+modulePath).pathname;
+  assert.equal((await fetch(buildUrl+sharedPath)).status,200);
+  assert.equal((await fetch(buildUrl+modulePath.replace('customer-portal.js','admin-portal.js'))).status,404);
+  assert.equal((await fetch(buildUrl+modulePath.replace('customer-portal.js','portal/licenses.js'))).status,404);
 
   const adminLogin = await send(centerUrl, '/web/admin/login', { method: 'POST', body: { username: 'admin', password: config.adminPassword } });
   assert.equal(adminLogin.status, 200);

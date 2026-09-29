@@ -373,7 +373,10 @@ export function createLicenseUi({ state, can, request, notify, refresh, showSecr
       element('small', license.active_activation_count ? '环境在线' : '尚未激活', 'table-subline'),
     );
     const planCell = element('td', null, 'license-plan-cell');
-    const changePlanButton = button('更改套餐', () => changePlan(license), 'button button-secondary');
+    const planName = license.plan_name || license.plan_code || '未分配套餐';
+    const changePlanButton = button(planName, () => changePlan(license), 'button button-secondary license-current-plan');
+    changePlanButton.title = `当前套餐：${planName}，点击切换套餐`;
+    changePlanButton.setAttribute('aria-label', `当前套餐：${planName}，点击切换套餐`);
     changePlanButton.disabled = !can('license.manage') || ['revoked', 'deleting'].includes(license.status);
     if (changePlanButton.disabled) changePlanButton.title = !can('license.manage') ? '没有更改套餐权限' : '当前授权状态不允许更改套餐';
     planCell.append(changePlanButton);

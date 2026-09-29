@@ -46,8 +46,8 @@ test('customer HTML and every recursive ES module load through the standalone bu
       if (match[1].startsWith('.')) pending.push(new URL(match[1], url + path).pathname);
     }
   }
-  assert.ok(visited.has('/assets/portal/shell.js'));
-  assert.ok(visited.has('/assets/portal/api-client.js'));
+  assert.ok(visited.has('/assets/v/'+expectedVersion+'/portal/shell.js'));
+  assert.ok(visited.has('/assets/v/'+expectedVersion+'/portal/api-client.js'));
   for (const path of ['/admin', '/assets/admin-portal.js', '/assets/portal/admin-page.js', '/assets/portal.js', '/.env']) {
     assert.equal((await fetch(url + path)).status, 404, path);
   }

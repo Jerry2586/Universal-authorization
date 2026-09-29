@@ -1,5 +1,6 @@
 import { $ } from './core.js';
 import { fileSize } from './ui.js';
+import { ensurePortalDocument } from './system-version.js';
 
 function detectedVersionFromFilename(name) {
   if (!/appgog/i.test(name ?? '')) return null;
@@ -11,7 +12,12 @@ export function createAdminReleaseUpload(shell) {
 
   let publishing = false;
   function showStatus(message, failed = false) {
-    const status = $('release-publish-status');
+    let status = $('release-publish-status');
+    if (!status) {
+      status = document.createElement('p'); status.id = 'release-publish-status';
+      status.className = 'release-publish-status'; status.setAttribute('role','status');
+      $('version-form').append(status);
+    }
     status.textContent = message; status.hidden = false; status.classList.toggle('error', failed);
   }
 
@@ -88,6 +94,7 @@ export function createAdminReleaseUpload(shell) {
     $('version-form')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (publishing) return;
+      if (!ensurePortalDocument(state.data?.cms?.system_version)) return;
       const form = event.currentTarget;
       const submit = form.querySelector('[type="submit"]');
       const label = submit.querySelector('span');
@@ -98,6 +105,7 @@ export function createAdminReleaseUpload(shell) {
         if (!fields.get('product_code')) throw new Error('请选择有效产品；没有产品时请先创建产品');
         const file = state.sourceFile ?? fields.get('source_zip');
         if (!(file instanceof File) || !file.size) throw new Error('请选择主题 ZIP');
+        if (!$('release-plan-options')) throw new Error('页面版本已过期，请加载新版页面后选择套餐再发布');
         const planCodes = fields.getAll('plan_codes');
         if (!planCodes.length) throw new Error('请选择至少一个可用套餐');
         const params = new URLSearchParams({

@@ -340,3 +340,7 @@ body[data-portal] .app-sidebar { overflow-y: auto; }
 
 .release-publish-status { margin: 0; padding: 12px 14px; border-radius: 10px; background: #f3f0ff; color: #51418b; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .release-publish-status.error { background: #fff1f2; color: #a51f38; }
+
+.license-current-plan { width: 132px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.portal-version-notice { padding: 12px 18px; background: #fff5dc; color: #59410c; position: sticky; top: 0; z-index: 100; font-size: 14px; }
+.portal-version-notice a { margin-left: 12px; text-decoration: underline; }

@@ -1,4 +1,4 @@
-import { applySystemVersion } from './system-version.js';
+import { applySystemVersion, ensurePortalDocument } from './system-version.js';
 import { $, createPermissionCheck, createPortalState } from './core.js';
 import { createApiClient } from './api-client.js';
 import { appendDialogActions, createDialog, showSecretDialog } from './dialog.js';
@@ -21,6 +21,7 @@ export function createPortalShell(actor) {
   }
 
   function applyBranding(branding = {}) {
+    if (!ensurePortalDocument(branding.system_version)) return false;
     applySystemVersion(branding.system_version);
     const platformName = String(branding.platform_name || 'APPGOG打包授权系统').trim();
     document.querySelectorAll('[data-brand-name]').forEach((item) => { item.textContent = platformName; });
@@ -88,7 +89,7 @@ export function createPortalShell(actor) {
     try {
       const data = await api.request(`/web/${actor}/overview`);
       state.data = data;
-      applyBranding(actor === 'admin' ? data.cms : data);
+      if (applyBranding(actor === 'admin' ? data.cms : data) === false) return;
       controller.render(data);
       updateUnreadBadge();
     } catch (error) { notify(error.message, true); }

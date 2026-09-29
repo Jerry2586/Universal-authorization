@@ -39,7 +39,23 @@ const { join, resolve } = require('node:path');
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
     const page = await context.newPage(); const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    // Simulate the reported old 1.2.51 HTML receiving the new module graph.
+    let staleServed = false;
+    await page.route(base + '/admin', async route => {
+      const response = await route.fetch();
+      let html = await response.text();
+      if (!staleServed) {
+        staleServed = true;
+        html = html.replace(/<meta name="appgog-document-version"[^>]*>/,'')
+          .replace(/<fieldset class="release-plan-field">[\s\S]*?<\/fieldset>/,'<select name="access_tier"><option value="free">免费版本</option></select>')
+          .replace(/<p id="release-publish-status"[^>]*><\/p>/,'');
+      }
+      await route.fulfill({response,body:html});
+    });
     await page.goto(base + '/admin');
+    await page.waitForURL(/appgog_version=/);
+    await page.locator('#release-plan-options').waitFor({state:'attached'});
+    assert.ok(staleServed);
     await page.locator('#login-form [name=username]').fill(config.adminUsername);
     await page.locator('#login-form [name=password]').fill(config.adminPassword);
     await page.locator('#login-form [type=submit]').click();
@@ -82,12 +98,13 @@ const { join, resolve } = require('node:path');
     assert.throws(()=>app.service.deleteLicensePlan({code:'paid',actorId:'fixture'}),e=>e.code==='PLAN_HAS_LICENSES');
     await page.locator('[data-view=licenses]').click();
     const row=page.locator('#license-list tr').filter({hasText:'LIFECYCLE-UI'});
-    assert.equal((await row.locator('.license-plan-cell').textContent()).trim(),'更改套餐');
-    await row.getByRole('button',{name:'更改套餐',exact:true}).click();
+    assert.equal((await row.locator('.license-plan-cell').textContent()).trim(),'付费版');
+    await row.getByRole('button',{name:'当前套餐：付费版，点击切换套餐',exact:true}).click();
     let dialog=page.getByRole('dialog');await dialog.waitFor();
     await dialog.locator('select').selectOption('free');
     await dialog.getByRole('button',{name:'确认切换',exact:true}).click();
     await page.locator('.modal-overlay').waitFor({state:'detached'});
+    await row.getByRole('button',{name:'当前套餐：免费版，点击切换套餐',exact:true}).waitFor();
     await customer.reload();await customer.locator('#dashboard-view').waitFor();
     assert.equal(await customer.locator('#customer-plan-name').textContent(),'你的套餐：免费版');
     assert.ok(!(await customer.locator('#version-catalog').textContent()).includes('9.0.0'));
@@ -108,6 +125,19 @@ const { join, resolve } = require('node:path');
     await page.locator('[data-view=versions]').click();
     assert.equal(await page.locator('#release-plan-options input[value=paid]').count(),0);
     await page.screenshot({path:join(output,'version-plan-admin.png'),fullPage:true});
+    const stuck=await context.newPage();let oldLoads=0;
+    stuck.on('pageerror',error=>errors.push(error.message));
+    await stuck.route(base+'/admin**',async route=>{
+      const response=await route.fetch();oldLoads++;
+      const html=(await response.text()).replace(/<meta name="appgog-document-version"[^>]*>/,'')
+        .replace(/<fieldset class="release-plan-field">[\s\S]*?<\/fieldset>/,'');
+      await route.fulfill({response,body:html});
+    });
+    await stuck.goto(base+'/admin');await stuck.waitForURL(/appgog_version=/);
+    await stuck.locator('#portal-version-notice').waitFor();
+    assert.ok(await stuck.locator('#version-form [type=submit]').isDisabled());
+    assert.equal(oldLoads,2,'stale intermediary must not cause a reload loop');
+    await stuck.close();
     assert.deepEqual(errors,[]);
     console.log('PASS: real ZIP publishing, plan-bound visibility, assigned-plan deletion guard, same-key plan switch, release reassignment and your-plan display.');
   } finally {
