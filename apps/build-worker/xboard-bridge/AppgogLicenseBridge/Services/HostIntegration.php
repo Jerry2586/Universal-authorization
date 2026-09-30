@@ -32,6 +32,13 @@ PHP;
             token_get_all($guard, TOKEN_PARSE);
             self::write($root . '/Guard.php', $guard);
             self::write($root . '/admin-entry.js', file_get_contents(dirname(__DIR__) . '/assets/admin-entry.js'));
+            // Keep cleanup available to the host middleware even after plugin files vanish.
+            \Illuminate\Support\Facades\File::ensureDirectoryExists($root . '/Services', 0700, true);
+            foreach (['HostIntegration.php', 'RuntimeReload.php'] as $helper) {
+                $sourceHelper = file_get_contents(__DIR__ . '/' . $helper);
+                $sourceHelper = str_replace('namespace Plugin\\AppgogLicenseBridge\\Services;', 'namespace Appgog\\Host\\Removal;', $sourceHelper);
+                self::write($root . '/Services/' . $helper, $sourceHelper);
+            }
             if (!str_contains($source, 'APPGOG_HOST_GUARD')) {
                 $next = str_replace('return $app;', self::bootstrapBlock() . 'return $app;', $source);
                 token_get_all($next, TOKEN_PARSE);
@@ -43,6 +50,17 @@ PHP;
                 opcache_invalidate($root . '/Guard.php', true);
             }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    public static function scheduleRemovalIfUninstalled(): void
+    {
+        if (!class_exists(RuntimeReload::class, false)) require_once __DIR__ . '/RuntimeReload.php';
+        app()->terminating(static function (): void {
+            // Disable/re-enable and a failed uninstall must retain identity and activation.
+            if (\App\Models\Plugin::where('code', 'appgog_license_bridge')->first()) return;
+            self::uninstall();
+            RuntimeReload::reloadAfterRemoval();
+        });
     }
 
     /** Explicit Xboard plugin uninstall: remove every host-level bridge artifact. */
@@ -58,12 +76,13 @@ PHP;
             if (!is_string($source)) throw new \RuntimeException('Cannot read Xboard bootstrap during bridge removal');
             $block = self::bootstrapBlock();
             $markerCount = substr_count($source, 'APPGOG_HOST_GUARD');
-            $blockCount = substr_count($source, $block);
+            $pattern = '~' . str_replace("\n", "\r?\n", preg_quote($block, '~')) . '~';
+            $blockCount = preg_match_all($pattern, $source);
             if ($markerCount !== $blockCount || $blockCount > 1) {
                 throw new \RuntimeException('Authorization guard registration was modified; repair the bridge before uninstalling');
             }
             if ($blockCount === 1) {
-                $next = str_replace($block, '', $source);
+                $next = preg_replace($pattern, '', $source);
                 token_get_all($next, TOKEN_PARSE);
                 self::write($bootstrap, $next);
             }

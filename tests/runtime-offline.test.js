@@ -739,12 +739,12 @@ for (const variant of ['valid','missing','changed-files','wrong-key','changed-br
     const token=activation(privateKey,{exp:Math.floor(FIXED_NOW/1000)+100,offline_until:Math.floor(FIXED_NOW/1000)+200});
     let refreshes=0, writes=0;
     const browser=installBrowser({publicKey,token,manifestToken:identity,protectedRuntime:true,initialValues:new Map(),
-      bridge:{gc:'appgog_license_bridge',gv:'1.1.9',gt:'APPGOG',j:'../appgog-license-bridge.zip',y:'00'},
+      bridge:{gc:'appgog_license_bridge',gv:'1.1.10',gt:'APPGOG',j:'../appgog-license-bridge.zip',y:'00'},
       fetchImpl:async(url,options)=>{
         const href=String(url);
         const reply=data=>({ok:true,status:200,json:async()=>data});
         if(href.endsWith('/build.json'))return reply(manifest);
-        if(href.endsWith('/health'))return reply({ok:true,code:'appgog_license_bridge',version:'1.1.9',identity:{installation_id:'installation_runtime_123',installation_public_key:'fixture'}});
+        if(href.endsWith('/health'))return reply({ok:true,code:'appgog_license_bridge',version:'1.1.10',identity:{installation_id:'installation_runtime_123',installation_public_key:'fixture'}});
         if(href.endsWith('/state/runtime'))return reply({state:{activation_id:'act_runtime',activation_token:token,backend_origin:'https://demo.example.com'}});
         if(href.endsWith('/refresh')){refreshes++;return reply({activation_id:'act_runtime',activation_token:token,backend_origin:'https://demo.example.com'});}
         if(options?.method==='POST')writes++;

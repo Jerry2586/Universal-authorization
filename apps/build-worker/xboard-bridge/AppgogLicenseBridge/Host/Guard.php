@@ -235,6 +235,12 @@ final class Guard
 
     public function handle($request, \Closure $next)
     {
+        // A resident Octane middleware object can survive a completed uninstall.
+        // Do not re-create enrollment or decoration after registration was removed.
+        if (!is_file(self::root() . '/Guard.php')
+            && !str_contains((string) @file_get_contents(base_path('bootstrap/app.php')), 'APPGOG_HOST_GUARD')) {
+            return $next($request);
+        }
         $path = trim($request->path(), '/');
         $admin = admin_setting('secure_path', admin_setting('frontend_admin_path', hash('crc32b', config('app.key'))));
         $prefixes = ['api/v2/' . $admin, 'api/v1/' . $admin];
@@ -255,7 +261,30 @@ final class Guard
         }
         $isThemeUpload = in_array($path, [$prefixes[0] . '/theme/upload', $prefixes[1] . '/theme/upload'], true);
         $uploadedTheme = $isThemeUpload ? self::uploadedTheme($request) : null;
+        $removal = $request->method() === 'POST' && $request->input('code') === 'appgog_license_bridge'
+            && in_array($path, [$prefixes[0] . '/plugin/uninstall', $prefixes[1] . '/plugin/uninstall',
+                $prefixes[0] . '/plugin/delete', $prefixes[1] . '/plugin/delete'], true);
+        if ($removal) {
+            // Load before calling the host: it may delete the entire plugin directory.
+            if (!class_exists(\Appgog\Host\Removal\HostIntegration::class, false))
+                require_once self::root() . '/Services/HostIntegration.php';
+            if (!class_exists(\Appgog\Host\Removal\RuntimeReload::class, false))
+                require_once self::root() . '/Services/RuntimeReload.php';
+        }
         $response = $next($request);
+        if ($removal && $response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
+            $result = json_decode($response->getContent(), true);
+            // Native Xboard returns only a message; some versions wrap status.
+            $expectedMessage = str_ends_with($path, '/uninstall') ? '插件卸载成功' : '插件删除成功';
+            $successful = is_array($result) && (($result['status'] ?? null) === 'success'
+                || (!array_key_exists('status', $result) && ($result['message'] ?? null) === $expectedMessage));
+            if ($successful && !\App\Models\Plugin::where('code', 'appgog_license_bridge')->first()) {
+                // Laravel rollback only targets its selected migration batch. Cleanup
+                // must not depend on our latest down() being part of that batch.
+                \Appgog\Host\Removal\HostIntegration::uninstall();
+                \Appgog\Host\Removal\RuntimeReload::scheduleRemoval();
+            }
+        }
         if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300 && $isThemeUpload) {
             // Publish activation assets without enabling the theme or executing PHP from uploaded ZIPs.
             try {

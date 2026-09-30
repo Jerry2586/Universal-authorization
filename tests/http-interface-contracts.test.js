@@ -218,7 +218,7 @@ test('bridge maintenance HTTP requires administrator system permission and CSRF'
   const { send, admin, login } = await fixture(t);
   await send('/web/admin/system/bridge', { status: 401 });
   const status = (await send('/web/admin/system/bridge', { actor: admin })).data;
-  assert.equal(status.current_version, '1.1.9');
+  assert.equal(status.current_version, '1.1.10');
   assert.equal(status.repairable, true);
   await send('/web/admin/system/bridge/update', { actor: { ...admin, csrf: 'wrong' }, body: {}, status: 403 });
   await send('/web/admin/system/bridge/update', { actor: admin, body: { action: 'install-version' }, status: 409 });

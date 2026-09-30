@@ -22,7 +22,7 @@ const assert = require('node:assert/strict');
           window.calls=[];window.reloads=0;window.failNextGet=false;window.notice='';
           let sequence=0;
           const request=async(url,options)=>{
-            if(url.includes('/bridge'))return{current_version:'1.1.9',message:'组件已就绪',repairable:true};
+            if(url.includes('/bridge'))return{current_version:'1.1.10',message:'组件已就绪',repairable:true};
             if(options){
               calls.push({url,...options});
               if(url.endsWith('/lock')){state.version_lock={locked:options.body.locked,version:state.current_version,valid:true};state.installable=!options.body.locked&&state.relation==='update_available';return structuredClone(state);}

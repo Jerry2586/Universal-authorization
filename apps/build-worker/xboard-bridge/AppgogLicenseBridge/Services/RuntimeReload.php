@@ -41,6 +41,11 @@ final class RuntimeReload
         });
     }
 
+    public static function reloadAfterRemoval(): void
+    {
+        self::reloadRuntime('removal');
+    }
+
     private static function reloadRuntime(string $context): void
     {
         // Never clear global OPcache. During removal the plugin directory may disappear

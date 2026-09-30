@@ -7,12 +7,14 @@ namespace Illuminate\Support\Facades {
         public static function deleteDirectory($path) { if(!is_dir($path))return true;foreach(scandir($path) as $name){if($name==='.'||$name==='..')continue;$item=$path.'/'.$name;if(is_dir($item)){if(!self::deleteDirectory($item))return false;}elseif(!unlink($item))return false;}return rmdir($path); }
     }
     class Crypt { public static function encryptString($value){return base64_encode($value);} public static function decryptString($value){return base64_decode($value,true);} }
-    class Log { public static function error(...$args){} }
+    class Log { public static function error(...$args){} public static function warning(...$args){} public static function info(...$args){} }
+    class Artisan { public static $calls=[]; public static function all(){return ['octane:reload'=>true];} public static function call($name){self::$calls[]=$name;return 0;} }
 }
 namespace Illuminate\Database\Migrations { class Migration {} }
 namespace App\Models {
-    class Plugin { public static $enabled=true; public static function where(...$args){return new self;} public function first(){return (object)['is_enabled'=>self::$enabled];} }
+    class Plugin { public static $enabled=true; public static $present=true; public static function where(...$args){return new self;} public function first(){return self::$present ? (object)['is_enabled'=>self::$enabled] : null;} }
 }
+namespace App\Services\Plugin { abstract class AbstractPlugin {} }
 namespace App\Services {
     class ThemeService {
         public function getThemePath($name){return storage_path('theme/'.$name);}
@@ -173,14 +175,70 @@ namespace {
     check(file_get_contents($enrollmentPath)===$enrollmentBefore,'uninstall migration upgrade changed enrollment');
     check(count($GLOBALS['reloadCallbacks'])===18,'upgrade did not schedule runtime reload');
     $custom='// SITE_CUSTOMIZATION_PRESERVED';
-    write(base_path('bootstrap/app.php'),str_replace('return $app;',$custom."\nreturn $app;",file_get_contents(base_path('bootstrap/app.php'))));
+    write(base_path('bootstrap/app.php'),str_replace('return $app;',$custom."\n".'return $app;',file_get_contents(base_path('bootstrap/app.php'))));
     $uninstallMigration->down();
-    check(file_get_contents(base_path('bootstrap/app.php'))===str_replace('return $app;',$custom."\nreturn $app;",$original),'uninstall did not preserve host bootstrap customization');
+    check(file_get_contents(base_path('bootstrap/app.php'))===str_replace('return $app;',$custom."\n".'return $app;',$original),'uninstall did not preserve host bootstrap customization');
     check(!is_dir(storage_path('app/private/appgog-host')),'host guard files survived explicit uninstall');
     check(!is_dir(storage_path('app/private/appgog-license-bridge')),'bridge identity or activation survived explicit uninstall');
     check(count($GLOBALS['reloadCallbacks'])===19,'uninstall did not schedule runtime reload');
     $uninstallMigration->down();
     check(!is_dir(storage_path('app/private/appgog-host')) && !is_dir(storage_path('app/private/appgog-license-bridge')),'uninstall is not idempotent');
     check(count($GLOBALS['reloadCallbacks'])===20,'repeat uninstall did not schedule runtime reload');
+    // Same still-loaded middleware must no longer gate or decorate after uninstall.
+    check($request('api/v2/secure/theme/getThemeConfig',['name'=>'APPGOG'])->status===200,'resident middleware survived uninstall');
+    check(!str_contains($request('secure',[],'demo.example.com','GET')->body,'data-appgog-admin-entry'),'uninstalled admin injection survived');
+    // The real host invokes cleanup on disable, then deletes the DB record on uninstall.
+    require $argv[1].'/Plugin.php';
+    $plugin=new \Plugin\AppgogLicenseBridge\Plugin;
+    \Plugin\AppgogLicenseBridge\Services\HostIntegration::install();
+    write($identityPath,$identityBefore);write($statePath,$stateBefore);write($enrollmentPath,$enrollmentBefore);
+    $GLOBALS['reloadCallbacks']=[];\App\Models\Plugin::$enabled=false;
+    $plugin->cleanup();
+    foreach($GLOBALS['reloadCallbacks'] as $callback)$callback();
+    check(file_get_contents($identityPath)===$identityBefore,'disable erased installation identity');
+    check(file_get_contents($statePath)===$stateBefore,'disable erased activation');
+    check($request('api/v2/secure/theme/getThemeConfig',['name'=>'APPGOG'])->status===423,'disable bypassed guard');
+    \App\Models\Plugin::$enabled=true;
+    // CRLF must not turn an otherwise identical registration into an uninstall failure.
+    $withCrLf=str_replace("\n","\r\n",file_get_contents(base_path('bootstrap/app.php')));
+    write(base_path('bootstrap/app.php'),$withCrLf);
+    $GLOBALS['reloadCallbacks']=[];$plugin->cleanup();\App\Models\Plugin::$present=false;
+    foreach($GLOBALS['reloadCallbacks'] as $callback)$callback();
+    check(!is_dir(storage_path('app/private/appgog-host')),'cleanup hook did not finish uninstall without migration rollback');
+    check(!is_dir(storage_path('app/private/appgog-license-bridge')),'cleanup hook left private identity');
+    check(str_contains(file_get_contents(base_path('bootstrap/app.php')),$custom),'CRLF uninstall lost site customization');
+    check(in_array('octane:reload',\Illuminate\Support\Facades\Artisan::$calls,true),'cleanup hook did not request reload');
+    // Plugin DB record was already removed by an older uninstall: delete still cleans host artifacts.
+    write(base_path('bootstrap/app.php'),$original);
+    \Plugin\AppgogLicenseBridge\Services\HostIntegration::install();
+    write($enrollmentPath,$enrollmentBefore);write($identityPath,$identityBefore);
+    $failed=$guard->handle(new Request('api/v2/secure/plugin/delete',['code'=>'appgog_license_bridge']),fn()=>response()->json(['status'=>'fail'],200));
+    check(is_file($enrollmentPath),'failed host deletion erased enrollment');
+    $unauthorized=$guard->handle(new Request('api/v2/secure/plugin/delete',['code'=>'appgog_license_bridge']),fn()=>response()->json(['status'=>'fail'],401));
+    check(is_file($enrollmentPath),'unauthorized request erased enrollment');
+    $other=$guard->handle(new Request('api/v2/secure/plugin/delete',['code'=>'other_plugin']),fn()=>response()->json(['status'=>'success']));
+    check(is_file($enrollmentPath),'another plugin deletion erased enrollment');
+    $removed=$guard->handle(new Request('api/v2/secure/plugin/delete',['code'=>'appgog_license_bridge']),fn()=>response()->json(['message'=>'插件删除成功']));
+    check($removed->status===200 && !is_dir(storage_path('app/private/appgog-host')),'successful delete missed orphaned host cleanup');
+    check(!is_dir(storage_path('app/private/appgog-license-bridge')),'successful delete retained identity');
+    // Match the native uninstall response too, retaining state while a DB record remains.
+    \Plugin\AppgogLicenseBridge\Services\HostIntegration::install();
+    write($enrollmentPath,$enrollmentBefore);\App\Models\Plugin::$present=true;
+    $guard->handle(new Request('api/v2/secure/plugin/uninstall',['code'=>'appgog_license_bridge']),fn()=>response()->json(['message'=>'插件卸载成功']));
+    check(is_file($enrollmentPath),'uninstall erased state while plugin record remained');
+    \App\Models\Plugin::$present=false;
+    $guard->handle(new Request('api/v2/secure/plugin/uninstall',['code'=>'appgog_license_bridge']),fn()=>response()->json(['message'=>'插件卸载失败']));
+    check(is_file($enrollmentPath),'failed message erased state');
+    $guard->handle(new Request('api/v2/secure/plugin/uninstall',['code'=>'appgog_license_bridge']),fn()=>response()->json(['message'=>'插件卸载成功']));
+    check(!is_dir(storage_path('app/private/appgog-host')),'native uninstall response did not clean integration');
+    // Replace the protected theme with its same-name ordinary source after removal.
+    unlink($manifestPath);
+    write(storage_path('theme/APPGOG/config.json'),json_encode(['name'=>'APPGOG','version'=>'1.19.16']));
+    write(storage_path('theme/APPGOG/dashboard.blade.php'),'plain original source');
+    foreach(['api/v2/secure/theme/getThemeConfig','api/v2/secure/theme/saveThemeConfig'] as $route)
+        check($request($route,['name'=>'APPGOG'])->status===200,'same-name ordinary source still asks for activation');
+    check($request('api/v2/secure/config/save',['frontend_theme'=>'APPGOG'])->status===200,'ordinary source enable blocked');
+    check($request('',[],'demo.example.com','GET')->status===200,'ordinary source homepage blocked');
+    check(!str_contains(file_get_contents(base_path('bootstrap/app.php')),'APPGOG_HOST_GUARD'),'restart would register old guard');
     echo "$cases host guard cases passed\n";
 }
