@@ -176,6 +176,8 @@ namespace {
     check(count($GLOBALS['reloadCallbacks'])===18,'upgrade did not schedule runtime reload');
     $custom='// SITE_CUSTOMIZATION_PRESERVED';
     write(base_path('bootstrap/app.php'),str_replace('return $app;',$custom."\n".'return $app;',file_get_contents(base_path('bootstrap/app.php'))));
+    // Production may have an LF bootstrap written by an older Linux release.
+    write(base_path('bootstrap/app.php'),str_replace("\r\n","\n",file_get_contents(base_path('bootstrap/app.php'))));
     $uninstallMigration->down();
     check(file_get_contents(base_path('bootstrap/app.php'))===str_replace('return $app;',$custom."\n".'return $app;',$original),'uninstall did not preserve host bootstrap customization');
     check(!is_dir(storage_path('app/private/appgog-host')),'host guard files survived explicit uninstall');
@@ -200,7 +202,7 @@ namespace {
     check($request('api/v2/secure/theme/getThemeConfig',['name'=>'APPGOG'])->status===423,'disable bypassed guard');
     \App\Models\Plugin::$enabled=true;
     // CRLF must not turn an otherwise identical registration into an uninstall failure.
-    $withCrLf=str_replace("\n","\r\n",file_get_contents(base_path('bootstrap/app.php')));
+    $withCrLf=str_replace("\n","\r\n",str_replace("\r\n","\n",file_get_contents(base_path('bootstrap/app.php'))));
     write(base_path('bootstrap/app.php'),$withCrLf);
     $GLOBALS['reloadCallbacks']=[];$plugin->cleanup();\App\Models\Plugin::$present=false;
     foreach($GLOBALS['reloadCallbacks'] as $callback)$callback();

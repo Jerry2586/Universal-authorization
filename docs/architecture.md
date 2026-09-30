@@ -1,10 +1,10 @@
-# APPGOG打包授权系统架构（v1.2.59）
+# APPGOG打包授权系统架构（v1.2.60）
 
 日期：2026-09-26
 
 ## 版本权益边界
 
-v1.2.59 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。Product 只接收并保存原生态明文源 ZIP，纯净源码安装与运行不依赖授权桥；Packaging/Worker 只能在隔离副本中注入授权运行时、桥、客户身份、水印、签名和 JS/CSS 保护。桥的 Xboard 正式卸载迁移必须撤销 bootstrap 挂载并清除宿主 Guard、登记、安装身份和本地激活状态；仅删除保护清单而未正式卸载时继续 fail-closed。Licensing 管理每日与总打包额度，Packaging 在签发构建票据前强制校验额度；固定 Key、域名、Installation ID、签名 Token 和版本权益边界不变。
+v1.2.60 沿用既有 Product、Entitlement、Packaging、Activation 和 Customer 边界，不建立第二套授权系统。Product 只接收并保存原生态明文源 ZIP，纯净源码安装与运行不依赖授权桥；Packaging/Worker 只能在隔离副本中注入授权运行时、桥、客户身份、水印、签名和 JS/CSS 保护。桥的 Xboard 正式卸载迁移必须撤销 bootstrap 挂载并清除宿主 Guard、登记、安装身份和本地激活状态；仅删除保护清单而未正式卸载时继续 fail-closed。Licensing 管理每日与总打包额度，Packaging 在签发构建票据前强制校验额度；固定 Key、域名、Installation ID、签名 Token 和版本权益边界不变。
 
 源码保护与授权安全分层：Terser 压缩、JavaScript Obfuscator 按包混淆、CSS 压缩、水印和随机路径只提高静态复制成本；包身份使用 AES-256-GCM，Build/Package 使用 Ed25519 签名和 HMAC；敏感凭证、安装私钥、撤销状态和套餐能力仍由 Xboard 服务端桥与授权中心控制，禁止以前端混淆替代服务端授权。
 
@@ -216,6 +216,6 @@ Customer 历史查询是只读投影，使用会话授权 ID；游标仅包含 c
 
 Packaging 在中心完成构建时签署最终文件清单摘要，Worker 不持有签名私钥。最终 ZIP 哈希在加签后持久化并用于下载；浏览器与桥分别验证新签名合同。旧包按原签名声明兼容，已登记公钥保持固定。详见 `package-content-signature.md`。本轮产品管理沿用 Product 领域，创建/修改/归档与审计同事务，不改 Licensing、Activation 写模型。
 
-## 门户版本一致性（v1.2.59）
+## 门户版本一致性（v1.2.60）
 
 服务端渲染文档版本元信息并将门户静态资源映射到 `/assets/v/<运行版本>/`。ES 模块的相对导入继承版本路径；独立打包中心继续使用明确的客户资源白名单，不暴露管理模块。浏览器根据服务端运行版本检查文档版本，不一致时仅自动重载一次；持续不一致显示恢复入口并禁止提交旧发布表单。此标记只管理页面兼容性，不参与授权判断。

@@ -74,7 +74,7 @@ PHP;
             $bootstrap = base_path('bootstrap/app.php');
             $source = file_get_contents($bootstrap);
             if (!is_string($source)) throw new \RuntimeException('Cannot read Xboard bootstrap during bridge removal');
-            $block = self::bootstrapBlock();
+            $block = str_replace("\r\n", "\n", self::bootstrapBlock());
             $markerCount = substr_count($source, 'APPGOG_HOST_GUARD');
             $pattern = '~' . str_replace("\n", "\r?\n", preg_quote($block, '~')) . '~';
             $blockCount = preg_match_all($pattern, $source);
