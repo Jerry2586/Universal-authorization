@@ -4,6 +4,18 @@ namespace Plugin\AppgogLicenseBridge\Services;
 /** Backed-up Laravel bootstrap registration. All templates are fixed trusted plugin files. */
 final class HostIntegration
 {
+    private static function bootstrapBlock(): string
+    {
+        return <<<'PHP'
+// APPGOG_HOST_GUARD: independent of removable plugin files; native admin remains accessible.
+require_once $app->storagePath('app/private/appgog-host/Guard.php');
+$app->afterResolving(\Illuminate\Contracts\Http\Kernel::class, static function ($kernel) {
+    $kernel->prependMiddleware(\Appgog\Host\Guard::class);
+});
+
+PHP;
+    }
+
     public static function install(): void
     {
         $root = storage_path('app/private/appgog-host');
@@ -21,15 +33,7 @@ final class HostIntegration
             self::write($root . '/Guard.php', $guard);
             self::write($root . '/admin-entry.js', file_get_contents(dirname(__DIR__) . '/assets/admin-entry.js'));
             if (!str_contains($source, 'APPGOG_HOST_GUARD')) {
-                $block = <<<'PHP'
-// APPGOG_HOST_GUARD: independent of removable plugin files; native admin remains accessible.
-require_once $app->storagePath('app/private/appgog-host/Guard.php');
-$app->afterResolving(\Illuminate\Contracts\Http\Kernel::class, static function ($kernel) {
-    $kernel->prependMiddleware(\Appgog\Host\Guard::class);
-});
-
-PHP;
-                $next = str_replace('return $app;', $block . 'return $app;', $source);
+                $next = str_replace('return $app;', self::bootstrapBlock() . 'return $app;', $source);
                 token_get_all($next, TOKEN_PARSE);
                 if (!is_file($root . '/bootstrap-original.php')) self::write($root . '/bootstrap-original.php', $source);
                 self::write($bootstrap, $next);
@@ -39,6 +43,42 @@ PHP;
                 opcache_invalidate($root . '/Guard.php', true);
             }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /** Explicit Xboard plugin uninstall: remove every host-level bridge artifact. */
+    public static function uninstall(): void
+    {
+        $root = storage_path('app/private/appgog-host');
+        \Illuminate\Support\Facades\File::ensureDirectoryExists($root, 0700, true);
+        $lock = fopen($root . '/install.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_EX)) throw new \RuntimeException('Cannot lock authorization guard removal');
+        try {
+            $bootstrap = base_path('bootstrap/app.php');
+            $source = file_get_contents($bootstrap);
+            if (!is_string($source)) throw new \RuntimeException('Cannot read Xboard bootstrap during bridge removal');
+            $block = self::bootstrapBlock();
+            $markerCount = substr_count($source, 'APPGOG_HOST_GUARD');
+            $blockCount = substr_count($source, $block);
+            if ($markerCount !== $blockCount || $blockCount > 1) {
+                throw new \RuntimeException('Authorization guard registration was modified; repair the bridge before uninstalling');
+            }
+            if ($blockCount === 1) {
+                $next = str_replace($block, '', $source);
+                token_get_all($next, TOKEN_PARSE);
+                self::write($bootstrap, $next);
+            }
+            if (function_exists('opcache_invalidate')) {
+                opcache_invalidate($bootstrap, true);
+                if (is_file($root . '/Guard.php')) opcache_invalidate($root . '/Guard.php', true);
+            }
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
+
+        $bridgeRoot = storage_path('app/private/appgog-license-bridge');
+        foreach ([$bridgeRoot, $root] as $directory) {
+            if (is_dir($directory) && !\Illuminate\Support\Facades\File::deleteDirectory($directory)) {
+                throw new \RuntimeException('Authorization bridge removal failed; check private storage permissions');
+            }
+        }
     }
 
     private static function write(string $path, string $content): void

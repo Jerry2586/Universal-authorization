@@ -52,5 +52,14 @@ namespace {
         foreach(\Illuminate\Support\Facades\Artisan::$calls as $call) check($call==='octane:reload','Only fixed official command allowed');
         if($status===1) check(str_contains(json_encode(\Illuminate\Support\Facades\Log::$messages),'unavailable'),'Nonzero reload is visible');
     }
-    echo "7 bridge reload cases passed\n";
+    $application->callbacks=[]; \App\Models\Plugin::$record=null;
+    \Illuminate\Support\Facades\Artisan::$available=true;
+    \Illuminate\Support\Facades\Artisan::$status=0;
+    \Illuminate\Support\Facades\Artisan::$fail=false;
+    \Illuminate\Support\Facades\Artisan::$calls=[];
+    \Plugin\AppgogLicenseBridge\Services\RuntimeReload::scheduleRemoval();
+    check(count($application->callbacks)===1,'Removal reload must be deferred');
+    ($application->callbacks[0])();
+    check(\Illuminate\Support\Facades\Artisan::$calls===['octane:reload'],'Removal reload must not require an installed plugin record');
+    echo "8 bridge reload cases passed\n";
 }

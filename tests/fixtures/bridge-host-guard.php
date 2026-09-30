@@ -4,6 +4,7 @@ namespace Illuminate\Support\Facades {
         public static function ensureDirectoryExists($path, $mode=0755, $recursive=true) { if (!is_dir($path)) mkdir($path,$mode,$recursive); }
         public static function copyDirectory($from,$to) { self::ensureDirectoryExists($to); foreach(scandir($from) as $name) { if($name==='.'||$name==='..')continue; if(is_dir($from.'/'.$name))self::copyDirectory($from.'/'.$name,$to.'/'.$name);else copy($from.'/'.$name,$to.'/'.$name); } return true; }
         public static function delete($path) { return !is_file($path) || unlink($path); }
+        public static function deleteDirectory($path) { if(!is_dir($path))return true;foreach(scandir($path) as $name){if($name==='.'||$name==='..')continue;$item=$path.'/'.$name;if(is_dir($item)){if(!self::deleteDirectory($item))return false;}elseif(!unlink($item))return false;}return rmdir($path); }
     }
     class Crypt { public static function encryptString($value){return base64_encode($value);} public static function decryptString($value){return base64_decode($value,true);} }
     class Log { public static function error(...$args){} }
@@ -165,6 +166,21 @@ namespace {
     check(file_get_contents(storage_path('app/private/appgog-host/Guard.php'))===file_get_contents($argv[1].'/Host/Guard.php'),'source replacement guard upgrade not persisted');
     check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'source replacement migration changed identity or activation');
     check(file_get_contents($enrollmentPath)===$enrollmentBefore,'source replacement migration changed enrollment');
-    check(count($GLOBALS['reloadCallbacks'])===16,'upgrade did not schedule runtime reload');
+    $uninstallMigration=require $argv[1].'/database/migrations/2026_09_30_000016_bridge_uninstall_cleanup.php';
+    $uninstallMigration->up();$uninstallMigration->up();
+    check(file_get_contents(storage_path('app/private/appgog-host/Guard.php'))===file_get_contents($argv[1].'/Host/Guard.php'),'uninstall migration guard upgrade not persisted');
+    check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'uninstall migration upgrade changed identity or activation');
+    check(file_get_contents($enrollmentPath)===$enrollmentBefore,'uninstall migration upgrade changed enrollment');
+    check(count($GLOBALS['reloadCallbacks'])===18,'upgrade did not schedule runtime reload');
+    $custom='// SITE_CUSTOMIZATION_PRESERVED';
+    write(base_path('bootstrap/app.php'),str_replace('return $app;',$custom."\nreturn $app;",file_get_contents(base_path('bootstrap/app.php'))));
+    $uninstallMigration->down();
+    check(file_get_contents(base_path('bootstrap/app.php'))===str_replace('return $app;',$custom."\nreturn $app;",$original),'uninstall did not preserve host bootstrap customization');
+    check(!is_dir(storage_path('app/private/appgog-host')),'host guard files survived explicit uninstall');
+    check(!is_dir(storage_path('app/private/appgog-license-bridge')),'bridge identity or activation survived explicit uninstall');
+    check(count($GLOBALS['reloadCallbacks'])===19,'uninstall did not schedule runtime reload');
+    $uninstallMigration->down();
+    check(!is_dir(storage_path('app/private/appgog-host')) && !is_dir(storage_path('app/private/appgog-license-bridge')),'uninstall is not idempotent');
+    check(count($GLOBALS['reloadCallbacks'])===20,'repeat uninstall did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }

@@ -9,5 +9,5 @@ test('bridge upgrade reload waits for committed enabled plugin, preserves record
     resolve('apps/build-worker/xboard-bridge/AppgogLicenseBridge/database/migrations/2026_09_26_000001_reload_appgog_bridge_runtime.php'),
   ], { encoding: 'utf8', timeout: 30000 });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /7 bridge reload cases passed/);
+  assert.match(result.stdout, /8 bridge reload cases passed/);
 });

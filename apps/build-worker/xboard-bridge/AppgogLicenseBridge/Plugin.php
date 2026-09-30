@@ -18,6 +18,13 @@ class Plugin extends AbstractPlugin
         $bridge->identity();
     }
 
+    public function cleanup(): void
+    {
+        // Current Xboard releases remove plugins through migration rollback. Keep this
+        // hook idempotent for host versions that also invoke AbstractPlugin::cleanup().
+        \Plugin\AppgogLicenseBridge\Services\HostIntegration::uninstall();
+    }
+
     public function schedule(\Illuminate\Console\Scheduling\Schedule $schedule): void
     {
         $schedule->call(fn () => (new BridgeState())->sweepExpiredPackages())
@@ -29,7 +36,7 @@ class Plugin extends AbstractPlugin
         $this->filter('guest_comm_config', function (array $config): array {
             $config['appgog_license_bridge'] = [
                 'installed' => true,
-                'version' => '1.1.8',
+                'version' => '1.1.9',
             ];
             return $config;
         });
