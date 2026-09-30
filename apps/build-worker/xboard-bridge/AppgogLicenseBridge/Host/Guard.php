@@ -23,6 +23,43 @@ final class Guard
             && is_file(self::root() . '/themes/' . $theme . '.json');
     }
 
+    private static function forgetEnrollment(string $theme): void
+    {
+        if (!preg_match('/^[A-Za-z0-9_-]{1,100}$/D', $theme)) return;
+        \Illuminate\Support\Facades\File::delete(self::root() . '/themes/' . $theme . '.json');
+    }
+
+    private static function uploadedTheme($request): ?string
+    {
+        try {
+            if (!method_exists($request, 'file')) return null;
+            $upload = $request->file('file');
+            if (!is_object($upload) || !class_exists(\ZipArchive::class)) return null;
+            $path = null;
+            foreach (['getRealPath', 'path', 'getPathname'] as $method) {
+                if (!method_exists($upload, $method)) continue;
+                $candidate = $upload->{$method}();
+                if (is_string($candidate) && $candidate !== '' && is_file($candidate)) { $path = $candidate; break; }
+            }
+            if ($path === null) return null;
+            $zip = new \ZipArchive;
+            if ($zip->open($path) !== true) return null;
+            try {
+                for ($index = 0; $index < $zip->numFiles; $index++) {
+                    $entry = $zip->getNameIndex($index);
+                    if (!is_string($entry) || basename(str_replace('\\', '/', $entry)) !== 'config.json') continue;
+                    $stat = $zip->statIndex($index);
+                    if (!is_array($stat) || ($stat['size'] ?? 0) < 1 || ($stat['size'] ?? 0) > 262144) return null;
+                    $raw = $zip->getFromIndex($index);
+                    $config = is_string($raw) ? json_decode($raw, true) : null;
+                    $theme = is_array($config) ? ($config['name'] ?? null) : null;
+                    return is_string($theme) && preg_match('/^[A-Za-z0-9_-]{1,100}$/D', $theme) ? $theme : null;
+                }
+            } finally { $zip->close(); }
+        } catch (\Throwable $error) { return null; }
+        return null;
+    }
+
     public static function enroll(string $theme, array $manifest): void
     {
         if (!preg_match('/^[A-Za-z0-9_-]{1,100}$/', $theme)) throw new \RuntimeException('Invalid protected theme');
@@ -216,13 +253,18 @@ final class Guard
             }
             return response()->json(['message' => 'APPGOG 授权未就绪：请在原生后台修复插件并完成两阶段激活', 'code' => 'APPGOG_LICENSE_REQUIRED'], 423)->header('Cache-Control', 'no-store');
         }
+        $isThemeUpload = in_array($path, [$prefixes[0] . '/theme/upload', $prefixes[1] . '/theme/upload'], true);
+        $uploadedTheme = $isThemeUpload ? self::uploadedTheme($request) : null;
         $response = $next($request);
-        if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300
-            && in_array($path, [$prefixes[0] . '/theme/upload', $prefixes[1] . '/theme/upload'], true)) {
+        if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300 && $isThemeUpload) {
             // Publish activation assets without enabling the theme or executing PHP from uploaded ZIPs.
             try {
                 $payload = json_decode($response->getContent(), true);
                 if (is_array($payload) && in_array($payload['status'] ?? null, [false, 'fail', 'error'], true)) return $response;
+                // Only a successful authenticated replacement of this exact theme may
+                // retire its old protected enrollment. Manual manifest deletion still
+                // leaves the enrollment in place and therefore remains fail-closed.
+                if ($uploadedTheme !== null && self::manifest($uploadedTheme) === null) self::forgetEnrollment($uploadedTheme);
                 $prepared = [];
                 $themes = app(\App\Services\ThemeService::class);
                 foreach ($themes->getList() as $name => $config) {

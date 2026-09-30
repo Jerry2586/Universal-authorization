@@ -3,6 +3,7 @@ namespace Illuminate\Support\Facades {
     class File {
         public static function ensureDirectoryExists($path, $mode=0755, $recursive=true) { if (!is_dir($path)) mkdir($path,$mode,$recursive); }
         public static function copyDirectory($from,$to) { self::ensureDirectoryExists($to); foreach(scandir($from) as $name) { if($name==='.'||$name==='..')continue; if(is_dir($from.'/'.$name))self::copyDirectory($from.'/'.$name,$to.'/'.$name);else copy($from.'/'.$name,$to.'/'.$name); } return true; }
+        public static function delete($path) { return !is_file($path) || unlink($path); }
     }
     class Crypt { public static function encryptString($value){return base64_encode($value);} public static function decryptString($value){return base64_decode($value,true);} }
     class Log { public static function error(...$args){} }
@@ -28,12 +29,14 @@ namespace {
     class Headers {public function __construct(public $type='text/html'){} public function get($key,$default=''){return $this->type;}public function remove($key){}public function set($key,$value){$this->values[$key]=$value;}public $values=[]; }
     class Response {public $headers; public function __construct(public $body='',public $status=200){$this->headers=new Headers;}public function header(...$args){return $this;}public function json($body,$status=200){return new self(json_encode($body),$status);}public function getStatusCode(){return $this->status;}public function getContent(){return $this->body;}public function setContent($body){$this->body=$body;}}
     function response($body='',$status=200){return new Response($body,$status);}
-    class Request {public function __construct(public $route,public $input=[],public $host='demo.example.com',public $verb='POST'){}public function path(){return $this->route;}public function input($name){return $this->input[$name]??null;}public function getHost(){return $this->host;}public function method(){return $this->verb;}}
+    class Upload {public function __construct(public $filename){}public function path(){return $this->filename;}}
+    class Request {public function __construct(public $route,public $input=[],public $host='demo.example.com',public $verb='POST',public $upload=null){}public function path(){return $this->route;}public function input($name){return $this->input[$name]??null;}public function file($name){return $name==='file'?$this->upload:null;}public function getHost(){return $this->host;}public function method(){return $this->verb;}}
     function check($truth,$message){if(!$truth)throw new \RuntimeException($message);$GLOBALS['cases']++;}
     function write($path,$value){\Illuminate\Support\Facades\File::ensureDirectoryExists(dirname($path));file_put_contents($path,$value);}
     function b64($bytes){return rtrim(strtr(base64_encode($bytes),'+/','-_'),'=');}
     function token($payload,$secret){$text=b64(json_encode(['alg'=>'EdDSA','typ'=>'APPGOG-ACT','v'=>1])).'.'.b64(json_encode($payload));return $text.'.'.b64(sodium_crypto_sign_detached($text,$secret));}
     function pem($raw){return "-----BEGIN PUBLIC KEY-----\n".base64_encode(hex2bin('302a300506032b6570032100').$raw)."\n-----END PUBLIC KEY-----\n";}
+    function themeZip($path,$name){$zip=new \ZipArchive;check($zip->open($path,\ZipArchive::CREATE|\ZipArchive::OVERWRITE)===true,'fixture zip unavailable');$zip->addFromString($name.'/config.json',json_encode(['name'=>$name,'version'=>'9.9.9']));$zip->addFromString($name.'/dashboard.blade.php','fixture');$zip->close();return new Upload($path);}
     $cases=0;
     write(base_path('bootstrap/app.php'), '<?php $app = new stdClass; return $app;');
     $original=file_get_contents(base_path('bootstrap/app.php'));
@@ -95,18 +98,31 @@ namespace {
     $native=$request('secure',[],'demo.example.com','GET');
     check(substr_count($native->body,'data-appgog-admin-entry')===1,'recovery script absent');
     write($manifestPath,json_encode($m));
-    $upload=(new \Appgog\Host\Guard)->handle(new Request('api/v2/secure/theme/upload'),fn()=>response()->json(['status'=>'success','data'=>true,'message'=>'uploaded']));
+    $protectedUpload=themeZip(base_path('protected-theme.zip'),'APPGOG');
+    $sourceUpload=themeZip(base_path('source-theme.zip'),'APPGOG');
+    $otherUpload=themeZip(base_path('other-theme.zip'),'Other');
+    $upload=(new \Appgog\Host\Guard)->handle(new Request('api/v2/secure/theme/upload',[], 'demo.example.com','POST',$protectedUpload),fn()=>response()->json(['status'=>'success','data'=>true,'message'=>'uploaded']));
     check($upload->status===200 && is_file(public_path('theme/APPGOG/appgog-license/build.json')),'activation assets not published');
     $uploadPayload=json_decode($upload->body,true);
     check(($uploadPayload['data']??null)===true && ($uploadPayload['message']??'')==='uploaded','native upload fields lost');
     check(($uploadPayload['appgog_activation']??null)===['schema'=>1,'themes'=>[['name'=>'APPGOG','appgog_activation'=>['schema'=>1]]]],'protected theme metadata missing or unrelated theme tagged');
     check(($upload->headers->values['Cache-Control']??'')==='no-store','upload metadata cached');
-    $failure=(new \Appgog\Host\Guard)->handle(new Request('api/v1/secure/theme/upload'),fn()=>response()->json(['status'=>'fail','message'=>'invalid zip']));
+    unlink($manifestPath);
+    $failure=(new \Appgog\Host\Guard)->handle(new Request('api/v1/secure/theme/upload',[],'demo.example.com','POST',$sourceUpload),fn()=>response()->json(['status'=>'fail','message'=>'invalid zip']));
     check(!isset(json_decode($failure->body,true)['appgog_activation']),'failed upload decorated as installed');
+    check(\Appgog\Host\Guard::enrolled('APPGOG'),'failed source replacement cleared enrollment');
+    $unrelated=(new \Appgog\Host\Guard)->handle(new Request('api/v2/secure/theme/upload',[],'demo.example.com','POST',$otherUpload),fn()=>response()->json(['status'=>'success','data'=>true]));
+    check($unrelated->status===200 && \Appgog\Host\Guard::enrolled('APPGOG'),'unrelated source upload cleared APPGOG enrollment');
+    check($request('api/v2/secure/theme/saveThemeConfig',['name'=>'APPGOG'])->status===423,'unrelated source upload bypassed gate');
+    $source=(new \Appgog\Host\Guard)->handle(new Request('api/v2/secure/theme/upload',[],'demo.example.com','POST',$sourceUpload),fn()=>response()->json(['status'=>'success','data'=>true]));
+    check($source->status===200 && !\Appgog\Host\Guard::enrolled('APPGOG'),'successful source replacement kept stale enrollment');
+    check($request('api/v2/secure/theme/saveThemeConfig',['name'=>'APPGOG'])->status===200,'source replacement remained authorization-gated');
+    write($manifestPath,json_encode($m));
     $beforeUploadState=file_get_contents($statePath);
     unlink($statePath);
-    $first=(new \Appgog\Host\Guard)->handle(new Request('api/v1/secure/theme/upload'),fn()=>response()->json(['status'=>'success','data'=>true]));
+    $first=(new \Appgog\Host\Guard)->handle(new Request('api/v1/secure/theme/upload',[],'demo.example.com','POST',$protectedUpload),fn()=>response()->json(['status'=>'success','data'=>true]));
     check($first->status===200 && isset(json_decode($first->body,true)['appgog_activation']),'first upload requires editor registration');
+    check(\Appgog\Host\Guard::enrolled('APPGOG'),'protected reupload did not restore enrollment');
     check(!is_file($statePath),'upload granted activation');
     check($request('api/v2/secure/theme/getThemeConfig',['name'=>'APPGOG'])->status===423,'unactivated upload configuration accessible');
     write($statePath,$beforeUploadState);
@@ -144,6 +160,11 @@ namespace {
     $generatedProtectionMigration=require $argv[1].'/database/migrations/2026_09_29_000014_generated_js_protection.php';
     $generatedProtectionMigration->up();$generatedProtectionMigration->up();
     check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'generated protection migration changed identity or activation');
-    check(count($GLOBALS['reloadCallbacks'])===14,'upgrade did not schedule runtime reload');
+    $sourceReplacementMigration=require $argv[1].'/database/migrations/2026_09_30_000015_source_upload_replacement.php';
+    $sourceReplacementMigration->up();$sourceReplacementMigration->up();
+    check(file_get_contents(storage_path('app/private/appgog-host/Guard.php'))===file_get_contents($argv[1].'/Host/Guard.php'),'source replacement guard upgrade not persisted');
+    check(file_get_contents($identityPath)===$identityBefore && file_get_contents($statePath)===$stateBefore,'source replacement migration changed identity or activation');
+    check(file_get_contents($enrollmentPath)===$enrollmentBefore,'source replacement migration changed enrollment');
+    check(count($GLOBALS['reloadCallbacks'])===16,'upgrade did not schedule runtime reload');
     echo "$cases host guard cases passed\n";
 }

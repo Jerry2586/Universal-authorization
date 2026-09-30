@@ -29,7 +29,7 @@ class Plugin extends AbstractPlugin
         $this->filter('guest_comm_config', function (array $config): array {
             $config['appgog_license_bridge'] = [
                 'installed' => true,
-                'version' => '1.1.7',
+                'version' => '1.1.8',
             ];
             return $config;
         });
