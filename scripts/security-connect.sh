@@ -3,13 +3,15 @@ set -eu
 umask 077
 CLOUD_URL=''
 BUNDLE=''
+CA_PIN=''
 INSTALL_DIR=${APPGOG_INSTALL_DIR:-/opt/appgog}
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --cloud-url) CLOUD_URL=${2:?missing URL}; shift 2 ;;
     --bundle-dir) BUNDLE=${2:?missing bundle}; shift 2 ;;
+    --ca-sha256) CA_PIN=${2:?missing CA fingerprint}; shift 2 ;;
     --install-dir) INSTALL_DIR=${2:?missing directory}; shift 2 ;;
-    *) echo 'Usage: sudo sh scripts/security-connect.sh --cloud-url https://security.example.com:9443 --bundle-dir /root/security-bundle [--install-dir /opt/appgog]' >&2; exit 2 ;;
+    *) echo 'Usage: sudo sh scripts/security-connect.sh --cloud-url https://security.example.com:9443 --bundle-dir /root/security-bundle --ca-sha256 FINGERPRINT [--install-dir /opt/appgog]' >&2; exit 2 ;;
   esac
 done
 [ "$(id -u)" -eq 0 ] || { echo 'Root required' >&2; exit 1; }
@@ -28,6 +30,19 @@ docker compose version >/dev/null 2>&1 || { echo 'Docker Compose v2 is required'
 case "$CLOUD_URL" in https://*/*|https://*@*|https://*\?*|https://*\#*|'') echo 'Use an HTTPS origin without path, userinfo or query' >&2; exit 2 ;; https://*) ;; *) echo 'HTTPS required' >&2; exit 2 ;; esac
 printf '%s' "$CLOUD_URL" | LC_ALL=C grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$' || { echo 'Invalid cloud hostname or port' >&2; exit 2; }
 [ -d "$BUNDLE" ] && [ -s "$BUNDLE/ca.crt" ] && [ -f "$INSTALL_DIR/shared/.env" ] && [ -f "$INSTALL_DIR/current/compose.yaml" ] || { echo 'Install the platform and provide the cloud credential bundle first' >&2; exit 1; }
+# First trust is pinned through an independent channel; routine re-pairing cannot replace the CA.
+new_ca=$(openssl x509 -in "$BUNDLE/ca.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+printf '%s' "$new_ca" | LC_ALL=C grep -Eq '^[a-f0-9]{64}$' || { echo 'Invalid cloud CA certificate' >&2; exit 1; }
+if [ -s "$INSTALL_DIR/shared/security/ca.crt" ]; then
+  old_ca=$(openssl x509 -in "$INSTALL_DIR/shared/security/ca.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+  [ "$new_ca" = "$old_ca" ] || { echo 'Cloud CA changed. Stop pairing; use an audited offline CA recovery procedure' >&2; exit 1; }
+else
+  [ -n "$CA_PIN" ] || { echo 'First pairing requires --ca-sha256 from the independent cloud console' >&2; exit 1; }
+fi
+if [ -n "$CA_PIN" ]; then
+  pin=$(printf '%s' "$CA_PIN" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+  [ "$pin" = "$new_ca" ] || { echo 'Cloud CA fingerprint mismatch; existing deployment unchanged' >&2; exit 1; }
+fi
 ROLE=$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' "$INSTALL_DIR/shared/.env" | tail -n 1)
 [ -n "$ROLE" ] || ROLE=all
 case "$ROLE" in all) ROLES='reader license build' ;; license) ROLES='reader license' ;; build) ROLES='build' ;; *) echo 'Invalid installed role' >&2; exit 1 ;; esac

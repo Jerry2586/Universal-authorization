@@ -170,10 +170,14 @@ appgog migration-rollback-import <迁移ID>
 2. 在授权后台的服务节点管理接口 `POST /web/admin/cms/nodes` 分别创建 `build-center` 与 `worker` 两个活跃节点。每个 `node_credential` 只返回一次；在私有的 root 可读文件写入两行 `BUILD_CENTER_NODE_TOKEN=BLD_...` 和 `WORKER_NODE_TOKEN=WRK_...`，权限设为 `0600`。如轮换，先更新打包机凭据再验证，然后撤销旧节点；服务端单个节点的令牌轮换是即时撤销，须安排维护窗口。
 3. 在打包机用同一版本的稳定入口，追加 `--role build --auth-domain auth.example.com --build-domain build.example.com --node-credentials-file /root/appgog-node.env`。旧版本没有分机角色时不能在原卷上直接切换。安装器会检测当前角色，升级时保留原 `.env`、业务卷、云端证书与令牌。
 4. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
-5. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo sh scripts/security-connect.sh --cloud-url https://security.example.com:9443 --bundle-dir /root/对应配对包`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
-6. 业务机执行 `sudo sh scripts/security-doctor.sh`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
+5. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo appgog security-connect https://security.example.com:9443 /root/对应配对包 <独立获取的CA-SHA256指纹>`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
+6. 业务机执行 `sudo appgog security-doctor`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
 
-授权机和打包机均由宿主 systemd 代理开机执行首次固定范围扫描，此后约每五分钟复查；本地管理员手动检查共用同一锁和冷却。节点定期将状态、检查时间和计数经 mTLS 上报云端，详情仅留本机；云端超过十五分钟未见有效扫描或超过两分钟未收到节点报告时标为过期。云端的宿主结果是节点自报，不能独立证明节点未失守；此候选没有自动删除、隔离或重建机制。请先完成 Linux systemd、ClamAV、两/三机 TLS 与恢复演练再用于生产。`r`n`r`n每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
+授权机和打包机均由宿主 systemd 代理开机执行首次固定范围扫描，此后约每五分钟复查；本地管理员手动检查共用同一锁和冷却。节点定期将状态、检查时间和计数经 mTLS 上报云端，详情仅留本机；云端超过十五分钟未见有效扫描或超过两分钟未收到节点报告时标为过期。云端的宿主结果是节点自报，不能独立证明节点未失守；此候选没有自动删除、隔离或重建机制。请先完成 Linux systemd、ClamAV、两/三机 TLS 与恢复演练再用于生产。
+
+每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
+每台业务机的 `sudo appgog` 菜单 17 和命令 `sudo appgog security-local scan|status` 分别启动本地固定范围扫描、查看报告；云端身份诊断与配对独立显示。首次配对需要由云端服务器控制台取得 CA 证书 SHA-256 指纹，不能仅从收到的身份包读取后照抄；若已有 CA 变化，配对会拒绝，必须离线核对事件并安排审计后的 CA 恢复。普通网络失联只报告异常，不永久锁死管理入口。配对中的重启会短暂停服务，应在维护窗口进行。
+
 ## 私有 GitHub Release 的在线安全更新
 
 仓库设为私有后，公开的 `releases/latest/download` 和第三方代理不能获取附件。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：

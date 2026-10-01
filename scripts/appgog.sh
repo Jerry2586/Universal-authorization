@@ -214,6 +214,51 @@ header() {
   printf '安全状态：%s；DNS/HTTPS/证书请运行 appgog doctor\n\n' "$(config_security_state)"
 }
 
+installed_role() {
+  case "$(env_value APPGOG_DEPLOYMENT_ROLE)" in all|license|build) env_value APPGOG_DEPLOYMENT_ROLE ;; '') printf 'all' ;; *) printf 'unknown' ;; esac
+}
+
+security_local() {
+  [ "$(id -u)" -eq 0 ] || { say_error '宿主检查需要 root 或 sudo。'; return 1; }
+  sh "$ROOT_DIR/scripts/security-local.sh" "$1"
+}
+
+security_cloud_doctor() {
+  [ "$(id -u)" -eq 0 ] || { say_error '读取云端身份需要 root 或 sudo。'; return 1; }
+  APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/security-doctor.sh"
+}
+
+security_connect() {
+  [ "$(id -u)" -eq 0 ] || { say_error '配对操作需要 root 或 sudo。'; return 1; }
+  [ "$#" -eq 3 ] || { say_error '需要云端 HTTPS 地址和私有身份包目录。'; return 2; }
+  APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/security-connect.sh" --cloud-url "$1" --bundle-dir "$2" --ca-sha256 "$3" --install-dir "$INSTALL_ROOT"
+}
+
+security_menu() {
+  while :; do
+    header
+    printf '%s\n' "安全中心（本机角色：$(installed_role)）" \
+      '  1. 查看宿主检查和本地查杀结果' \
+      '  2. 立即运行固定范围本地检查' \
+      '  3. 检验云端加密身份和节点状态' \
+      '  4. 与独立云端配对（需要离线交付的身份包）' \
+      '  0. 返回主菜单'
+    tty_read '请选择：'
+    case "$REPLY_VALUE" in
+      1) security_local status; pause_menu ;;
+      2) security_local scan; pause_menu ;;
+      3) security_cloud_doctor; pause_menu ;;
+      4)
+        tty_read '云端 HTTPS 地址（含端口）：'; cloud_origin=$REPLY_VALUE
+        tty_read '私有身份包目录绝对路径：'; bundle_dir=$REPLY_VALUE
+        tty_read '通过独立渠道取得的云端 CA SHA-256 指纹：'; ca_fingerprint=$REPLY_VALUE
+        [ -n "$cloud_origin" ] && [ -n "$bundle_dir" ] && confirm '确认进行加密配对并重启业务容器？' && security_connect "$cloud_origin" "$bundle_dir" "$ca_fingerprint"
+        pause_menu ;;
+      0|'') return 0 ;;
+      *) say_error '无效选项。'; pause_menu ;;
+    esac
+  done
+}
 show_status() {
   header
   run_docker status
@@ -365,6 +410,7 @@ main_menu() {
       ' 14. 卸载系统（保留数据）' \
       ' 15. 导出控制中心安全回滚包（当前 Active 目标）' \
       ' 16. 导入控制中心安全回滚包（旧源服务器）' \
+      ' 17. 安全中心：本地查杀与云端加密对接' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -390,6 +436,7 @@ main_menu() {
       14) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
       15) migration_rollback_export; pause_menu ;;
       16) say_warn '请使用命令 appgog migration-rollback-import <迁移ID> 执行，避免输错文件。'; pause_menu ;;
+      17) security_menu ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -419,6 +466,9 @@ APPGOG 管理命令
                            在当前 Active 目标停止写入并导出最终加密快照
   appgog migration-rollback-import <迁移ID> [备份] [密钥] [manifest]
                            在旧源固定 rollback-inbox 中校验并导入最终快照
+  appgog security-local status|scan  宿主检查结果或立即启动固定范围检查
+  appgog security-doctor             验证云端身份和节点状态
+  appgog security-connect URL BUNDLE_DIR CA_SHA256  用独立身份包配对云端
   appgog doctor          系统诊断
   appgog diagnostics     导出不含凭证的诊断报告
   appgog repair          修复配置与密钥权限
@@ -430,6 +480,9 @@ EOF
 case "${1:-menu}" in
   menu) main_menu ;;
   install|status|start|stop|restart|backup|credentials|doctor|diagnostics) run_docker "$1" ;;
+  security-local) shift; security_local "${1:-}" ;;
+  security-doctor) security_cloud_doctor ;;
+  security-connect) [ "$#" -eq 4 ] || { usage >&2; exit 2; }; security_connect "$2" "$3" "$4" ;;
   update) online_update ;;
   repair-source) repair_source ;;
   uninstall) confirm '确认卸载程序但保留全部业务数据？' && uninstall_keep_data ;;

@@ -39,7 +39,7 @@ function buildReleaseFixture() {
     'compose.yaml',
     'scripts/install-linux.sh',
     'scripts/security-connect.sh',
-    'scripts/security-doctor.sh',
+    'scripts/security-doctor.sh', 'scripts/security-local.sh',
     'scripts/security-agent.js',
   ]) zipEntries.set(`${releaseName}/${path}`, readFileSync(join(root, path)));
   const zip = writeZip(zipEntries, { date: new Date('2026-09-25T00:00:00Z') });
