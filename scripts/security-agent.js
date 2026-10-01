@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { request as httpsRequest } from 'node:https';
+import { localSecurityScan } from '../apps/license-api/src/modules/operations/local-security-scan.js';
 
 const EXCLUDED = new Set(['.git', 'node_modules', 'var', '.codex', '.codex-tmp']);
 export function inventory(root, paths = ['apps', 'packages', 'scripts', 'Dockerfile', 'compose.yaml']) {
@@ -27,12 +28,27 @@ export function inventory(root, paths = ['apps', 'packages', 'scripts', 'Dockerf
   for (const path of paths) walk(path);
   return files;
 }
+export function summarizeHostScan(report) {
+  if (report.state !== 'finished') return { state: report.state === 'running' || report.state === 'idle' ? report.state : 'unavailable', checked_at: null };
+  const checkedAt = typeof report.checked_at === 'string' && Number.isFinite(Date.parse(report.checked_at)) ? report.checked_at : null;
+  if (!checkedAt || !Array.isArray(report.checks) || !report.checks.length) return { state: 'unavailable', checked_at: null };
+  const states = report.checks.map(item => item.state);
+  const state = states.includes('finding') ? 'finding' : states.includes('unavailable') ? 'unavailable'
+    : states.includes('warning') ? 'warning' : 'ok';
+  return { state, checked_at: checkedAt, counts: Object.fromEntries(['ok', 'warning', 'finding', 'unavailable']
+    .map(kind => [kind, states.filter(value => value === kind).length])) };
+}
 export async function sendReport(env = process.env) {
   const target = new URL('/v1/report', env.SECURITY_CLOUD_URL);
   if (target.protocol !== 'https:' || !env.SECURITY_CLOUD_TOKEN || env.SECURITY_CLOUD_TOKEN.length < 32) {
     throw Error('安全中心连接配置无效');
   }
-  const payload = JSON.stringify({ files: inventory(env.SECURITY_SCAN_ROOT ?? process.cwd()) });
+  const report = { files: inventory(env.SECURITY_SCAN_ROOT ?? process.cwd()) };
+  if (env.SECURITY_REPORT_HOST === 'true') {
+    const local = await localSecurityScan('status', { APPGOG_HOST_SCAN_SOCKET: env.SECURITY_HOST_SCAN_SOCKET });
+    report.host_scan = summarizeHostScan(local);
+  }
+  const payload = JSON.stringify(report);
   if (payload.length > 262144) throw Error('上报文件过多，请缩小监测范围');
   return new Promise((resolve, reject) => {
     const req = httpsRequest(target, { method: 'POST', timeout: 10000, rejectUnauthorized: true,

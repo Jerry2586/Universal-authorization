@@ -2,7 +2,7 @@
 
 日期：2026-10-01。
 
-APPGOG打包授权系统 v1.2.63 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
+APPGOG打包授权系统 v1.2.64 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
 
 ## 1. 前置条件
 
@@ -38,7 +38,7 @@ sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
 配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.63 sh ./install.sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.64 sh ./install.sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。
@@ -173,7 +173,7 @@ appgog migration-rollback-import <迁移ID>
 5. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo sh scripts/security-connect.sh --cloud-url https://security.example.com:9443 --bundle-dir /root/对应配对包`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
 6. 业务机执行 `sudo sh scripts/security-doctor.sh`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
 
-每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
+授权机和打包机均由宿主 systemd 代理开机执行首次固定范围扫描，此后约每五分钟复查；本地管理员手动检查共用同一锁和冷却。节点定期将状态、检查时间和计数经 mTLS 上报云端，详情仅留本机；云端超过十五分钟未见有效扫描或超过两分钟未收到节点报告时标为过期。云端的宿主结果是节点自报，不能独立证明节点未失守；此候选没有自动删除、隔离或重建机制。请先完成 Linux systemd、ClamAV、两/三机 TLS 与恢复演练再用于生产。`r`n`r`n每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
 ## 私有 GitHub Release 的在线安全更新
 
 仓库设为私有后，公开的 `releases/latest/download` 和第三方代理不能获取附件。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：

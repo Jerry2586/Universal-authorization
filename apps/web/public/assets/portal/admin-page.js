@@ -168,6 +168,10 @@ export function createAdminPage(shell) {
       set('security-identity', '双重身份验证通过');
       set('security-build-probe', probe(data.nodes?.['build-center']?.probe?.state));
       set('security-license-probe', probe(data.nodes?.['license-center']?.probe?.state));
+      const hostLabel = host => !host?.fresh ? '未上报 / 检查过期' : ({ ok: '固定范围未发现异常', warning: '配置需复核', finding: '发现异常', unavailable: '检查不可用' })[host.state] || '检查未知';
+      set('security-build-host-scan', hostLabel(data.nodes?.['build-center']?.host_scan));
+      const host = data.nodes?.['license-center']?.host_scan;
+      set('security-host-scan', hostLabel(host));
       const reports = Object.values(data.nodes ?? {});
       const stale = reports.some(item => !item.report_fresh);
       const changed = reports.some(item => item.integrity?.state === 'changed');
@@ -179,7 +183,7 @@ export function createAdminPage(shell) {
     } catch (error) {
       set('security-cloud-state', '无法验证'); set('security-cloud-reason', error.message);
       set('security-identity', '验证失败 / 未配置'); set('security-build-probe', '未知');
-      set('security-license-probe', '未知'); set('security-integrity', '未知');
+      set('security-license-probe', '未知'); set('security-integrity', '未知'); set('security-host-scan', '未知'); set('security-build-host-scan', '未知');
       set('security-event-title', '云端状态未知'); set('security-event-message', '无法读取独立云端事件。');
     }
   }

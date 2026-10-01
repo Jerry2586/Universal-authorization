@@ -58,3 +58,34 @@ test('Linux agent Unix socket allows one bounded scan, reports status and enforc
     `  assert call('POST','/scan',b'')[0]==429\n` +
     `  server.shutdown(); thread.join(timeout=2)\n`);
 });
+
+test('periodic scan starts at boot and respects manual scan lock', linuxOnly, () => {
+  runPython(importAgent() + `import threading, time
+` +
+    `counter=[]
+` +
+    `def fixed():
+` +
+    ` counter.append(1)
+` +
+    ` time.sleep(0.12)
+` +
+    ` return [a.check('fixed','ok','done')]
+` +
+    `a.scan=fixed
+` +
+    `stop=threading.Event()
+` +
+    `thread=threading.Thread(target=a.periodic_scans,args=(stop,0.08)); thread.start()
+` +
+    `time.sleep(0.04)
+` +
+    `assert a.STATE['state']=='running' and a.start_scan()==409
+` +
+    `time.sleep(0.18)
+` +
+    `assert a.STATE['state']=='finished' and len(counter)==1 and a.start_scan()==429
+` +
+    `stop.set(); thread.join(timeout=2); assert not thread.is_alive()
+`);
+});

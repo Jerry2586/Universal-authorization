@@ -23,6 +23,7 @@ FILES = ('compose.yaml', 'Dockerfile', 'scripts/install-linux.sh',
 LOCK = threading.Lock()
 STATE = {'state': 'idle', 'checked_at': None, 'checks': []}
 LAST_START = 0.0
+SCAN_INTERVAL_SECONDS = 300
 
 
 def check(name, state, detail):
@@ -183,18 +184,30 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, dict(STATE))
 
     def do_POST(self):
-        global LAST_START
         if self.path != '/scan' or self.headers.get('Content-Length', '0') != '0':
             return self.reply(400, {'error': 'invalid action'})
-        with LOCK:
-            if STATE['state'] == 'running':
-                return self.reply(409, {'state': 'running', 'checks': []})
-            if time.monotonic() - LAST_START < 60:
-                return self.reply(429, {'state': 'unavailable', 'reason': '扫描冷却中'})
-            LAST_START = time.monotonic()
-            STATE.update(state='running', checks=[])
-            threading.Thread(target=run_scan, daemon=True).start()
-        self.reply(202, {'state': 'running'})
+        code = start_scan()
+        self.reply(code, {'state': 'running' if code in (202, 409) else 'unavailable'})
+
+
+def start_scan():
+    """Share one scan lock and cooldown between scheduled and manual requests."""
+    global LAST_START
+    with LOCK:
+        if STATE['state'] == 'running':
+            return 409
+        if time.monotonic() - LAST_START < 60:
+            return 429
+        LAST_START = time.monotonic()
+        STATE.update(state='running', checks=[])
+        threading.Thread(target=run_scan, daemon=True).start()
+        return 202
+
+
+def periodic_scans(stop_event, interval=SCAN_INTERVAL_SECONDS):
+    start_scan()  # No clean result is reported before the first completed check.
+    while not stop_event.wait(interval):
+        start_scan()
 
 
 def main():
@@ -207,6 +220,7 @@ def main():
     with UnixHTTPServer(SOCKET, Handler) as server:
         os.chown(SOCKET, 1000, 1000)  # Dockerfile USER node (UID/GID 1000).
         os.chmod(SOCKET, 0o600)
+        threading.Thread(target=periodic_scans, args=(threading.Event(),), daemon=True).start()
         server.serve_forever()
 
 

@@ -636,7 +636,6 @@ EOF
 }
 
 install_host_security_agent() {
-  [ "$DEPLOYMENT_ROLE" = build ] && return 0
   command -v systemctl >/dev/null 2>&1 || { log '宿主机检查需要 systemd；本机检查显示不可用'; return 0; }
   if ! command -v python3 >/dev/null 2>&1; then
     case "$DISTRO" in

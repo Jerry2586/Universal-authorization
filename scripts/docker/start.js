@@ -35,7 +35,8 @@ const cloudAgentSpecs = process.env.SECURITY_CLOUD_URL ? activeRoles.map(role =>
     SECURITY_CLOUD_CLIENT_CERT: `/app/runtime/security/${role}.crt`,
     SECURITY_CLOUD_CLIENT_KEY: `/app/runtime/security/${role}.key`,
     SECURITY_CLOUD_TOKEN: process.env[`SECURITY_CLOUD_${role.toUpperCase()}_TOKEN`],
-    SECURITY_SCAN_ROOT: '/app' },
+    SECURITY_SCAN_ROOT: '/app', SECURITY_REPORT_HOST: 'true',
+    SECURITY_HOST_SCAN_SOCKET: '/app/runtime/host-security/scan.sock' },
 })) : [];
 const app = supervise({ cwd: '/app', env: baseEnv, probe: () => checkHealth(), specs: [
   ...(deploymentRole !== 'build' ? [{ name: 'license-center', command: process.execPath, args: ['apps/license-api/src/server.js'], env: { APPGOG_ENV_PATH: '/app/runtime/license/runtime.env' }, ready: stopped => waitHttp('http://127.0.0.1:8787/health', stopped) }] : []),

@@ -43,7 +43,7 @@ test('modeled business layouts: three mTLS identities, wrong credentials and out
           if (req.url === '/v1/report') {
             let body = '';
             for await (const chunk of req) body += chunk;
-            reports.push({ actor, files: JSON.parse(body).files });
+            reports.push({ actor, ...JSON.parse(body) });
             res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"state":"matched"}');
           } else {
             res.writeHead(200, { 'content-type': 'application/json' });
@@ -53,7 +53,8 @@ test('modeled business layouts: three mTLS identities, wrong credentials and out
         await new Promise(resolve => server.listen(0, 'localhost', resolve));
         const common = { SECURITY_CLOUD_URL: `https://localhost:${server.address().port}`, SECURITY_CLOUD_CA: join(dir, 'ca.crt') };
         const envFor = role => ({ ...common, SECURITY_CLOUD_CLIENT_CERT: ids[role].cert,
-          SECURITY_CLOUD_CLIENT_KEY: ids[role].key, SECURITY_CLOUD_TOKEN: ids[role].token, SECURITY_SCAN_ROOT: dir });
+          SECURITY_CLOUD_CLIENT_KEY: ids[role].key, SECURITY_CLOUD_TOKEN: ids[role].token, SECURITY_SCAN_ROOT: dir,
+          SECURITY_REPORT_HOST: 'true', SECURITY_HOST_SCAN_SOCKET: join(dir, 'missing.sock') });
         mkdirSync(join(dir, 'apps'));
         writeFileSync(join(dir, 'apps', 'app.js'), 'trusted');
         assert.equal((await cloudSecurityStatus(envFor('reader'))).connected, true);
@@ -64,6 +65,8 @@ test('modeled business layouts: three mTLS identities, wrong credentials and out
         await assert.rejects(sendReport({ ...envFor('license'), SECURITY_CLOUD_TOKEN: 'wrong'.repeat(10) }), /403/);
         assert.equal((await cloudSecurityStatus({ ...envFor('reader'), SECURITY_CLOUD_CA: ids.reader.cert })).connected, false);
         assert.deepEqual(reports.map(report => report.actor), ['license', 'build']);
+        assert.deepEqual(reports.map(report => report.host_scan), [
+          { state: 'unavailable', checked_at: null }, { state: 'unavailable', checked_at: null }]);
         assert.equal(reports[0].files['apps/app.js'], reports[1].files['apps/app.js']);
         await new Promise(resolve => server.close(resolve)); server = null;
         assert.equal((await cloudSecurityStatus(envFor('reader'))).connected, false);
