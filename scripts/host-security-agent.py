@@ -22,7 +22,7 @@ FILES = ('compose.yaml', 'Dockerfile', 'scripts/install-linux.sh',
          'apps/web/public/admin.html')
 LOCK = threading.Lock()
 STATE = {'state': 'idle', 'checked_at': None, 'checks': []}
-LAST_START = 0.0
+LAST_START = None
 SCAN_INTERVAL_SECONDS = 300
 
 
@@ -196,9 +196,10 @@ def start_scan():
     with LOCK:
         if STATE['state'] == 'running':
             return 409
-        if time.monotonic() - LAST_START < 60:
+        now = time.monotonic()
+        if LAST_START is not None and now - LAST_START < 60:
             return 429
-        LAST_START = time.monotonic()
+        LAST_START = now
         STATE.update(state='running', checks=[])
         threading.Thread(target=run_scan, daemon=True).start()
         return 202

@@ -59,8 +59,25 @@ test('Linux agent Unix socket allows one bounded scan, reports status and enforc
     `  server.shutdown(); thread.join(timeout=2)\n`);
 });
 
+test('first scan is allowed when host monotonic uptime is below cooldown', linuxOnly, () => {
+  runPython(importAgent() + `from unittest.mock import patch
+` +
+    `a.scan=lambda: [a.check('fixed','ok','done')]
+` +
+    `with patch.object(a.time, 'monotonic', return_value=10.0):
+` +
+    ` assert a.start_scan()==202
+` +
+    ` assert a.start_scan() in (409,429)
+`);
+});
+
 test('periodic scan starts at boot and respects manual scan lock', linuxOnly, () => {
   runPython(importAgent() + `import threading, time
+` +
+    `started=threading.Event()
+` +
+    `release=threading.Event()
 ` +
     `counter=[]
 ` +
@@ -68,7 +85,9 @@ test('periodic scan starts at boot and respects manual scan lock', linuxOnly, ()
 ` +
     ` counter.append(1)
 ` +
-    ` time.sleep(0.12)
+    ` started.set()
+` +
+    ` assert release.wait(2)
 ` +
     ` return [a.check('fixed','ok','done')]
 ` +
@@ -76,16 +95,30 @@ test('periodic scan starts at boot and respects manual scan lock', linuxOnly, ()
 ` +
     `stop=threading.Event()
 ` +
-    `thread=threading.Thread(target=a.periodic_scans,args=(stop,0.08)); thread.start()
+    `thread=threading.Thread(target=a.periodic_scans,args=(stop,0.08),daemon=True)
 ` +
-    `time.sleep(0.04)
+    `try:
 ` +
-    `assert a.STATE['state']=='running' and a.start_scan()==409
+    ` thread.start()
 ` +
-    `time.sleep(0.18)
+    ` assert started.wait(2) and a.STATE['state']=='running'
 ` +
-    `assert a.STATE['state']=='finished' and len(counter)==1 and a.start_scan()==429
+    ` assert a.start_scan()==409
 ` +
-    `stop.set(); thread.join(timeout=2); assert not thread.is_alive()
+    ` release.set()
+` +
+    ` deadline=time.monotonic()+2
+` +
+    ` while a.STATE['state']=='running' and time.monotonic()<deadline:
+` +
+    `  time.sleep(0.01)
+` +
+    ` assert a.STATE['state']=='finished' and len(counter)==1 and a.start_scan()==429
+` +
+    `finally:
+` +
+    ` release.set(); stop.set(); thread.join(timeout=2)
+` +
+    `assert not thread.is_alive()
 `);
 });
