@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -97,6 +97,16 @@ test('Restore rejects traversal, foreign paths, links and incomplete backups', (
   assert.throws(() => validateEntries(files.slice(1), []));
 });
 
+test('Split build backups restore without license secrets and reject cross-role archives', () => {
+  const buildFiles = ['runtime/build/runtime.env', 'runtime/worker/runtime.env', 'var/artifacts/build.zip'];
+  validateEntries(buildFiles, buildFiles.map(() => '-rw-------'), 'build');
+  assert.throws(() => validateEntries(buildFiles, [], 'license'), /备份缺少/);
+  assert.throws(() => validateEntries(['runtime/build/runtime.env'], [], 'build'), /备份缺少/);
+  assert.throws(() => validateEntries([...buildFiles, 'var/keys/ed25519-private.pem'], [], 'build'), /混入授权中心/);
+  assert.throws(() => validateEntries([...buildFiles, 'runtime/license/identity.json'], [], 'build'), /混入授权中心/);
+  assert.throws(() => validateEntries(buildFiles, [], 'unexpected'), /无效部署角色/);
+});
+
 test('Docker preserves custom policy settings and rejects invalid replacements', t => {
   const root = fixture(t);
   initialize({ root, env: { ...env, OFFLINE_GRACE_SECONDS: '86400', INSTALL_ACTIVATION_WINDOW_SECONDS: '1800', MAX_SOURCE_UPLOAD_BYTES: '1048576' } });
@@ -124,4 +134,53 @@ test('Compose runs exactly one service with persistent HTTPS and loopback upstre
   assert.match(compose, /scripts\/docker\/health.js/);
   assert.match(start, /APPGOG_STARTUP_TIMEOUT_MS/);
   assert.match(start, /启动失败/);
+});
+
+test('Cloud security identities are separate and initialization fails closed on missing reader material', t => {
+  const root = fixture(t);
+  const security = join(root, 'runtime/security');
+  mkdirSync(security, { recursive: true });
+  const cloud = { ...env, SECURITY_CLOUD_URL: 'https://security.appgog.test:9443',
+    SECURITY_CLOUD_LICENSE_TOKEN: 'l'.repeat(40), SECURITY_CLOUD_BUILD_TOKEN: 'b'.repeat(40),
+    SECURITY_CLOUD_READER_TOKEN: 'r'.repeat(40) };
+  for (const name of ['ca.crt', 'license.crt', 'license.key', 'build.crt', 'build.key']) writeFileSync(join(security, name), name);
+  assert.throws(() => initialize({ root, env: cloud }), /reader 身份凭据缺失/);
+  writeFileSync(join(security, 'reader.crt'), 'reader.crt');
+  writeFileSync(join(security, 'reader.key'), 'reader.key');
+  initialize({ root, env: cloud });
+  const runtime = readFileSync(join(root, 'runtime/license/runtime.env'), 'utf8');
+  assert.match(runtime, /SECURITY_CLOUD_CLIENT_CERT=.*reader\.crt/);
+  assert.match(runtime, /SECURITY_CLOUD_CLIENT_KEY=.*reader\.key/);
+  assert.ok(!runtime.includes(cloud.SECURITY_CLOUD_LICENSE_TOKEN));
+  assert.ok(!runtime.includes(cloud.SECURITY_CLOUD_BUILD_TOKEN));
+  assert.ok(runtime.includes(cloud.SECURITY_CLOUD_READER_TOKEN));
+});
+
+test('split build node keeps authorization identity and signing keys off the build host', t => {
+  const root = fixture(t);
+  const buildToken = 'b'.repeat(48);
+  const workerToken = 'w'.repeat(48);
+  const buildEnv = { ...env, APPGOG_DEPLOYMENT_ROLE: 'build', BUILD_CENTER_NODE_TOKEN: buildToken,
+    WORKER_NODE_TOKEN: workerToken };
+  const first = initialize({ root, env: buildEnv });
+  assert.equal(first.identity, null);
+  initialize({ root, env: buildEnv });
+  assert.equal(readFileSync(join(root, 'runtime/build/runtime.env'), 'utf8').includes(buildToken), true);
+  assert.equal(readFileSync(join(root, 'runtime/worker/runtime.env'), 'utf8').includes(workerToken), true);
+  for (const path of ['runtime/license/identity.json', 'runtime/license/runtime.env',
+    'var/keys/ed25519-private.pem', 'var/data/appgog.sqlite']) {
+    assert.equal(existsSync(join(root, path)), false, `unexpected authorization secret: ${path}`);
+  }
+  assert.throws(() => initialize({ root, env: { ...buildEnv, WORKER_NODE_TOKEN: buildToken } }), /独立/);
+  assert.throws(() => initialize({ root, env: { ...buildEnv, BUILD_CENTER_NODE_TOKEN: 'short' } }), /有效/);
+  writeFileSync(join(root, 'runtime/license/identity.json'), '{}');
+  assert.throws(() => initialize({ root, env: buildEnv }), /拒绝转换/);
+});
+
+test('license-only node starts without issuing local build worker secrets', t => {
+  const root = fixture(t);
+  const initialized = initialize({ root, env: { ...env, APPGOG_DEPLOYMENT_ROLE: 'license' } });
+  assert.ok(initialized.identity);
+  assert.equal(existsSync(join(root, 'runtime/build/runtime.env')), false);
+  assert.equal(existsSync(join(root, 'runtime/worker/runtime.env')), false);
 });

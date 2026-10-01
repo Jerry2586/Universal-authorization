@@ -39,7 +39,7 @@ export function createAdminPage(shell) {
     const sections = {
       products: 'product.view', licenses: 'license.view', plans: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view',
       activations: 'activation.view', members: 'admin.manage', audit: 'audit.view',
-      announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage',
+      announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage', security: 'system.manage',
     };
     for (const [view, permission] of Object.entries(sections)) {
       const item = document.querySelector(`.nav-item[data-view="${view}"]`);
@@ -133,6 +133,34 @@ export function createAdminPage(shell) {
     });
   }
 
+  async function renderSecurity() {
+    if (!can('system.manage')) return;
+    const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
+    const probe = value => value === 'healthy' ? '可达 · 健康响应' : value === 'unreachable' ? '不可达 · 请检查' : value === 'unhealthy' ? '健康检查失败' : '未知 / 未配置';
+    set('security-cloud-state', '正在核对');
+    try {
+      const data = await request('/web/admin/security/status');
+      if (!data.connected) throw new Error(data.reason ?? '云端不可达');
+      set('security-cloud-state', '云端已连接');
+      set('security-cloud-reason', `验证于 ${data.generated_at ?? '未知时间'}`);
+      set('security-identity', '双重身份验证通过');
+      set('security-build-probe', probe(data.nodes?.['build-center']?.probe?.state));
+      set('security-license-probe', probe(data.nodes?.['license-center']?.probe?.state));
+      const reports = Object.values(data.nodes ?? {});
+      const stale = reports.some(item => !item.report_fresh);
+      const changed = reports.some(item => item.integrity?.state === 'changed');
+      const matched = reports.length > 0 && reports.every(item => item.integrity?.state === 'matched' && item.report_fresh);
+      set('security-integrity', changed ? '发现文件偏移' : matched ? '可信摘要匹配' : stale ? '报告过期 / 未上报' : '基线未配置');
+      const latest = data.events?.[0];
+      set('security-event-title', latest ? `${latest.node}: ${latest.kind}` : '暂无安全事件');
+      set('security-event-message', latest ? `发生于 ${latest.at}` : '云端当前没有记录到探测或完整性告警。');
+    } catch (error) {
+      set('security-cloud-state', '无法验证'); set('security-cloud-reason', error.message);
+      set('security-identity', '验证失败 / 未配置'); set('security-build-probe', '未知');
+      set('security-license-probe', '未知'); set('security-integrity', '未知');
+      set('security-event-title', '云端状态未知'); set('security-event-message', '无法读取独立云端事件。');
+    }
+  }
   function bind() {
     productsUi.bind();
     plansUi.bind();
@@ -144,6 +172,23 @@ export function createAdminPage(shell) {
     licenseUi.bind();
     bindLicenseForm();
     bindSettingsForm();
+    void renderSecurity();
+    document.querySelectorAll('[data-security-mode]').forEach((button) => button.addEventListener('click', () => {
+      const mode = button.dataset.securityMode;
+      document.querySelector('[data-security-topology]')?.setAttribute('data-security-topology', mode);
+      document.querySelectorAll('[data-security-mode]').forEach((item) => {
+        const active = item === button;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-pressed', String(active));
+      });
+      for (const item of document.querySelectorAll('.security-node:not(.security-node-cloud) .security-node-footer span')) {
+        item.textContent = mode === 'combined' ? '同一台业务服务器' : '独立业务服务器';
+      }
+      const note = $('security-topology-note');
+      if (note) note.textContent = mode === 'combined'
+        ? '当前展示：打包中心与授权中心部署在同一台干净的 Linux 服务器；安全中心单独部署。'
+        : '当前展示：打包、授权、安全中心分别部署在三台服务器。';
+    }));
     $('open-account-center')?.addEventListener('click', openAccountCenter);
     $('refresh-admin')?.addEventListener('click', refresh);
     for (const id of [
@@ -171,5 +216,5 @@ export function createAdminPage(shell) {
       }
       if(!plans.length)options.append(element('p','暂无可用套餐，请先创建套餐。','muted'));
     }
-    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
+    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); void renderSecurity(); }, applySession, afterSession });
 }

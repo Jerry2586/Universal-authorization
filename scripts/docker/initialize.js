@@ -86,9 +86,35 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   if (controlPlaneStatus(databasePath) === 'fenced') {
     throw new Error('数据库控制中心身份已被 Fenced；禁止直接重启形成双写。请确认目标服务器状态后执行受控回滚。');
   }
+  const deploymentRole = env.APPGOG_DEPLOYMENT_ROLE || 'all';
+  if (!['all', 'license', 'build'].includes(deploymentRole)) throw new Error('APPGOG_DEPLOYMENT_ROLE 只能为 all、license 或 build');
   const authUrl = origin(env.AUTH_DOMAIN || env.PUBLIC_BASE_URL || '', '授权中心');
   const buildUrl = origin(env.BUILD_DOMAIN || env.BUILD_CENTER_PUBLIC_URL || '', '打包中心');
   if (authUrl === buildUrl) throw new Error('授权中心与打包中心需要两个不同域名');
+  if (deploymentRole === 'build') {
+    const buildToken = env.BUILD_CENTER_NODE_TOKEN;
+    const workerToken = env.WORKER_NODE_TOKEN;
+    if (!validSecret(buildToken) || !validSecret(workerToken) || buildToken === workerToken) {
+      throw new Error('打包分机必须提供两个独立、有效的节点凭证');
+    }
+    if (existsSync(identityPath) || existsSync(databasePath) || existsSync(privatePath)) {
+      throw new Error('已有授权中心身份或数据，拒绝转换为打包分机');
+    }
+    const cloudUrl = env.SECURITY_CLOUD_URL || '';
+    if (cloudUrl) {
+      if (new URL(cloudUrl).protocol !== 'https:' || !existsSync(join(configRoot, 'security/ca.crt')) ||
+          !existsSync(join(configRoot, 'security/build.crt')) || !existsSync(join(configRoot, 'security/build.key')) ||
+          !validSecret(env.SECURITY_CLOUD_BUILD_TOKEN)) throw new Error('打包分机云端身份不完整');
+    }
+    const values = { NODE_ENV: 'production', BUILD_CENTER_PORT: 8788, INTERNAL_LICENSE_URL: authUrl,
+      BUILD_CENTER_NODE_TOKEN: buildToken };
+    atomic(join(configRoot, 'build/runtime.env'), envFile(values));
+    atomic(join(configRoot, 'worker/runtime.env'), envFile({ NODE_ENV: 'production',
+      INTERNAL_LICENSE_URL: authUrl, PUBLIC_BASE_URL: authUrl, WORKER_NODE_TOKEN: workerToken,
+      WORKER_REMOTE_TRANSFER: 'true', WORKER_ID: 'worker-remote-1', ARTIFACT_ROOT: '/app/var/artifacts' }));
+    return { authUrl, buildUrl, deploymentRole, identity: null };
+  }
+
   const existing = existsSync(identityPath);
   const legacy = !existing && [databasePath, privatePath, publicPath].some(existsSync);
   let identity;
@@ -132,8 +158,27 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   identity.keyFingerprint = fingerprint;
   atomic(identityPath, JSON.stringify(identity, null, 2));
   if (migratedLicenseEncryptionKey) console.log('APPGOG 已为旧部署补齐独立的 LICENSE_ENCRYPTION_KEY；原身份、签名密钥和历史数据保持不变。');
+  const cloudUrl = env.SECURITY_CLOUD_URL ?? '';
+  const securityRoot = join(configRoot, 'security');
+  let cloud = {};
+  if (cloudUrl) {
+    if (new URL(cloudUrl).protocol !== 'https:') throw new Error('SECURITY_CLOUD_URL 必须使用 HTTPS');
+    const ca = join(securityRoot, 'ca.crt');
+    if (!existsSync(ca)) throw new Error('云端 CA 证书缺失');
+    for (const role of deploymentRole === 'all' ? ['license', 'build', 'reader'] : ['license', 'reader']) {
+      if (!validSecret(env[`SECURITY_CLOUD_${role.toUpperCase()}_TOKEN`])
+        || !existsSync(join(securityRoot, `${role}.crt`)) || !existsSync(join(securityRoot, `${role}.key`))) {
+        throw new Error(`云端 ${role} 身份凭据缺失`);
+      }
+    }
+    cloud = { SECURITY_CLOUD_URL: cloudUrl, SECURITY_CLOUD_CA: ca,
+      SECURITY_CLOUD_CLIENT_CERT: join(securityRoot, 'reader.crt'),
+      SECURITY_CLOUD_CLIENT_KEY: join(securityRoot, 'reader.key'),
+      SECURITY_CLOUD_TOKEN: env.SECURITY_CLOUD_READER_TOKEN ?? '' };
+    if (!validSecret(cloud.SECURITY_CLOUD_TOKEN)) throw new Error('云端后台读取凭据缺失');
+  }
   const shared = { NODE_ENV: 'production', PUBLIC_BASE_URL: authUrl };
-  atomic(join(configRoot, 'license/runtime.env'), envFile({ ...shared, ...identity.options, ...identity.secrets,
+  atomic(join(configRoot, 'license/runtime.env'), envFile({ ...shared, ...cloud, ...identity.options, ...identity.secrets,
     ADMIN_USERNAME: identity.adminUsername, ADMIN_PASSWORD: identity.adminPassword,
     APPGOG_ROLE: 'license-center', EMBEDDED_WORKER: 'false', PORT: 8787,
     BUILD_CENTER_PUBLIC_URL: `${buildUrl}/build`, DATABASE_PATH: '/app/var/data/appgog.sqlite',
@@ -145,14 +190,14 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     NOTIFICATION_SIGNING_PUBLIC_KEY_PATH: '/app/var/keys/notification-ed25519-public.pem',
     ARTIFACT_ROOT: '/app/var/artifacts', UPLOAD_ROOT: '/app/var/uploads', UPDATE_CONTROL_PATH: '/app/var/update-control',
   }));
-  atomic(join(configRoot, 'build/runtime.env'), envFile({ NODE_ENV: 'production', BUILD_CENTER_PORT: 8788,
+  if (deploymentRole === 'all') atomic(join(configRoot, 'build/runtime.env'), envFile({ NODE_ENV: 'production', BUILD_CENTER_PORT: 8788,
     INTERNAL_LICENSE_URL: 'http://127.0.0.1:8787', INTERNAL_SERVICE_TOKEN: identity.secrets.INTERNAL_SERVICE_TOKEN }));
-  atomic(join(configRoot, 'worker/runtime.env'), envFile({ ...shared, INTERNAL_LICENSE_URL: 'http://127.0.0.1:8787',
+  if (deploymentRole === 'all') atomic(join(configRoot, 'worker/runtime.env'), envFile({ ...shared, INTERNAL_LICENSE_URL: 'http://127.0.0.1:8787',
     WORKER_TOKEN: identity.secrets.WORKER_TOKEN, WORKER_REMOTE_TRANSFER: 'false', WORKER_ID: 'worker-compose-1', ARTIFACT_ROOT: '/app/var/artifacts' }));
   const credentialsPath = join(configRoot, 'license/initial-admin.txt');
   if (!existsSync(credentialsPath)) atomic(credentialsPath, `管理员账号：${identity.adminUsername}\n初始密码：${identity.adminPassword}\n后台修改过密码后，以后台的新密码为准。此文件仅记录初始凭证。\n`);
   console.log(existing ? 'APPGOG 初始化检查完成，保留现有密钥与数据。' : legacy ? 'APPGOG 旧部署凭证已导入，密钥保持不变。' : 'APPGOG 首次初始化完成，数据库将在授权服务首次启动时创建。');
-  return { authUrl, buildUrl, identity };
+  return { authUrl, buildUrl, deploymentRole, identity };
 }
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   try { initialize(); } catch (error) { console.error(error.message); process.exitCode = 1; }

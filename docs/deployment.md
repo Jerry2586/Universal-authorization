@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-09-26。
+日期：2026-10-01。
 
-APPGOG打包授权系统 v1.2.60 的正式生产路线只有统一 Docker Compose + Caddy。授权中心、客户打包中心、构建 Worker 和 Caddy 自动 HTTPS 均运行在唯一的 appgog 容器内；不再维护宝塔、aaPanel、1Panel、外部 Nginx/OpenResty 反向代理或面板证书流程。
+APPGOG打包授权系统 v1.2.61 的正式生产路线支持授权与打包同机或分机；每台业务服务器使用自己的单容器 Docker Compose + Caddy。云端安全中心必须运行在独立服务器。当前源码尚未完成签名发布和 Linux 实机验收，以下分机与云端步骤只用于候选版本验证。
 
 ## 1. 前置条件
 
@@ -17,32 +17,31 @@ APPGOG打包授权系统 v1.2.60 的正式生产路线只有统一 Docker Compos
 
 首次安装会检查端口、公网 IPv4 与 DNS。已有系统升级复用 `.env` 中的现有域名，不执行首装专用的 DNS 指向强制匹配，但仍执行容器健康检查和公网 HTTPS 检查。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
 
-## 2. 一条命令安装与升级（唯一推荐入口）
+## 2. 私有仓库安装与升级
 
-进入服务器 root 终端，执行：
+从已登录的私有 GitHub Release 下载正式签名 `.run`，上传到服务器并在 root 终端执行（替换版本号）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh
+sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
 ```
 
-若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。之后一直使用上面的固定命令。升级以签名 Latest Release 为准，单独推送 Git 源码不会产生正式更新。
+若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。首次升级至支持私有源的正式签名版后，按本页末尾配置只读 Release 令牌。后续从已登录的 GitHub Release 下载 `install.sh` 并执行 `sudo sh ./install.sh`，或使用后台更新助手；单独推送源码不会产生正式更新。
 
-这条命令长期不变。首次运行时，引导器识别系统和 CPU，补齐 CA、OpenSSL、下载与校验工具，获取最新正式 Release，验证 Ed25519 清单签名及 `.run` SHA-256，再由正式安装器补齐 Docker Engine、Compose v2.24+ 和 Buildx，提示输入两个真实域名并启动唯一的 appgog 容器。
+正式签名版的 `.run` 首次运行时识别系统和 CPU，补齐 CA、OpenSSL、下载与校验工具，获取最新正式 Release，验证 Ed25519 清单签名及 `.run` SHA-256，再由正式安装器补齐 Docker Engine、Compose v2.24+ 和 Buildx，提示输入两个真实域名并启动唯一的 appgog 容器。
 
-今后发布更高版本后逐字重跑同一句命令：引导器读取 `/opt/appgog/current/package.json`，版本相同且运行健康时安全退出；目标版本更高则下载、验签，把整套程序写入新的 `/opt/appgog/releases/<版本>`，创建完整备份并原子切换 `current`。`.env`、日志与备份位于 `/opt/appgog/shared`，数据库、业务签名密钥、上传与构建成品保留在 Docker 数据卷；程序文件强制覆盖为发布版本，升级失败恢复旧链接和旧服务。目标版本更低时默认拒绝降级。
+今后发布更高版本后，使用签名 Release 的 `install.sh` 或后台助手：引导器读取 `/opt/appgog/current/package.json`，版本相同且运行健康时安全退出；目标版本更高则下载、验签，把整套程序写入新的 `/opt/appgog/releases/<版本>`，创建完整备份并原子切换 `current`。`.env`、日志与备份位于 `/opt/appgog/shared`，数据库、业务签名密钥、上传与构建成品保留在 Docker 数据卷；程序文件强制覆盖为发布版本，升级失败恢复旧链接和旧服务。目标版本更低时默认拒绝降级。
 
 默认安装到 /opt/appgog，安装全局 appgog 管理命令。要求 x86_64/amd64 或 aarch64/arm64、至少 4 GiB 可用磁盘、可联网的软件源和镜像仓库。已有 Docker 会复用，缺失插件从其已配置软件源补齐，无法获得受支持版本时明确报错。
 
-仓库是公开的。固定入口通过 jsDelivr 获取；正式版本同时发布源码 ZIP、版本化 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定 `install.sh`。引导器不信任下载站返回的文件名或哈希，只接受通过仓库内置公钥验证的签名清单。
+仓库是私有的，引导脚本必须从已登录的私有 Release 获取；正式版本同时发布源码 ZIP、版本化 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定 `install.sh`。引导器不信任下载站返回的文件名或哈希，只接受通过仓库内置公钥验证的签名清单。
 
-下载正式包时默认依次尝试自有国内源、GitHub Release、`ghfast.top` 和 `gh-proxy.com`。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
+配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh \
-  | APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.60 sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.61 sh ./install.sh
 ```
 
-完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可把固定命令结尾改为 `| sh -s -- --cloudflare-token TOKEN`；Token 仅存在于当前进程，不写入 `.env` 或日志。
+完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。
 
 构建前会真实拉取 Node 与 Caddy 镜像。当前配置或 Docker Hub 不可达时，安装器自动尝试 DaoCloud 官方公开镜像的推荐前缀与兼容前缀，只有两个镜像都可用才写回 `.env`。用户显式传入 `--docker-registry-mirror`、`--node-image` 或 `--caddy-image` 时保持人工配置优先；显式镜像不可用会停止并给出日志，不会静默替换。不会关闭 TLS 或启用不安全仓库。
 
@@ -101,7 +100,7 @@ appgog doctor
 正式跨版本更新直接重跑与首次安装完全相同的命令：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh
+sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
 ```
 
 引导器只接受签名有效且版本更高的正式包。每次更新把完整程序部署到全新版本目录，用户、Key、公告、运营设置、上传、成品和数据库保持不变，其他程序文件由发布包完整覆盖。更新流程会先创建备份、构建版本化镜像、原子切换程序并执行健康检查；失败时自动恢复旧程序链接并尝试恢复上一健康镜像。公开管理菜单不提供手工镜像回滚，避免代码与数据库版本被错误组合。若需要灾难恢复，应在空部署中使用完整加密备份和对应签名版本验证后再切换 DNS。禁止执行 `docker compose down -v`。
@@ -163,57 +162,28 @@ appgog migration-rollback-import <迁移ID>
 
 客户 Xboard 服务器迁移还必须单独保留 `storage/app/private/appgog-license-bridge/` 与原 Laravel `APP_KEY`。该目录包含以 `APP_KEY` 加密的安装私钥、安装窗口和激活刷新状态；两者缺一都不能还原原 Installation ID。不要只复制主题目录，也不要在目标服务器自动生成新密钥冒充原安装；跨服务器应使用客户产品迁机流程生成新的 Installation ID 并完成唯一 Active 交接。
 
-## 8. 跨服务器节点
+## 8. 分机部署与独立云端配对（候选版本）
 
-默认正式路线是一台服务器的单容器。以下是高级扩展接口说明，不是默认安装步骤。需要拆分时，授权中心仍是唯一数据和签名源；打包中心与 Worker 使用后台生成的独立节点凭证，通过 HTTPS 下载源码、上传成品，不共享数据库或私钥。
+同机：业务服务器安装 `--role all`（默认），同时运行授权、打包、Worker；安全中心在另一台 Linux 服务器。三服务器：分别在授权机和打包机安装 `--role license`、`--role build`；安全中心在第三台服务器。两种模式的授权数据库、业务签名私钥都只在授权机，打包机仅持有独立服务节点凭据。同机或分机的业务节点由云端的独立证书和令牌识别。
 
-```text
-Caddy / HTTPS
-  ├─ AUTH_DOMAIN  → 127.0.0.1:8787
-  └─ BUILD_DOMAIN → 127.0.0.1:8788
+1. 先在授权机用签名正式版安装授权角色。只有本地源码验证时，才执行版本化 `scripts/install-linux.sh --source-dir <已核验源码目录> --role license --auth-domain auth.example.com --build-domain build.example.com`。正式发布后，请从已登录的私有 GitHub Release 获取签名 `.run` 和 `install.sh`；在服务器配置下面的只读 Release 令牌，再以 `sudo sh ./install.sh --role license --auth-domain auth.example.com --build-domain build.example.com` 执行。两个域名分别解析到对应业务服务器。
+2. 在授权后台的服务节点管理接口 `POST /web/admin/cms/nodes` 分别创建 `build-center` 与 `worker` 两个活跃节点。每个 `node_credential` 只返回一次；在私有的 root 可读文件写入两行 `BUILD_CENTER_NODE_TOKEN=BLD_...` 和 `WORKER_NODE_TOKEN=WRK_...`，权限设为 `0600`。如轮换，先更新打包机凭据再验证，然后撤销旧节点；服务端单个节点的令牌轮换是即时撤销，须安排维护窗口。
+3. 在打包机用同一版本的稳定入口，追加 `--role build --auth-domain auth.example.com --build-domain build.example.com --node-credentials-file /root/appgog-node.env`。旧版本没有分机角色时不能在原卷上直接切换。安装器会检测当前角色，升级时保留原 `.env`、业务卷、云端证书与令牌。
+4. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
+5. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo sh scripts/security-connect.sh --cloud-url https://security.example.com:9443 --bundle-dir /root/对应配对包`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
+6. 业务机执行 `sudo sh scripts/security-doctor.sh`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
 
-build-center ── BUILD_CENTER_NODE_TOKEN ──→ license-center
-build-worker ── WORKER_NODE_TOKEN ────────→ license-center
-```
+每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
+## 私有 GitHub Release 的在线安全更新
 
-当前授权中心使用单机 SQLite。多个授权中心并行写入、自动数据库高可用、对象存储和分布式队列不属于当前版本已验证能力。
-
-## 9. 故障诊断
+仓库设为私有后，公开的 `releases/latest/download` 和第三方代理不能获取附件。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：
 
 ```sh
-sh scripts/docker.sh status
-sh scripts/docker.sh doctor
-docker compose logs --tail=100 appgog
-docker compose exec -T appgog node scripts/docker/health.js
+install -d -m 700 /etc/appgog
+# 用受控编辑器创建 /etc/appgog/github-release.token，文件仅一行令牌
+chown root:root /etc/appgog/github-release.token
+chmod 600 /etc/appgog/github-release.token
+systemctl restart appgog-update-helper.service
 ```
 
-- Caddy 证书失败：确认两个 DNS A 记录、公网 80/443、系统时间和域名拼写；
-- 固定入口下载失败：确认服务器可访问 jsDelivr；也可从最新 Release 下载 `install.sh` 后执行；
-- GitHub Release 不通：引导器会自动尝试内置代理；有自有国内源时设置 `APPGOG_CHINA_RELEASE_BASE`；
-- Docker 基础镜像报 `load metadata for`：直接重跑固定安装命令；自动探测详情在 `/opt/appgog/shared/logs/image-source-*.log`，构建重试详情在 `build-*.log`；
-- 新容器显示 `unhealthy`：安装器允许生产数据库和服务最多 120 秒分别启动，并自动重试一次；仍失败会在回滚前保存 `startup-failure-*.log`，包含健康检查输出和最近 300 行容器日志；
-- `无效的生产凭证 LICENSE_ENCRYPTION_KEY`：v1.2.4 会识别 v1.2.0 以前的身份格式，在尚无加密完整 Key 时自动补齐独立密钥；已有密文时拒绝盲目换钥并要求恢复原身份配置；
-- `no such column: deleted_at`：v1.2.5 会独立核对已有生产数据库的实际表结构，只追加缺少的兼容列并保留管理员、Key、设置和全部业务数据；
-- 签名或 SHA-256 失败：停止安装并检查发布源，不得跳过验证或手动执行可疑文件；
-- 系统工具安装失败：检查发行版软件源和 DNS，修复后重跑完全相同的固定命令；
-- 端口占用：停止原 Web 服务后重试，正式路线不与其他反向代理共享 80/443；
-- 初始化失败：检查 `.env` 是否仍是示例域名、旧密钥是否缺失；不要删除数据卷重试；
-- 任务排队：检查 Worker 日志和授权中心节点凭证；
-- 控制中心迁移失败：查看 `/opt/appgog/shared/logs/migration.log` 和页面 operation 状态；保留源 `.env`、备份、同版本 Release 和全部密钥，不要删除数据卷或重新生成签名身份；
-- 源端显示 Fenced：先确认目标是否已经健康接管。切换后回滚必须先在目标运行 `appgog migration-rollback-export <迁移ID>`，安全传输三份文件后再在旧源运行 `appgog migration-rollback-import <迁移ID>`；不能删除 `source-fenced.json` 强行双写。
-
-## 10. 真实环境验收边界
-
-仓库自动测试覆盖稳定引导器结构、签名与哈希校验入口、配置生成、凭证保留、备份恢复防护、Caddy Compose、两阶段授权和构建流程。正式发布验收还必须在全新 VPS 上执行固定命令完成首装，再在同一 VPS 上逐字重跑同一句命令完成跨版本升级，并确认相同版本重跑安全退出、旧版本被拒绝、业务数据和管理员身份不变。真实公网 DNS、ACME、防火墙、不同 Linux 包管理器和 VPS 网络仍需端到端验证，不能由本地 Windows 测试替代。
-
-## 从系统运维更新客户授权桥
-
-平台升级到 1.2.45 后，在系统运维的「授权桥更新」直接检查、更新或修复中心打包组件。无需输入客户站点地址或管理员凭证，不直接修改已部署客户插件。查看版本与独立日志确认结果，具体边界见 bridge-maintenance.md。
-
-## 1.2.45 授权桥与主题交付
-
-系统页面“授权桥更新”维护打包用组件，源和路径固定，无需输入 Xboard 账号。组件在 ARTIFACT_ROOT 下持久保存并随原制品备份保留；更新/修复均验证正式签名。检查版本、更新、修复不会直接修改客户服务器。客户需安装新构建的主题包及桥 1.1.5；新迁移刷新持久后台入口并触发运行时重载。已有旧 ZIP 不会因中心更新而改写。
-
-### 平台版本锁定（1.2.45）
-
-运营中心“在线安全更新”可锁定当前平台版本。锁定期间检查更新和修复当前版本仍可用，升级须先解除锁定；状态保存在 shared/update-control/version-lock.json，普通重启保留。网页 API、宿主机更新助手和本版安装器共同检查；不会自动升级客户主题或桥。锁定记录异常时禁止部署，可在面板重新设置。若宿主机部署被强制终止而留下 version-change.guard，应先确认没有安装进程，再由管理员移除这个空目录，禁止自动抢锁。套餐模板在“套餐管理”维护，单个客户的打包额度仍在授权管理调整。
+旧的 v1.2.60 更新助手尚不支持私有仓库认证，因此首次切换需要从已登录的 GitHub Release 手动取得**完整签名版本**并走离线 `.run` 升级流程。新版本完成发布、签名附件核验和服务器升级之后，后台“检查更新”才能经只读令牌访问私有 Release。令牌失效会明确视为发布源失败，不允许跳过 Ed25519 和 SHA-256 校验；若仍失败，请检查独立更新日志 `shared/logs/update.log`、令牌范围及服务器 GitHub API 出站连接。

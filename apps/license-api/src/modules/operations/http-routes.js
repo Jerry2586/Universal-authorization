@@ -1,6 +1,12 @@
+import { cloudSecurityStatus } from './security-status.js';
 export async function handleOperationsHttp({
   method, url, request, response, portal, updates, bridgeUpdates, rateLimit, readJson, respondJson, requireSession,
 }) {
+  if (url.pathname === '/web/admin/security/status' && method === 'GET') {
+    requireSession(false, 'system.manage');
+    respondJson(response, 200, await cloudSecurityStatus());
+    return true;
+  }
   if (url.pathname === '/web/admin/system/bridge' && method === 'GET') {
     const session = requireSession(false, 'system.manage');
     respondJson(response, 200, bridgeUpdates.status(session));

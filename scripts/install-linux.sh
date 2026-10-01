@@ -19,6 +19,11 @@ CADDY_IMAGE=${APPGOG_CADDY_IMAGE:-caddy:2.10}
 IMAGE_PULL_TIMEOUT=${APPGOG_IMAGE_PULL_TIMEOUT:-180}
 AUTH_DOMAIN=${AUTH_DOMAIN:-}
 BUILD_DOMAIN=${BUILD_DOMAIN:-}
+DEPLOYMENT_ROLE=${APPGOG_DEPLOYMENT_ROLE:-all}
+ROLE_EXPLICIT=false
+NODE_CREDENTIALS_FILE=''
+BUILD_NODE_TOKEN=''
+WORKER_NODE_TOKEN=''
 SOURCE_DIR=${APPGOG_SOURCE_DIR:-}
 SKIP_DOCKER=${APPGOG_SKIP_DOCKER_INSTALL:-false}
 SKIP_START=false
@@ -46,6 +51,8 @@ APPGOG Linux 一键安装器
   重复运行会保留配置并检查、补齐缺失依赖。
 
 参数：
+  --role all|license|build   同机、授权分机或打包分机（默认 all）
+  --node-credentials-file PATH  打包分机节点凭据文件（仅首次安装）
   --auth-domain DOMAIN       授权中心域名
   --build-domain DOMAIN      客户打包中心域名
   --install-dir PATH         安装目录（默认 /opt/appgog）
@@ -72,6 +79,8 @@ fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --role) [ "$#" -ge 2 ] || fail '--role 缺少值'; DEPLOYMENT_ROLE=$2; ROLE_EXPLICIT=true; shift 2 ;;
+    --node-credentials-file) [ "$#" -ge 2 ] || fail '--node-credentials-file 缺少值'; NODE_CREDENTIALS_FILE=$2; shift 2 ;;
     --auth-domain) [ "$#" -ge 2 ] || fail '--auth-domain 缺少值'; AUTH_DOMAIN=$2; shift 2 ;;
     --build-domain) [ "$#" -ge 2 ] || fail '--build-domain 缺少值'; BUILD_DOMAIN=$2; shift 2 ;;
     --install-dir) [ "$#" -ge 2 ] || fail '--install-dir 缺少值'; INSTALL_DIR=$2; shift 2 ;;
@@ -96,6 +105,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$SOURCE_MODE" in auto|china|github) ;; *) fail '--source 只能是 auto、china 或 github' ;; esac
+case "$DEPLOYMENT_ROLE" in all|license|build) ;; *) fail '--role 只能是 all、license 或 build' ;; esac
 
 INSTALL_ROOT=$INSTALL_DIR
 RELEASES_DIR=$INSTALL_ROOT/releases
@@ -330,8 +340,8 @@ configure_cloudflare_dns() {
   [ -n "$CLOUDFLARE_API_TOKEN" ] || return 0
   ip=$(public_ipv4)
   [ -n "$ip" ] || fail '无法检测公网 IPv4，不能自动配置 Cloudflare DNS。'
-  cloudflare_upsert_record "$AUTH_DOMAIN" "$ip"
-  cloudflare_upsert_record "$BUILD_DOMAIN" "$ip"
+  [ "$DEPLOYMENT_ROLE" = build ] || cloudflare_upsert_record "$AUTH_DOMAIN" "$ip"
+  [ "$DEPLOYMENT_ROLE" = license ] || cloudflare_upsert_record "$BUILD_DOMAIN" "$ip"
   CLOUDFLARE_API_TOKEN=''
   unset CLOUDFLARE_API_TOKEN
 }
@@ -354,6 +364,8 @@ preflight_network() {
       public_ip=$(public_ipv4)
       [ -n "$public_ip" ] || fail '无法检测服务器公网 IPv4；可在离线预装时显式使用 --skip-dns-check。'
       for domain in "$AUTH_DOMAIN" "$BUILD_DOMAIN"; do
+        [ "$DEPLOYMENT_ROLE" = build ] && [ "$domain" = "$AUTH_DOMAIN" ] && continue
+        [ "$DEPLOYMENT_ROLE" = license ] && [ "$domain" = "$BUILD_DOMAIN" ] && continue
         resolved=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)
         [ -n "$resolved" ] || fail "域名 $domain 尚未解析。请先配置 DNS A 记录指向 $public_ip。"
         printf '%s\n' "$resolved" | grep -Fx "$public_ip" >/dev/null || fail "域名 $domain 未指向本机公网地址 $public_ip。"
@@ -520,6 +532,10 @@ write_env() {
   umask 077
   printf 'AUTH_DOMAIN=%s\nBUILD_DOMAIN=%s\nAPPGOG_VERSION=%s\nAPPGOG_IMAGE=appgog-platform:%s\nAPPGOG_SHARED_DIR=%s\nAPPGOG_NODE_IMAGE=%s\nAPPGOG_CADDY_IMAGE=%s\nLICENSE_SERVICE_ENABLED=true\nCUSTOMER_LOGIN_ENABLED=true\nBUILD_CENTER_ENABLED=true\nNEW_BUILDS_ENABLED=true\nWORKER_ENABLED=true\n' \
     "$AUTH_DOMAIN" "$BUILD_DOMAIN" "$package_version" "$package_version" "$SHARED_DIR" "$NODE_IMAGE" "$CADDY_IMAGE" > "$SHARED_DIR/.env"
+  printf 'APPGOG_DEPLOYMENT_ROLE=%s\n' "$DEPLOYMENT_ROLE" >> "$SHARED_DIR/.env"
+  if [ "$DEPLOYMENT_ROLE" = build ]; then
+    printf 'BUILD_CENTER_NODE_TOKEN=%s\nWORKER_NODE_TOKEN=%s\n' "$BUILD_NODE_TOKEN" "$WORKER_NODE_TOKEN" >> "$SHARED_DIR/.env"
+  fi
   chmod 600 "$SHARED_DIR/.env" 2>/dev/null || true
 }
 
@@ -620,7 +636,12 @@ EOF
 }
 
 print_result() {
-  cat <<EOF
+  if [ "$DEPLOYMENT_ROLE" = build ]; then
+    printf '\nAPPGOG 打包分机已安装：%s\n打包入口：https://%s/build\n授权上游：https://%s\n运行诊断：appgog doctor\n' "$INSTALL_ROOT" "$BUILD_DOMAIN" "$AUTH_DOMAIN"
+  elif [ "$DEPLOYMENT_ROLE" = license ]; then
+    printf '\nAPPGOG 授权分机已安装：%s\n管理后台：https://%s/admin\n打包上游：https://%s/build\n运行诊断：appgog doctor\n' "$INSTALL_ROOT" "$AUTH_DOMAIN" "$BUILD_DOMAIN"
+  else
+    cat <<EOF
 
 ============================================================
 APPGOG 安装完成
@@ -635,10 +656,12 @@ APPGOG 安装完成
 单一 appgog 容器，Caddy 自动申请并续期 HTTPS 证书。
 ============================================================
 EOF
+  fi
 }
-
 wait_public_https() {
   for endpoint in "https://$AUTH_DOMAIN/health" "https://$BUILD_DOMAIN/health"; do
+    [ "$DEPLOYMENT_ROLE" = build ] && [ "$endpoint" = "https://$AUTH_DOMAIN/health" ] && continue
+    [ "$DEPLOYMENT_ROLE" = license ] && [ "$endpoint" = "https://$BUILD_DOMAIN/health" ] && continue
     attempts=0
     until curl -fsS --max-time 10 "$endpoint" >/dev/null 2>&1; do
       attempts=$((attempts + 1))
@@ -657,6 +680,10 @@ if [ -f "$SHARED_DIR/.env" ]; then
   UPGRADE_MODE=true
   AUTH_DOMAIN=$(sed -n 's/^AUTH_DOMAIN=//p' "$SHARED_DIR/.env" | tail -n 1)
   BUILD_DOMAIN=$(sed -n 's/^BUILD_DOMAIN=//p' "$SHARED_DIR/.env" | tail -n 1)
+  saved_role=$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' "$SHARED_DIR/.env" | tail -n 1)
+  [ -n "$saved_role" ] || saved_role=all
+  [ "$ROLE_EXPLICIT" = false ] || [ "$DEPLOYMENT_ROLE" = "$saved_role" ] || fail '现有安装角色不同；禁止在已有数据上直接转换角色。'
+  DEPLOYMENT_ROLE=$saved_role
   if [ "$NODE_IMAGE_EXPLICIT" = false ]; then
     existing_node_image=$(sed -n 's/^APPGOG_NODE_IMAGE=//p' "$SHARED_DIR/.env" | tail -n 1)
     [ -z "$existing_node_image" ] || NODE_IMAGE=$existing_node_image
@@ -671,6 +698,17 @@ install_packages
 prompt_domain AUTH_DOMAIN '授权中心域名'
 prompt_domain BUILD_DOMAIN '客户打包中心域名'
 [ "$AUTH_DOMAIN" != "$BUILD_DOMAIN" ] || fail '两个域名必须不同。'
+if [ "$DEPLOYMENT_ROLE" = build ] && [ "$UPGRADE_MODE" = false ]; then
+  [ -f "$NODE_CREDENTIALS_FILE" ] || fail '打包分机首次安装需要 --node-credentials-file。'
+  [ ! -L "$NODE_CREDENTIALS_FILE" ] || fail '节点凭据文件不能是符号链接。'
+  [ "$(stat -c %u "$NODE_CREDENTIALS_FILE")" = 0 ] || fail '节点凭据文件必须属于 root。'
+  case "$(stat -c %a "$NODE_CREDENTIALS_FILE")" in 400|600) ;; *) fail '节点凭据文件权限只能为 0400 或 0600。' ;; esac
+  BUILD_NODE_TOKEN=$(sed -n 's/^BUILD_CENTER_NODE_TOKEN=//p' "$NODE_CREDENTIALS_FILE" | tail -n 1)
+  WORKER_NODE_TOKEN=$(sed -n 's/^WORKER_NODE_TOKEN=//p' "$NODE_CREDENTIALS_FILE" | tail -n 1)
+  printf '%s' "$BUILD_NODE_TOKEN" | LC_ALL=C grep -Eq '^BLD_[A-Za-z0-9_-]{40,}$' || fail '打包中心节点凭据格式无效。'
+  printf '%s' "$WORKER_NODE_TOKEN" | LC_ALL=C grep -Eq '^WRK_[A-Za-z0-9_-]{40,}$' || fail '构建 Worker 节点凭据格式无效。'
+  [ "$BUILD_NODE_TOKEN" != "$WORKER_NODE_TOKEN" ] || fail '两个节点必须使用独立凭据。'
+fi
 install_docker
 configure_registry_mirror
 configure_cloudflare_dns

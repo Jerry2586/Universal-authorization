@@ -265,9 +265,13 @@ doctor() {
     free -h 2>/dev/null || true
   fi
   if [ -f .env ]; then
+    role=$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' .env | tail -n 1)
+    [ -n "$role" ] || role=all
     auth_domain=$(sed -n 's/^AUTH_DOMAIN=//p' .env | tail -n 1)
     build_domain=$(sed -n 's/^BUILD_DOMAIN=//p' .env | tail -n 1)
     for domain in "$auth_domain" "$build_domain"; do
+      [ "$role" = build ] && [ "$domain" = "$auth_domain" ] && continue
+      [ "$role" = license ] && [ "$domain" = "$build_domain" ] && continue
       if getent ahostsv4 "$domain" >/dev/null 2>&1; then
         echo "[正常] DNS A 记录可解析：$domain"
       else
@@ -290,14 +294,18 @@ doctor() {
       fi
     done
   fi
-  if compose run --rm --no-deps -T --entrypoint sh appgog -c '
-    test -s /app/var/keys/ed25519-private.pem && test -s /app/var/keys/ed25519-public.pem &&
-    test "$(stat -c %a /app/var/keys/ed25519-private.pem 2>/dev/null)" = 600
-  ' >/dev/null 2>&1; then
-    echo '[正常] Ed25519 签名密钥完整，私钥权限为 600'
+  if [ "${role:-all}" != build ]; then
+    if compose run --rm --no-deps -T --entrypoint sh appgog -c '
+      test -s /app/var/keys/ed25519-private.pem && test -s /app/var/keys/ed25519-public.pem &&
+      test "$(stat -c %a /app/var/keys/ed25519-private.pem 2>/dev/null)" = 600
+    ' >/dev/null 2>&1; then
+      echo '[正常] Ed25519 签名密钥完整，私钥权限为 600'
+    else
+      echo '[失败] 签名密钥缺失、损坏或私钥权限不安全'
+      failed=1
+    fi
   else
-    echo '[失败] 签名密钥缺失、损坏或私钥权限不安全'
-    failed=1
+    echo '[正常] 打包分机不持有授权签名私钥'
   fi
   latest_backup=$(find backups -maxdepth 1 -type f -name 'appgog-*.tar.gz.enc' -print 2>/dev/null | sort -r | head -n 1 || true)
   if [ -n "$latest_backup" ]; then echo "[正常] 最近加密备份：$latest_backup"

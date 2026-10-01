@@ -47,7 +47,7 @@ case "$DEFAULT_INSTALL_DIR" in /|''|/opt|/usr|/var|/home) fail '安装目录过�
 
 install_bootstrap_tools() {
   missing=false
-  for tool in curl openssl sha256sum sed grep sort mktemp; do
+  for tool in curl openssl sha256sum sed grep sort mktemp jq; do
     command -v "$tool" >/dev/null 2>&1 || missing=true
   done
   [ -s /etc/ssl/certs/ca-certificates.crt ] || [ -s /etc/pki/tls/certs/ca-bundle.crt ] || missing=true
@@ -56,20 +56,62 @@ install_bootstrap_tools() {
   case "$DISTRO" in
     ubuntu|debian)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl openssl coreutils grep sed
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl openssl coreutils grep sed jq
       ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
-      "$manager" install -y ca-certificates curl openssl coreutils grep sed
+      "$manager" install -y ca-certificates curl openssl coreutils grep sed jq
       ;;
     *) fail "不支持自动补齐环境的发行版：$DISTRO" ;;
   esac
 }
 
-download_file() {
-  url=$1
-  output=$2
-  curl -fsSL --connect-timeout 15 --max-time 300 --retry 2 --retry-delay 2 "$url" -o "$output"
+
+appgog_private_release_enabled() {
+  [ -s "${APPGOG_GITHUB_TOKEN_FILE:-/etc/appgog/github-release.token}" ]
+}
+
+# Only the GitHub API receives this token. Curl suppresses Authorization across origins on redirects.
+appgog_private_release_file() (
+  version=$1; name=$2; destination=$3
+  case "$name" in
+    release-manifest.json|release-manifest.json.sig|APPGOG-Packaging-Licensing-System-*.run|APPGOG-Packaging-Licensing-System-*.zip) ;;
+    *) return 1 ;;
+  esac
+  token_file=${APPGOG_GITHUB_TOKEN_FILE:-/etc/appgog/github-release.token}
+  [ -r "$token_file" ] || return 1
+  [ "$(stat -c %u "$token_file")" = "$(id -u)" ] || return 1
+  case "$(stat -c %a "$token_file")" in 600|400) ;; *) return 1 ;; esac
+  umask 077
+  scratch=$(mktemp -d) || return 1
+  trap 'rm -rf "$scratch"' 0
+  token=$(tr -d '\r\n' < "$token_file")
+  case "$token" in ''|*[!A-Za-z0-9_]*) return 1 ;; esac
+  printf 'Authorization: Bearer %s\n' "$token" > "$scratch/headers"
+  unset token
+  api=https://api.github.com/repos/Jerry2586/Universal-authorization/releases
+  if [ "$version" = latest ]; then endpoint=$api/latest
+  else
+    printf "%s\n" "$version" | grep -Eq "^v[0-9]+\.[0-9]+\.[0-9]+$" || return 1
+    endpoint=$api/tags/$version
+  fi
+  curl --proto =https --proto-redir =https -fsSL --connect-timeout 15 --max-time 180 --retry 2 \
+    -H @"$scratch/headers" -H 'Accept: application/vnd.github+json' \
+    "$endpoint" -o "$scratch/release" || return 1
+  asset=$(jq -er --arg name "$name" '.assets[] | select(.name == $name and .state == "uploaded") | .url' "$scratch/release") || return 1
+  printf "%s\n" "$asset" | grep -Eq "^$api/assets/[0-9]+$" || return 1
+  curl --proto =https --proto-redir =https -fsSL --connect-timeout 15 --max-time 300 --retry 2 \
+    -H @"$scratch/headers" -H 'Accept: application/octet-stream' \
+    "$asset" -o "$destination"
+)
+
+appgog_download_release_file() {
+  base=$1; name=$2; destination=$3
+  case "$base" in
+    appgog-private-github:*)
+      appgog_private_release_file "${base#appgog-private-github:}" "$name" "$destination" ;;
+    *) curl --proto =https --proto-redir =https -fsSL --connect-timeout 12 --max-time 180 --retry 2 "${base%/}/$name" -o "$destination" ;;
+  esac
 }
 
 json_string() {
@@ -91,8 +133,8 @@ try_release_base() {
   base=${1%/}
   rm -f "$WORK_DIR/release-manifest.json" "$WORK_DIR/release-manifest.json.sig" "$WORK_DIR/installer.run"
   log "尝试签名发布源：$base"
-  download_file "$base/release-manifest.json" "$WORK_DIR/release-manifest.json" || return 1
-  download_file "$base/release-manifest.json.sig" "$WORK_DIR/release-manifest.json.sig" || return 1
+  appgog_download_release_file "$base" release-manifest.json "$WORK_DIR/release-manifest.json" || return 1
+  appgog_download_release_file "$base" release-manifest.json.sig "$WORK_DIR/release-manifest.json.sig" || return 1
   openssl pkeyutl -verify -pubin -inkey "$WORK_DIR/release-public.pem" -rawin \
     -in "$WORK_DIR/release-manifest.json" -sigfile "$WORK_DIR/release-manifest.json.sig" >/dev/null 2>&1 || return 1
 
@@ -106,7 +148,7 @@ try_release_base() {
   printf '%s\n' "$RUN_SHA256" | grep -Eq '^[0-9a-fA-F]{64}$' || return 1
   [ -z "$REQUESTED_VERSION" ] || [ "${REQUESTED_VERSION#v}" = "$TARGET_VERSION" ] || return 1
 
-  download_file "$base/$RUN_NAME" "$WORK_DIR/installer.run" || return 1
+  appgog_download_release_file "$base" "$RUN_NAME" "$WORK_DIR/installer.run" || return 1
   printf '%s  %s\n' "$RUN_SHA256" "$WORK_DIR/installer.run" | sha256sum -c - >/dev/null 2>&1 || return 1
   SELECTED_RELEASE_BASE=$base
   return 0
@@ -117,6 +159,12 @@ if [ -n "$REQUESTED_VERSION" ]; then version_base_path="releases/download/v${REQ
 [ -n "$GITHUB_RELEASE_BASE" ] || GITHUB_RELEASE_BASE="https://github.com/$PROJECT/$version_base_path"
 
 install_bootstrap_tools
+if appgog_private_release_enabled; then
+  if [ "$SOURCE_MODE" != china ]; then
+    if [ -n "$REQUESTED_VERSION" ]; then GITHUB_RELEASE_BASE="appgog-private-github:v${REQUESTED_VERSION#v}"
+    else GITHUB_RELEASE_BASE=appgog-private-github:latest; fi
+  fi
+fi
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' 0
 trap 'exit 130' 2
@@ -135,6 +183,7 @@ case "$SOURCE_MODE" in
   auto)
     if [ -n "$CHINA_RELEASE_BASE" ] && try_release_base "$CHINA_RELEASE_BASE"; then :
     elif try_release_base "$GITHUB_RELEASE_BASE"; then :
+    elif appgog_private_release_enabled; then fail '私有 GitHub Release 访问或签名校验失败，请检查只读令牌文件和更新日志。'
     elif try_release_base "https://ghfast.top/$GITHUB_RELEASE_BASE"; then :
     elif try_release_base "https://gh-proxy.com/$GITHUB_RELEASE_BASE"; then :
     else fail '国内源、GitHub 与备用代理源均不可用，或发布签名校验失败。'

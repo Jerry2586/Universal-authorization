@@ -5,21 +5,27 @@ import { resolve, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 export const backupRoots = ['var/data', 'var/keys', 'var/artifacts', 'var/uploads', 'runtime/license', 'runtime/build', 'runtime/worker', 'runtime/caddy-data', 'runtime/caddy-config'];
-export function validateEntries(names, listing) {
+export function validateEntries(names, listing, role = 'all') {
+  if (!['all', 'license', 'build'].includes(role)) throw new Error('无效部署角色，拒绝恢复');
   for (const name of names) {
     const clean = name.replace(/\/$/, '');
     if (clean.split('/').some(part => part === '..' || part === '.' || part === '') || clean.includes('\\') ||
       !backupRoots.some(root => clean === root || clean.startsWith(`${root}/`))) throw new Error('备份包含非预期路径');
   }
   if (listing.some(line => !/^[d-]/.test(line))) throw new Error('备份不允许符号链接、硬链接或设备文件');
-  for (const required of ['runtime/license/identity.json', 'var/keys/ed25519-private.pem', 'var/keys/ed25519-public.pem', 'var/data/appgog.sqlite']) {
+  const requiredFiles = role === 'build'
+    ? ['runtime/build/runtime.env', 'runtime/worker/runtime.env']
+    : ['runtime/license/identity.json', 'var/keys/ed25519-private.pem', 'var/keys/ed25519-public.pem', 'var/data/appgog.sqlite'];
+  for (const required of requiredFiles) {
     if (!names.includes(required)) throw new Error(`备份缺少 ${required}`);
   }
+  if (role === 'build' && names.some(name => ['runtime/license/identity.json', 'var/data/appgog.sqlite'].includes(name)
+    || name.startsWith('var/keys/'))) throw new Error('打包分机备份混入授权中心身份或密钥');
 }
-export function restore(archive, root = '/app') {
+export function restore(archive, root = '/app', role = process.env.APPGOG_DEPLOYMENT_ROLE || 'all') {
   const names = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim().split('\n');
   const listing = execFileSync('tar', ['-tvzf', archive], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim().split('\n');
-  validateEntries(names, listing);
+  validateEntries(names, listing, role);
   for (const path of backupRoots) {
     if (readdirSync(join(root, path)).length) throw new Error(`目标 ${path} 非空，禁止覆盖；请在新项目中恢复`);
   }

@@ -80,8 +80,8 @@ check_update() {
   public_key="$CURRENT_LINK/scripts/release-public.pem"
   for base in $(appgog_latest_release_sources); do
     rm -f "$work/manifest" "$work/signature"
-    if curl -fsSL --connect-timeout 12 --max-time 180 --retry 2 "$base/release-manifest.json" -o "$work/manifest" \
-      && curl -fsSL --connect-timeout 12 --max-time 180 --retry 2 "$base/release-manifest.json.sig" -o "$work/signature" \
+    if appgog_download_release_file "$base" release-manifest.json "$work/manifest" \
+      && appgog_download_release_file "$base" release-manifest.json.sig "$work/signature" \
       && openssl pkeyutl -verify -pubin -inkey "$public_key" -rawin -in "$work/manifest" -sigfile "$work/signature" >/dev/null 2>&1; then
       jq -er '.version | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$work/manifest" || continue
       rm -rf "$work"; trap - 0 1 2 15

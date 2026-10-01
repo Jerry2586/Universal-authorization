@@ -168,7 +168,7 @@ export function verifyPackagedArtifacts({
 
   const files = readZip(readFileSync(zipPath), { maxEntries: 1000, maxSingleFileBytes: 32 * 1024 * 1024, maxUncompressedBytes: 256 * 1024 * 1024 });
   const packaged = (path) => files.get(`${releaseName}/${path}`);
-  for (const path of ['AGENTS.md', 'release-contract.json', 'docs/release-policy.md', 'docs/refactor-blueprint.md', 'docs/server-migration-standard.md', 'package.json', 'pnpm-lock.yaml', 'Dockerfile', 'compose.yaml', 'scripts/install-linux.sh']) {
+  for (const path of ['AGENTS.md', 'release-contract.json', 'docs/release-policy.md', 'docs/refactor-blueprint.md', 'docs/server-migration-standard.md', 'package.json', 'pnpm-lock.yaml', 'Dockerfile', 'Caddyfile', 'Caddyfile.license', 'Caddyfile.build', 'compose.yaml', 'scripts/install-linux.sh', 'scripts/security-connect.sh', 'scripts/security-doctor.sh', 'scripts/security-agent.js']) {
     requireCondition(packaged(path), `正式 ZIP 缺少 ${path}`);
   }
   requireCondition(JSON.parse(packaged('package.json').toString('utf8')).version === version, '正式 ZIP 内 package.json 版本不匹配');

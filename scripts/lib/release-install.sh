@@ -22,8 +22,8 @@ download_signed_release_from() {
   source_name=$1; target_dir=$2
   base=$(release_base "$source_name") || return 1
   log "尝试 $source_name 发布源：$base"
-  download_file "$base/release-manifest.json" "$target_dir/release-manifest.json" || return 1
-  download_file "$base/release-manifest.json.sig" "$target_dir/release-manifest.json.sig" || return 1
+  appgog_download_release_file "$base" release-manifest.json "$target_dir/release-manifest.json" || return 1
+  appgog_download_release_file "$base" release-manifest.json.sig "$target_dir/release-manifest.json.sig" || return 1
   script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
   public_key="$script_dir/release-public.pem"
   [ -r "$public_key" ] || fail "缺少发布签名公钥：$public_key"
@@ -34,7 +34,7 @@ download_signed_release_from() {
   SOURCE_SHA256=$(jq -r '.zip_sha256 // empty' "$target_dir/release-manifest.json")
   [ -n "$manifest_version" ] && [ -n "$zip_name" ] || return 1
   [ -z "$VERSION" ] || [ "${VERSION#v}" = "$manifest_version" ] || fail "发布清单版本 $manifest_version 与要求版本 ${VERSION#v} 不一致。"
-  download_file "$base/$zip_name" "$target_dir/source.zip" || return 1
+  appgog_download_release_file "$base" "$zip_name" "$target_dir/source.zip" || return 1
   verify_download "$target_dir/source.zip"
   log "已验证 Ed25519 发布签名与 SHA-256：v$manifest_version"
 }

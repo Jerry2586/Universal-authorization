@@ -33,8 +33,14 @@ function buildReleaseFixture() {
     'package.json',
     'pnpm-lock.yaml',
     'Dockerfile',
+    'Caddyfile',
+    'Caddyfile.license',
+    'Caddyfile.build',
     'compose.yaml',
     'scripts/install-linux.sh',
+    'scripts/security-connect.sh',
+    'scripts/security-doctor.sh',
+    'scripts/security-agent.js',
   ]) zipEntries.set(`${releaseName}/${path}`, readFileSync(join(root, path)));
   const zip = writeZip(zipEntries, { date: new Date('2026-09-25T00:00:00Z') });
   const run = Buffer.from(`#!/bin/sh\nopenssl pkeyutl -verify\n# ${Buffer.from(publicKeyPem).toString('base64')}\n`);

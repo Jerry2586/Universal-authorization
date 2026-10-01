@@ -23,6 +23,7 @@ services:
       - path: .env
         required: false
     environment:
+      APPGOG_DEPLOYMENT_ROLE: ${APPGOG_DEPLOYMENT_ROLE:-all}
       AUTH_DOMAIN: ${AUTH_DOMAIN:-}
       BUILD_DOMAIN: ${BUILD_DOMAIN:-}
       LICENSE_SERVICE_ENABLED: ${LICENSE_SERVICE_ENABLED:-true}
@@ -43,6 +44,7 @@ services:
       - appgog-license-config:/app/runtime/license
       - appgog-build-config:/app/runtime/build
       - appgog-worker-config:/app/runtime/worker
+      - ${APPGOG_SHARED_DIR:-./shared}/security:/app/runtime/security:ro
       - appgog-caddy-data:/app/runtime/caddy-data
       - appgog-caddy-config:/app/runtime/caddy-config
     healthcheck:
