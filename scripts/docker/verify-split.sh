@@ -22,8 +22,7 @@ trap 'exit 130' 2
 trap 'exit 143' 15
 for role in license build; do
   mkdir -p "$test_root/$role/update-control/requests" "$test_root/$role/security"
-  chown -R 1000:1000 "$test_root/$role/update-control"
-  chmod 770 "$test_root/$role/update-control" "$test_root/$role/update-control/requests"
+  chmod 777 "$test_root/$role/update-control" "$test_root/$role/update-control/requests" # isolated disposable CI fixture; production installer uses uid 1000 and 0770
   if [ "$role" = license ]; then http_port=18081; https_port=18444; else http_port=18082; https_port=18445; fi
   cat > "$test_root/$role.env" <<EOF
 AUTH_DOMAIN=sq.appgog.test
