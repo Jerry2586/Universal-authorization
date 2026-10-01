@@ -2,7 +2,7 @@
 
 日期：2026-10-02。
 
-APPGOG打包授权系统 v1.2.67 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
+APPGOG打包授权系统 v1.2.68 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
 
 ## 1. 前置条件
 
@@ -11,7 +11,7 @@ APPGOG打包授权系统 v1.2.67 的正式生产路线使用授权与打包同�
 - 一台全新的 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux 或 Fedora 服务器；
 - root 或 sudo 权限；
 - 两个不同域名，例如 `auth.example.com` 与 `build.example.com`；
-- 两个 DNS A 记录均已指向服务器公网 IPv4；
+- 同机部署时两个 DNS A 记录均指向同一台服务器；分机部署时各自指向对应服务器；
 - TCP 80、TCP 443、UDP 443 可由公网访问，且没有其他程序占用 80/443；
 - 服务器至少能访问 jsDelivr、GitHub Release、配置的国内发布源或内置备用代理之一。
 
@@ -19,7 +19,7 @@ APPGOG打包授权系统 v1.2.67 的正式生产路线使用授权与打包同�
 
 ## 2. 一行命令安装与升级
 
-当前仓库及 Latest Release 可匿名读取。下方三条一行命令分别对应同机、仅授权、仅打包；在 root 终端选本机角色对应的一条执行，每次更新继续输入同一条。无需先上传 `.run`；引导器下载正式 Release 后校验 Ed25519 签名与 `.run` SHA-256，安装器补齐环境并部署。首次安装需两个真实域名与正确 DNS；已安装时保留原角色和域名。若仓库改为私有，匿名命令会失效，需从有权限的 Release 取得签名 `.run` 或提供独立的受控发布源。
+主仓库为私有，公开的短入口只含验签安装器。三条命令分别用于同机、仅授权、仅打包；在 root 终端选择本机角色执行，今后更新重复同一行。短命令固定使用本站域名 `sq.appgog.top` 和 `db.appgog.top`；首次读取私有 Release 时在终端隐藏输入本仓库的只读令牌。主仓库改为公开后同一命令直接读取公开 Release。安装器验证 Ed25519 签名与 `.run` SHA-256，补齐环境并部署。其他域名需传完整 `--role`、`--auth-domain` 和 `--build-domain` 参数。
 
 若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。下载引导器需要 `curl`，下载后缺失的 OpenSSL、校验工具、Docker Engine、Compose v2.24+ 和 Buildx 会自动补齐。仅推送源码不产生正式更新。
 
@@ -32,7 +32,7 @@ APPGOG打包授权系统 v1.2.67 的正式生产路线使用授权与打包同�
 配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.67 sh ./install.sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.68 sh ./install.sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。
@@ -165,7 +165,7 @@ appgog migration-rollback-import <迁移ID>
 两个域名分别解析到授权服务器和打包服务器。在授权服务器执行一行命令（首装和更新都用这一行）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role license --auth-domain auth.example.com --build-domain build.example.com
+curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- license
 ```
 
 `--role license` 仅启动授权服务；`--auth-domain` 是本机授权域名；`--build-domain` 是另一台打包机的域名。安装器只检查本机授权域名的 HTTPS/DNS。运行 `sudo appgog`，选 **18 → 2** 签发打包节点与 Worker 身份，生成 root:600 的私有 JSON 配对包；记录文件只保存两个节点 ID。私有文件不可放入 Git、日志或公开目录。
@@ -175,7 +175,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 在打包服务器执行一行命令（首装和更新都用这一行）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role build --auth-domain auth.example.com --build-domain build.example.com
+curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- build
 ```
 
 `--role build` 启动打包中心和 Worker；`--auth-domain` 指向授权服务器；`--build-domain` 是本机打包域名。尚未配对时只提供健康接口，业务和 Worker 不运行。将授权机的私有配对包经可信通道复制到打包机，设置 root 所有、权限 0600；在打包机运行 `sudo appgog` 选 **18 → 2**，输入配对包绝对路径导入。系统验证授权机公网 TLS、版本和双节点凭据，重启后如打包中心公网健康检查失败则恢复原配置。两台服务器的菜单 **18 → 1** 显示配对状态；授权机菜单 **18 → 3** 撤销身份并阻断远端业务。升级时安排两机维护窗口并保持相同正式版，不能在其中一台直接改为同机角色。菜单 **14** 分别卸载本机程序并保留本机数据；签发中断留下的待核对标记需先在授权后台核对或撤销节点后处理。
@@ -185,10 +185,10 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 两个业务域名都指向这台服务器时，在该服务器执行：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role all --auth-domain auth.example.com --build-domain build.example.com
+curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- all
 ```
 
-`--role all` 同时运行授权、打包和 Worker。菜单 **18** 会显示同机无需配对；现有同机安装升级时保留角色、数据库、签名密钥和配置。当前公开 Release 无需令牌；各节点重复原命令即可获取签名 Latest 版本。仅本地源码验证可用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能代替签名生产包。
+`--role all` 同时运行授权、打包和 Worker。菜单 **18** 会显示同机无需配对；现有同机安装升级时保留角色、数据库、签名密钥和配置。当前私有 Release 首次需要仓库只读令牌；各节点重复原命令即可获取签名 Latest 版本。仅本地源码验证可用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能代替签名生产包。
 
 后续云端安全中心对接步骤：
 1. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
@@ -202,7 +202,7 @@ curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/m
 
 ## 仓库改为私有时的在线安全更新
 
-本节仅在未来把仓库设为私有时适用。当前公开仓库的三条在线命令无需令牌。私有仓库的匿名 `releases/latest/download` 和原始源码地址都不可获取；必须先从有权限的 Release 取得引导器和签名包，或建立独立的受控公开引导器，再配置令牌访问发布附件。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：
+主仓库当前是私有仓库。三条短命令从公开的、只含验签安装器的 `Jerry2586/i` 获取入口。首次安装若检测到 GitHub 私有仓库，安装器在交互式终端隐藏输入只读令牌。改为公开仓库时，同样命令无需令牌。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：
 
 ```sh
 install -d -m 700 /etc/appgog
@@ -212,4 +212,4 @@ chmod 600 /etc/appgog/github-release.token
 systemctl restart appgog-update-helper.service
 ```
 
-旧的 v1.2.60 更新助手尚不支持私有仓库认证，因此首次切换需要从已登录的 GitHub Release 手动取得**完整签名版本**并走离线 `.run` 升级流程。新版本完成发布、签名附件核验和服务器升级之后，后台“检查更新”才能经只读令牌访问私有 Release。令牌失效会明确视为发布源失败，不允许跳过 Ed25519 和 SHA-256 校验；若仍失败，请检查独立更新日志 `shared/logs/update.log`、令牌范围及服务器 GitHub API 出站连接。
+已部署 v1.2.61 及之后的更新助手支持私有仓库认证；首次将令牌放入该文件后可继续使用菜单和后台更新。新版本完成发布、签名附件核验和服务器升级之后，后台“检查更新”才能经只读令牌访问私有 Release。令牌失效会明确视为发布源失败，不允许跳过 Ed25519 和 SHA-256 校验；若仍失败，请检查独立更新日志 `shared/logs/update.log`、令牌范围及服务器 GitHub API 出站连接。

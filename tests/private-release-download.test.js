@@ -43,7 +43,7 @@ function run(source, data, expression) {
   });
 }
 
-test('private GitHub release requires a protected read-only token and never falls back to a proxy', { skip: process.platform === 'win32' }, () => {
+test('private GitHub release requires a protected read-only token and can fall back to public GitHub', { skip: process.platform === 'win32' }, () => {
   const data = fixture();
   const destination = join(data.dir, 'manifest');
   try {
@@ -52,7 +52,10 @@ test('private GitHub release requires a protected read-only token and never fall
       env: { ...process.env, LIBRARY: library, DESTINATION: destination, APPGOG_GITHUB_TOKEN_FILE: data.token, PATH: `${data.bin}:${process.env.PATH}` },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), 'appgog-private-github:latest');
+    assert.deepEqual(result.stdout.trim().split('\n'), [
+      'appgog-private-github:latest',
+      'https://github.com/Jerry2586/Universal-authorization/releases/latest/download',
+    ]);
     assert.equal(readFileSync(destination, 'utf8'), 'signed manifest bytes');
     assert.ok(!(`${result.stdout}${result.stderr}`).includes('github_pat_example123'));
 

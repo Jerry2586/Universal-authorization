@@ -4,18 +4,15 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 const root = resolve(import.meta.dirname, '..');
-const bootstrapUrl = 'https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh';
+const bootstrapUrl = 'https://jerry2586.github.io/i/i.sh';
 const read = file => readFileSync(resolve(root, file), 'utf8');
 
 for (const file of ['README.md', 'docs/deployment.md']) {
   test(file + ' publishes one reusable online command per deployment role', () => {
-    const commands = [...read(file).matchAll(/^curl -fsSL (\S+) \| sh -s -- --role (all|license|build) --auth-domain (\S+) --build-domain (\S+)$/gm)];
+    const commands = [...read(file).matchAll(/^curl -fsSL (\S+) \| sh -s -- (all|license|build)$/gm)];
     assert.equal(commands.length, 3, 'all, license and build must each have a one-line command');
     assert.deepEqual(new Set(commands.map(match => match[2])), new Set(['all', 'license', 'build']));
-    for (const [, url, , authDomain, buildDomain] of commands) {
-      assert.equal(url, bootstrapUrl);
-      assert.ok(authDomain && buildDomain && authDomain !== buildDomain);
-    }
+    for (const [, url] of commands) assert.equal(url, bootstrapUrl);
     assert.doesNotMatch(read(file), /^sudo sh \.\/APPGOG-Packaging-Licensing-System-.*\.run --role /m);
   });
 }

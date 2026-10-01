@@ -42,6 +42,12 @@ for argument do
   esac
 done
 [ -z "$expect" ] || fail "参数 --$expect 缺少值。"
+# Short public commands use the owner's current domains; full flags remain supported.
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    all|license|build) set -- --role "$1" --auth-domain sq.appgog.top --build-domain db.appgog.top ;;
+  esac
+fi
 case "$SOURCE_MODE" in auto|china|github) ;; *) fail '--source 只能是 auto、china 或 github。' ;; esac
 case "$DEFAULT_INSTALL_DIR" in /|''|/opt|/usr|/var|/home) fail '安装目录过于宽泛。' ;; /*) ;; *) fail '安装目录必须是绝对路径。' ;; esac
 
@@ -159,7 +165,36 @@ if [ -n "$REQUESTED_VERSION" ]; then version_base_path="releases/download/v${REQ
 [ -n "$GITHUB_RELEASE_BASE" ] || GITHUB_RELEASE_BASE="https://github.com/$PROJECT/$version_base_path"
 
 install_bootstrap_tools
-if appgog_private_release_enabled; then
+# Public bootstrap contains only the verifier. Private Release requires a repository-scoped
+# read-only token entered on the controlling TTY, never passed in a URL or shell argument.
+PUBLIC_RELEASE_AVAILABLE=false
+if [ "$SOURCE_MODE" != china ] && [ -z "${APPGOG_GITHUB_RELEASE_BASE:-}" ]; then
+  public_status=$(curl --proto =https -sS --connect-timeout 8 --max-time 15 -o /dev/null -w '%{http_code}' \
+    "https://api.github.com/repos/$PROJECT/releases/latest" 2>/dev/null || true)
+  [ "$public_status" != 200 ] || PUBLIC_RELEASE_AVAILABLE=true
+  if [ "$public_status" = 404 ] && ! appgog_private_release_enabled; then
+    [ -c /dev/tty ] || fail '私有仓库首装需要从终端输入只读 GitHub 令牌；请在交互式 root 终端运行。'
+    printf '私有仓库：请输入限定本仓库 Contents: Read 的 GitHub 令牌（输入不可见）：' > /dev/tty
+    token_file=${APPGOG_GITHUB_TOKEN_FILE:-/etc/appgog/github-release.token}
+    [ "$token_file" = /etc/appgog/github-release.token ] || fail '首次输入仅支持默认令牌路径。'
+    install -d -m 700 /etc/appgog
+    umask 077
+    tty_state=$(stty -g < /dev/tty) || fail '无法控制终端回显。'
+    trap 'stty "$tty_state" < /dev/tty 2>/dev/null || true' 0 1 2 15
+    stty -echo < /dev/tty
+    token=''
+    IFS= read -r token < /dev/tty || { printf '\n' > /dev/tty; fail '未收到令牌。'; }
+    stty "$tty_state" < /dev/tty
+    trap - 0 1 2 15
+    printf '\n' > /dev/tty
+    case "$token" in ''|*[!A-Za-z0-9_]*) fail '令牌格式无效。' ;; esac
+    (umask 077; printf '%s\n' "$token" > "$token_file")
+    unset token
+    chown root:root "$token_file" && chmod 600 "$token_file"
+    log '只读令牌已保存为 root:600；后续三条短命令和后台更新共用此文件。'
+  fi
+fi
+if appgog_private_release_enabled && [ "$PUBLIC_RELEASE_AVAILABLE" != true ]; then
   if [ "$SOURCE_MODE" != china ]; then
     if [ -n "$REQUESTED_VERSION" ]; then GITHUB_RELEASE_BASE="appgog-private-github:v${REQUESTED_VERSION#v}"
     else GITHUB_RELEASE_BASE=appgog-private-github:latest; fi

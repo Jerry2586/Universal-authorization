@@ -64,7 +64,8 @@ appgog_download_release_file() {
 
 appgog_latest_release_sources() {
   if appgog_private_release_enabled; then
-    printf '%s\n' 'appgog-private-github:latest'
+    printf '%s\n' 'appgog-private-github:latest' \
+      'https://github.com/Jerry2586/Universal-authorization/releases/latest/download'
     return
   fi
   printf '%s\n' \
