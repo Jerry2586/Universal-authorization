@@ -66,34 +66,53 @@ function buildReleaseFixture() {
   return { assets, publicKeyPem, releaseName, tag };
 }
 
-function mockGitHub(fixture, { latestTag = fixture.tag, names = [...fixture.assets.keys()] } = {}) {
+function mockGitHub(fixture, {
+  latestTag = fixture.tag,
+  names = [...fixture.assets.keys()],
+  maliciousUrl = false,
+  redirect = false,
+  onRequest = () => {},
+} = {}) {
+  const assetPrefix = `${apiBase}/repos/${repository}/releases/assets/`;
   const release = {
     id: 1701,
     tag_name: fixture.tag,
     draft: false,
     prerelease: false,
-    assets: names.map((name) => ({
+    assets: names.map((name, index) => ({
+      id: index + 1,
       name,
+      url: maliciousUrl && index === 0 ? 'https://other.example.test/asset/1' : `${assetPrefix}${index + 1}`,
       browser_download_url: `https://downloads.example.test/${encodeURIComponent(name)}`,
     })),
   };
-  return async (url) => {
+  return async (url, options = {}) => {
+    onRequest(url, options);
     if (url === `${apiBase}/repos/${repository}/releases/tags/${encodeURIComponent(fixture.tag)}`) {
       return Response.json(release);
     }
     if (url === `${apiBase}/repos/${repository}/releases/latest`) {
       return Response.json({ ...release, id: latestTag === fixture.tag ? release.id : 1700, tag_name: latestTag });
     }
-    const prefix = 'https://downloads.example.test/';
-    if (url.startsWith(prefix)) {
-      const name = decodeURIComponent(url.slice(prefix.length));
-      const contents = fixture.assets.get(name);
-      return contents ? new Response(contents) : new Response('missing', { status: 404 });
+    if (url.startsWith(assetPrefix)) {
+      if (options.headers?.Authorization !== 'Bearer test-private-token'
+        || options.headers?.Accept !== 'application/octet-stream') return new Response('forbidden', { status: 403 });
+      const asset = release.assets.find((item) => item.url === url);
+      if (!asset) return new Response('not found', { status: 404 });
+      if (redirect) return new Response(null, { status: 302, headers: { Location: `https://cdn.example.test/${encodeURIComponent(asset.name)}` } });
+      return new Response(fixture.assets.get(asset.name));
     }
+    const prefix = 'https://cdn.example.test/';
+    if (url.startsWith(prefix)) {
+      if (options.headers?.Authorization) return new Response('token leaked', { status: 403 });
+      const name = decodeURIComponent(url.slice(prefix.length));
+      return new Response(fixture.assets.get(name));
+    }
+    // Private repositories return 404 for anonymous browser download URLs.
+    if (url.startsWith('https://downloads.example.test/')) return new Response('missing', { status: 404 });
     return new Response('not found', { status: 404 });
   };
 }
-
 async function verifyFixture(fixture, options = {}) {
   const outputDirectory = mkdtempSync(join(tmpdir(), 'appgog-published-test-'));
   try {
@@ -104,6 +123,7 @@ async function verifyFixture(fixture, options = {}) {
       outputDirectory,
       publicKeyPem: fixture.publicKeyPem,
       fetchFn: mockGitHub(fixture, options),
+      token: options.token ?? 'test-private-token',
     });
   } finally {
     rmSync(outputDirectory, { recursive: true, force: true });
@@ -147,4 +167,24 @@ test('GitHub Release ZIP 或 RUN 哈希被篡改时拒绝', async () => {
     Buffer.from('tampered'),
   ]));
   await assert.rejects(verifyFixture(fixture), /ZIP SHA-256 与发布清单不匹配/);
+});
+
+test('私有 Release 认证 API 下载，跨域重定向不传令牌', async () => {
+  const fixture = buildReleaseFixture();
+  const requests = [];
+  await verifyFixture(fixture, { redirect: true, onRequest: (url, options) => requests.push({ url, options }) });
+  assert.equal(requests.filter(({ url }) => url.startsWith('https://cdn.example.test/')).length, 7);
+  assert.ok(requests.filter(({ url }) => url.startsWith('https://cdn.example.test/'))
+    .every(({ options }) => !options.headers.Authorization && options.redirect === 'manual'));
+  assert.equal(requests.filter(({ url }) => url.startsWith('https://downloads.example.test/')).length, 0);
+});
+
+test('私有 Release 拒绝外部附件 API URL', async () => {
+  const fixture = buildReleaseFixture();
+  await assert.rejects(verifyFixture(fixture, { maliciousUrl: true }), /API 地址不属于当前仓库/);
+});
+
+test('没有令牌时私有 Release 下载明确失败', async () => {
+  const fixture = buildReleaseFixture();
+  await assert.rejects(verifyFixture(fixture, { token: '' }), /附件下载失败 404/);
 });

@@ -36,16 +36,41 @@ async function requestJson(fetchFn, url, token) {
   return response.json();
 }
 
-async function downloadAsset(fetchFn, asset, target, token) {
-  requirePublished(typeof asset.browser_download_url === 'string' && asset.browser_download_url.length > 0,
-    `附件 ${asset.name} 缺少 browser_download_url`);
-  const response = await fetchFn(asset.browser_download_url, {
+async function downloadAsset(fetchFn, asset, target, token, apiBase, repository) {
+  let url;
+  if (token) {
+    const expected = `${apiBase}/repos/${repository}/releases/assets/${asset.id}`;
+    requirePublished(Number.isSafeInteger(asset.id) && asset.id > 0 && asset.url === expected,
+      `附件 ${asset.name} 的 API 地址不属于当前仓库`);
+    url = expected;
+  } else {
+    requirePublished(typeof asset.browser_download_url === 'string' && asset.browser_download_url.length > 0,
+      `附件 ${asset.name} 缺少 browser_download_url`);
+    url = asset.browser_download_url;
+  }
+  let response = await fetchFn(url, {
     headers: {
       Accept: 'application/octet-stream',
       'User-Agent': 'appgog-release-verifier',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
+    redirect: 'manual',
   });
+  // GitHub may redirect the authenticated API request to a short-lived CDN URL.
+  // Follow it without the token, and never permit a downgrade or URL credentials.
+  for (let hop = 0; response.status >= 300 && response.status < 400; hop += 1) {
+    requirePublished(hop < 5, `附件 ${asset.name} 重定向过多`);
+    const location = response.headers.get('location');
+    requirePublished(location, `附件 ${asset.name} 重定向缺少地址`);
+    const next = new URL(location, url);
+    requirePublished(next.protocol === 'https:' && !next.username && !next.password,
+      `附件 ${asset.name} 重定向地址不安全`);
+    url = next.href;
+    response = await fetchFn(url, {
+      headers: { Accept: 'application/octet-stream', 'User-Agent': 'appgog-release-verifier' },
+      redirect: 'manual',
+    });
+  }
   requirePublished(response.ok, `附件下载失败 ${response.status}：${asset.name}`);
   writeFileSync(target, Buffer.from(await response.arrayBuffer()), { mode: 0o600 });
 }
@@ -94,7 +119,7 @@ export async function verifyPublishedRelease({
   try {
     for (const name of expectedNames) {
       const asset = assets.find((candidate) => candidate.name === name);
-      await downloadAsset(fetchFn, asset, join(directory, basename(name)), token);
+      await downloadAsset(fetchFn, asset, join(directory, basename(name)), token, base, repository);
     }
     const manifest = verifyPackagedArtifacts({
       artifactDirectory: directory,
