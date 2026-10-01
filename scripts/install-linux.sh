@@ -673,6 +673,9 @@ Environment=APPGOG_HOST_SCAN_SOCKET=/run/appgog-security/scan.sock
 Environment=PYTHONDONTWRITEBYTECODE=1
 User=root
 ReadWritePaths=/run/appgog-security
+CPUQuota=80%
+MemoryMax=2G
+TasksMax=32
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
@@ -689,6 +692,11 @@ WantedBy=multi-user.target
 EOF
   chmod 644 "$unit_temp"
   mv "$unit_temp" "$unit"
+  if [ ! -e /var/lib/appgog-security/baseline.json ] && [ ! -L /var/lib/appgog-security/baseline.json ]; then
+    APPGOG_INSTALL_ROOT="$INSTALL_ROOT" "$python_bin" "$agent_file" --write-baseline || log "首次安装基线生成失败；面板将显示不可用"
+  else
+    log "保留既有完整性基线；升级后如有差异须核验后再重建基线"
+  fi
   systemctl daemon-reload
   systemctl enable appgog-host-security.service >/dev/null
   if ! systemctl restart appgog-host-security.service; then
@@ -814,9 +822,6 @@ if [ "$SKIP_START" = false ]; then
   install_command
   install_update_helper
   install_host_security_agent
-  if [ "$DEPLOYMENT_ROLE" != build ] && command -v python3 >/dev/null 2>&1; then
-    python3 "$CURRENT_LINK/scripts/host-security-agent.py" --write-baseline || log '安装基线生成失败；面板将显示不可用'
-  fi
 fi
 if [ "$SKIP_START" = false ]; then print_result
 else log '源码与环境已准备；按要求未启动，尚未验证公网 HTTPS。'

@@ -16,6 +16,7 @@ from pathlib import Path
 SOCKET = os.environ.get('APPGOG_HOST_SCAN_SOCKET', '/run/appgog-security/scan.sock')
 ROOT = Path(os.environ.get('APPGOG_INSTALL_ROOT', '/opt/appgog')).resolve()
 BASELINE = Path('/var/lib/appgog-security/baseline.json')
+SCANNER = Path('/usr/bin/clamscan')
 FILES = ('compose.yaml', 'Dockerfile', 'scripts/install-linux.sh',
          'scripts/host-security-agent.py', 'apps/license-api/src/modules/operations/http-routes.js',
          'apps/web/public/admin.html')
@@ -55,6 +56,58 @@ def integrity_check():
         return check('核心文件完整性', 'unavailable', '安装基线缺失或文件不可读')
 
 
+def file_identity(metadata):
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size,
+            metadata.st_mtime_ns, metadata.st_ctime_ns)
+
+
+def malware_scan():
+    """Scan only the release inventory; incomplete coverage is never called clean."""
+    scanner = SCANNER
+    if not scanner.is_file() or not os.access(scanner, os.X_OK):
+        return check('病毒特征查杀', 'unavailable', '未安装 ClamAV；仅支持固定清单中的程序文件，未检查业务数据与整个宿主机')
+    selected = []
+    recorded = {}
+    skipped = 0
+    for name in FILES:
+        path = ROOT / 'current' / name
+        try:
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size >= 8 * 1024 * 1024:
+                skipped += 1
+            else:
+                selected.append(str(path))
+                recorded[str(path)] = file_identity(metadata)
+        except OSError:
+            skipped += 1
+    if not selected:
+        return check('病毒特征查杀', 'unavailable', '固定程序清单均不可扫描；未检查业务数据与整个宿主机')
+    try:
+        result = subprocess.run([
+            str(scanner), '--no-summary', '--infected', '--max-filesize=8M',
+            '--max-scansize=16M', '--max-files=100', '--max-recursion=8',
+            '--alert-exceeds-max=yes',
+            '--follow-file-symlinks=0', '--follow-dir-symlinks=0', *selected,
+        ], capture_output=True, text=True, timeout=45, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return check('病毒特征查杀', 'unavailable', 'ClamAV 启动失败或超过 45 秒；扫描结果未知')
+    scope = f'固定程序文件 {len(selected)}/{len(FILES)} 个，跳过 {skipped} 个；不包含业务数据与宿主机其他目录'
+    try:
+        stable = all(file_identity(Path(path).lstat()) == recorded[path]
+                     for path in selected)
+    except OSError:
+        stable = False
+    if not stable:
+        return check('病毒特征查杀', 'unavailable', '扫描期间文件发生变化，结果不可采信；' + scope)
+    if result.returncode == 1:
+        return check('病毒特征查杀', 'finding', 'ClamAV 报告疑似恶意特征或扫描限制；' + scope + '，需人工复核原始证据')
+    if result.returncode != 0:
+        return check('病毒特征查杀', 'unavailable', 'ClamAV 扫描失败或特征库不可用；' + scope)
+    if skipped:
+        return check('病毒特征查杀', 'unavailable', '部分清单未扫描；' + scope)
+    return check('病毒特征查杀', 'ok', 'ClamAV 在本次固定程序清单中未发现已知特征；' + scope)
+
+
 def scan():
     results = [integrity_check()]
     try:
@@ -92,7 +145,7 @@ def scan():
         results.append(check('监听端口', 'warning' if ports & {21, 23, 2375} else 'ok', 'TCP 监听端口：' + ', '.join(map(str, sorted(ports)[:30]))))
     except (OSError, ValueError, IndexError):
         results.append(check('监听端口', 'unavailable', '无法读取 TCP 监听信息'))
-    results.append(check('病毒特征查杀', 'unavailable', '本次仅执行固定范围宿主机配置检查；病毒特征扫描尚未接入'))
+    results.append(malware_scan())
     return results
 
 

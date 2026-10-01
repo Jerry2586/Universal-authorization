@@ -210,7 +210,7 @@
       <p id="security-local-state" role="status">本机检查代理状态未知</p>
       <p id="security-local-time">尚无检查时间</p>
       <ul id="security-local-results" aria-label="检查项目"></ul>
-      <p class="security-action-note">固定范围只读检查；病毒特征查杀未接入时显示不可用。结果为配置线索，不能代替入侵取证。</p>
+      <p class="security-action-note">固定范围只读检查；ClamAV 未安装、特征库不可用或范围不完整时显示不可用。仅扫描固定程序清单，不覆盖业务数据和整个宿主机，也不能代替入侵取证。</p>
     </section>
     <div class="security-section-title"><div><span>02 / OBSERVABILITY</span><h3>实时核验范围</h3><p>状态由双向 TLS 安全连接返回的云端数据和外部探测提供；未接入前不显示健康结论。</p></div><span class="security-outline-badge">LIVE DATA · 独立监测</span></div>
     <div class="security-monitor-grid">
