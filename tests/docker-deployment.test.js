@@ -6,6 +6,9 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { initialize, secretNames } from '../scripts/docker/initialize.js';
 import { validateEntries } from '../scripts/docker/restore.js';
+import { roleHealthUrls, healthUrls } from '../scripts/docker/health.js';
+import { standbyServer } from '../scripts/docker/unpaired.js';
+import { PACKAGE_VERSION } from '../packages/core/src/version.js';
 
 const env = { AUTH_DOMAIN: 'sq.appgog.test', BUILD_DOMAIN: 'db.appgog.test' };
 function fixture(t) { const root = mkdtempSync(join(tmpdir(), 'appgog-docker-')); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
@@ -183,4 +186,39 @@ test('license-only node starts without issuing local build worker secrets', t =>
   assert.ok(initialized.identity);
   assert.equal(existsSync(join(root, 'runtime/build/runtime.env')), false);
   assert.equal(existsSync(join(root, 'runtime/worker/runtime.env')), false);
+});
+test('standalone build installation is safe before pairing and survives pairing without license secrets', t => {
+  const root = fixture(t);
+  const waiting = { ...env, APPGOG_DEPLOYMENT_ROLE: 'build', APPGOG_BUSINESS_PAIRED: 'false' };
+  const standby = initialize({ root, env: waiting });
+  assert.equal(standby.unpaired, true);
+  assert.equal(existsSync(join(root, 'runtime/build/runtime.env')), false);
+  assert.equal(existsSync(join(root, 'runtime/worker/runtime.env')), false);
+  assert.equal(existsSync(join(root, 'runtime/license/identity.json')), false);
+  assert.deepEqual(roleHealthUrls('build'), [healthUrls.build, healthUrls.caddy]);
+  assert.deepEqual(roleHealthUrls('license'), [healthUrls.license, healthUrls.caddy]);
+  assert.deepEqual(roleHealthUrls('all'), [healthUrls.license, healthUrls.build, healthUrls.caddy]);
+  assert.throws(() => initialize({ root, env: { ...waiting, WORKER_NODE_TOKEN: 'w'.repeat(48) } }), /待配对节点/);
+  const paired = { ...waiting, APPGOG_BUSINESS_PAIRED: 'true', BUILD_CENTER_NODE_TOKEN: 'b'.repeat(48), WORKER_NODE_TOKEN: 'w'.repeat(48) };
+  assert.equal(initialize({ root, env: paired }).unpaired, undefined);
+  assert.equal(readFileSync(join(root, 'runtime/build/runtime.env'), 'utf8').includes(paired.BUILD_CENTER_NODE_TOKEN), true);
+  assert.equal(readFileSync(join(root, 'runtime/worker/runtime.env'), 'utf8').includes(paired.WORKER_NODE_TOKEN), true);
+  assert.equal(existsSync(join(root, 'var/data/appgog.sqlite')), false);
+  initialize({ root, env: paired });
+  assert.equal(readFileSync(join(root, 'runtime/build/runtime.env'), 'utf8').includes(paired.BUILD_CENTER_NODE_TOKEN), true);
+});
+
+test('unpaired build center exposes readiness but rejects all business routes', async t => {
+  const server = standbyServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  const health = await fetch(origin + '/health');
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), { ok: true, paired: false, service: 'appgog-build-standby', version: PACKAGE_VERSION });
+  for (const path of ['/build', '/web/customer/login', '/api/v1/builds/authorize', '/admin']) {
+    const response = await fetch(origin + path);
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error.code, 'BUSINESS_PAIR_REQUIRED');
+  }
 });

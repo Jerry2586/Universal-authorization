@@ -83,6 +83,22 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /wait_public_https/);
 });
 
+test('split role menu restricts authorization-only operations and keeps business pairing available', () => {
+  const manager = text(scripts.manager);
+  const docker = text(scripts.docker);
+  const connector = text(join(root, 'scripts/business-connect.sh'));
+  const splitSmoke = text(join(root, 'scripts/docker/verify-split.sh'));
+  assert.match(manager, /APPGOG_BUSINESS_PAIRED/);
+  assert.match(manager, /business_pair_export\(\)/);
+  assert.match(manager, /business_pair_import\(\)/);
+  assert.match(manager, /业务中心跨机配对/);
+  assert.match(manager, /打包机没有授权管理员凭证/);
+  assert.match(manager, /打包机不持有授权控制中心/);
+  assert.match(docker, /独立打包机没有管理员凭证/);
+  assert.match(connector, /needs_rollback=true[\s\S]*mv "\$tmp\/new-env" "\$envfile"/);
+  assert.match(splitSmoke, /business\.status !== 503/);
+  assert.match(splitSmoke, /ed25519-private\.pem/);
+});
 test('stable bootstrap downloads, verifies, installs, upgrades, and rejects downgrade', () => {
   const bootstrap = text(scripts.bootstrap);
   assert.match(bootstrap, /releases\/latest\/download/);

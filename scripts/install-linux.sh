@@ -52,7 +52,7 @@ APPGOG Linux 一键安装器
 
 参数：
   --role all|license|build   同机、授权分机或打包分机（默认 all）
-  --node-credentials-file PATH  打包分机节点凭据文件（仅首次安装）
+  --node-credentials-file PATH  可选：预置节点凭据；否则先安装再用菜单配对
   --auth-domain DOMAIN       授权中心域名
   --build-domain DOMAIN      客户打包中心域名
   --install-dir PATH         安装目录（默认 /opt/appgog）
@@ -534,7 +534,11 @@ write_env() {
     "$AUTH_DOMAIN" "$BUILD_DOMAIN" "$package_version" "$package_version" "$SHARED_DIR" "$NODE_IMAGE" "$CADDY_IMAGE" > "$SHARED_DIR/.env"
   printf 'APPGOG_DEPLOYMENT_ROLE=%s\n' "$DEPLOYMENT_ROLE" >> "$SHARED_DIR/.env"
   if [ "$DEPLOYMENT_ROLE" = build ]; then
-    printf 'BUILD_CENTER_NODE_TOKEN=%s\nWORKER_NODE_TOKEN=%s\n' "$BUILD_NODE_TOKEN" "$WORKER_NODE_TOKEN" >> "$SHARED_DIR/.env"
+    if [ -n "$NODE_CREDENTIALS_FILE" ]; then
+      printf 'BUILD_CENTER_NODE_TOKEN=%s\nWORKER_NODE_TOKEN=%s\nAPPGOG_BUSINESS_PAIRED=true\n' "$BUILD_NODE_TOKEN" "$WORKER_NODE_TOKEN" >> "$SHARED_DIR/.env"
+    else
+      printf 'APPGOG_BUSINESS_PAIRED=false\n' >> "$SHARED_DIR/.env"
+    fi
   fi
   chmod 600 "$SHARED_DIR/.env" 2>/dev/null || true
 }
@@ -766,7 +770,10 @@ prompt_domain AUTH_DOMAIN '授权中心域名'
 prompt_domain BUILD_DOMAIN '客户打包中心域名'
 [ "$AUTH_DOMAIN" != "$BUILD_DOMAIN" ] || fail '两个域名必须不同。'
 if [ "$DEPLOYMENT_ROLE" = build ] && [ "$UPGRADE_MODE" = false ]; then
-  [ -f "$NODE_CREDENTIALS_FILE" ] || fail '打包分机首次安装需要 --node-credentials-file。'
+  if [ -z "$NODE_CREDENTIALS_FILE" ]; then
+    log '打包分机以待配对模式安装；普通业务请求返回 503。'
+  else
+  [ -f "$NODE_CREDENTIALS_FILE" ] || fail '节点凭据文件不存在。'
   [ ! -L "$NODE_CREDENTIALS_FILE" ] || fail '节点凭据文件不能是符号链接。'
   [ "$(stat -c %u "$NODE_CREDENTIALS_FILE")" = 0 ] || fail '节点凭据文件必须属于 root。'
   case "$(stat -c %a "$NODE_CREDENTIALS_FILE")" in 400|600) ;; *) fail '节点凭据文件权限只能为 0400 或 0600。' ;; esac
@@ -775,6 +782,7 @@ if [ "$DEPLOYMENT_ROLE" = build ] && [ "$UPGRADE_MODE" = false ]; then
   printf '%s' "$BUILD_NODE_TOKEN" | LC_ALL=C grep -Eq '^BLD_[A-Za-z0-9_-]{40,}$' || fail '打包中心节点凭据格式无效。'
   printf '%s' "$WORKER_NODE_TOKEN" | LC_ALL=C grep -Eq '^WRK_[A-Za-z0-9_-]{40,}$' || fail '构建 Worker 节点凭据格式无效。'
   [ "$BUILD_NODE_TOKEN" != "$WORKER_NODE_TOKEN" ] || fail '两个节点必须使用独立凭据。'
+  fi
 fi
 install_docker
 configure_registry_mirror

@@ -11,7 +11,8 @@ export async function checkHealth(statePath = '/tmp/appgog-processes.json') {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   const role = process.env.APPGOG_DEPLOYMENT_ROLE || 'all';
   const urls = roleHealthUrls(role);
-  const processCount = (role === 'all' ? 4 : role === 'build' ? 3 : 2) + (process.env.SECURITY_CLOUD_URL ? role === 'all' ? 2 : 1 : 0);
+  const unpaired = role === 'build' && process.env.APPGOG_BUSINESS_PAIRED === 'false';
+  const processCount = (role === 'all' ? 4 : role === 'build' && !unpaired ? 3 : 2) + (process.env.SECURITY_CLOUD_URL ? role === 'all' ? 2 : 1 : 0);
   if (state.pids?.length !== processCount || !state.ready) throw new Error('部署进程尚未全部就绪');
   for (const pid of state.pids) {
     if (!Number.isInteger(pid) || pid <= 0) throw new Error('无效的进程状态');
@@ -24,7 +25,7 @@ export async function checkHealth(statePath = '/tmp/appgog-processes.json') {
     if (!response.ok) throw new Error('服务健康检查失败：' + url);
     if (url !== healthUrls.caddy) {
       const health = await response.json();
-      if (health.version !== PACKAGE_VERSION || (url === healthUrls.build && health.upstream_version !== PACKAGE_VERSION)) {
+      if (health.version !== PACKAGE_VERSION || (url === healthUrls.build && !unpaired && health.upstream_version !== PACKAGE_VERSION) || (url === healthUrls.build && unpaired && health.paired !== false)) {
         throw new Error('服务运行版本不一致：' + url);
       }
     } else await response.arrayBuffer();

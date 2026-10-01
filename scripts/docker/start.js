@@ -9,7 +9,7 @@ if (!Number.isSafeInteger(startupTimeoutMs) || startupTimeoutMs < 10000 || start
   throw new Error('APPGOG_STARTUP_TIMEOUT_MS 必须是 10000 到 600000 之间的整数');
 }
 rmSync(statePath, { force: true });
-const { authUrl, buildUrl, deploymentRole } = initialize();
+const { authUrl, buildUrl, deploymentRole, unpaired = false } = initialize();
 // Never inherit administrator secrets into the worker, build proxy or Caddy environment.
 const baseEnv = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
 async function waitHttp(url, stopped) {
@@ -40,7 +40,8 @@ const cloudAgentSpecs = process.env.SECURITY_CLOUD_URL ? activeRoles.map(role =>
 })) : [];
 const app = supervise({ cwd: '/app', env: baseEnv, probe: () => checkHealth(), specs: [
   ...(deploymentRole !== 'build' ? [{ name: 'license-center', command: process.execPath, args: ['apps/license-api/src/server.js'], env: { APPGOG_ENV_PATH: '/app/runtime/license/runtime.env' }, ready: stopped => waitHttp('http://127.0.0.1:8787/health', stopped) }] : []),
-  ...(deploymentRole !== 'license' ? [{ name: 'build-center', command: process.execPath, args: ['apps/build-center/src/server.js'], env: { APPGOG_ENV_PATH: '/app/runtime/build/runtime.env' }, ready: stopped => waitHttp('http://127.0.0.1:8788/health', stopped) },
+  ...(unpaired ? [{ name: 'build-standby', command: process.execPath, args: ['scripts/docker/unpaired.js'], env: {}, ready: stopped => waitHttp('http://127.0.0.1:8788/health', stopped) }] : []),
+  ...(!unpaired && deploymentRole !== 'license' ? [{ name: 'build-center', command: process.execPath, args: ['apps/build-center/src/server.js'], env: { APPGOG_ENV_PATH: '/app/runtime/build/runtime.env' }, ready: stopped => waitHttp('http://127.0.0.1:8788/health', stopped) },
   { name: 'build-worker', command: process.execPath, args: ['apps/build-worker/src/server.js'], env: { APPGOG_ENV_PATH: '/app/runtime/worker/runtime.env' } }] : []),
   ...cloudAgentSpecs,
   { name: 'caddy', command: 'caddy', args: ['run', '--config', deploymentRole === 'all' ? '/app/Caddyfile' : `/app/Caddyfile.${deploymentRole}`, '--adapter', 'caddyfile'], env: { AUTH_DOMAIN: new URL(authUrl).host, BUILD_DOMAIN: new URL(buildUrl).host, XDG_DATA_HOME: '/app/runtime/caddy-data', XDG_CONFIG_HOME: '/app/runtime/caddy-config' }, ready: stopped => waitHttp('http://127.0.0.1:8081/health', stopped) },

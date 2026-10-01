@@ -206,6 +206,7 @@ header() {
   printf '║  版本：%-16s 安装目录：%-19s ║\n' "$version" "$(basename "$ROOT_DIR")"
   printf '%s\n' '╚══════════════════════════════════════════════════════╝'
   printf '%b' "$RESET"
+  printf '部署角色：%s\n' "$(installed_role)"
   printf '运行状态：%b%s%b\n' "$SERVICE_COLOR" "$SERVICE_STATE" "$RESET"
   printf '授权中心：%bhttps://%s/admin%b\n' "$GREEN" "${auth_domain:-未配置}" "$RESET"
   printf '打包中心：%bhttps://%s/build%b\n' "$GREEN" "${build_domain:-未配置}" "$RESET"
@@ -259,6 +260,110 @@ security_menu() {
     esac
   done
 }
+business_pair_file() { printf '%s' "$SHARED_DIR/business-nodes.json"; }
+
+business_pair_status() {
+  role=$(installed_role)
+  printf '本机部署角色：%s\n授权域名：%s\n打包域名：%s\n' "$role" "$(env_value AUTH_DOMAIN)" "$(env_value BUILD_DOMAIN)"
+  case "$role" in
+    all) say_ok '授权与打包同机，无需跨机业务配对。' ;;
+    license)
+      [ ! -d "$SHARED_DIR/business-pair.pending" ] || say_warn '存在未完成的签发记录；请先核对授权后台的服务节点。'
+      if [ -s "$(business_pair_file)" ]; then
+        jq -r '"已签发打包节点：" + .build_node_id + "\nWorker 节点：" + .worker_node_id + "\n目标：" + .build_url' "$(business_pair_file)"
+      else say_warn '尚未通过本机菜单导出业务配对包。'; fi ;;
+    build)
+      if [ "$(env_value APPGOG_BUSINESS_PAIRED)" = true ]; then say_ok '已导入授权机签发的两个节点身份。'
+      else say_warn '待配对：仅健康检查可用，客户打包与 Worker 尚未启动。'; fi ;;
+    *) say_error '未知部署角色。'; return 1 ;;
+  esac
+}
+
+business_pair_export() {
+  [ "$(id -u)" -eq 0 ] || { say_error '配对签发需要 root。'; return 1; }
+  [ "$(installed_role)" = license ] || { say_error '只有独立授权机签发业务节点。'; return 1; }
+  umask 077
+  mkdir -p "$SHARED_DIR" || return 1
+  record=$(business_pair_file)
+  pending="$SHARED_DIR/business-pair.pending"
+  [ ! -e "$record" ] && [ ! -L "$record" ] && [ ! -e "$pending" ] || {
+    say_error '已有节点记录或未完成的签发；请先核对授权后台节点，再处理遗留记录。'
+    return 1
+  }
+  # Persist the reservation before issuing DB identities. A crash keeps this
+  # marker and blocks a second issuance until an operator reconciles nodes.
+  mkdir "$pending" 2>/dev/null || { say_error '签发正在进行或待人工核对。'; return 1; }
+  bundle=$(mktemp /root/appgog-business-pair.XXXXXXXX.json) || { rmdir "$pending"; return 1; }
+  container=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps -q appgog) || {
+    rm -f "$bundle"; rmdir "$pending"; return 1;
+  }
+  [ -n "$container" ] || { rm -f "$bundle"; rmdir "$pending"; say_error '授权容器未运行。'; return 1; }
+  if ! docker exec -i "$container" node /app/scripts/docker/business-pair.js create "$(env_value BUILD_DOMAIN)" > "$bundle"; then
+    rm -f "$bundle"
+    say_error "签发失败；请核对授权后台的服务节点后再处理保留的 $pending。"
+    return 1
+  fi
+  if ! jq -e '.format == 1 and (.build_node_id | type == "string") and (.worker_node_id | type == "string")' "$bundle" >/dev/null; then
+    say_error "签发结果格式异常；私有包留在 $bundle，人工核对节点后处理 $pending。"
+    return 1
+  fi
+  record_tmp=$(mktemp "$SHARED_DIR/.business-nodes.XXXXXXXX") || return 1
+  if ! jq '{build_node_id, worker_node_id, build_url, version}' "$bundle" > "$record_tmp" ||
+     ! chmod 600 "$bundle" "$record_tmp" || ! ln "$record_tmp" "$record"; then
+    rm -f "$record_tmp"
+    say_error "记录未完成；私有包留在 $bundle，请人工核对节点后处理 $pending。"
+    return 1
+  fi
+  rm -f "$record_tmp"
+  rmdir "$pending" || { say_error "记录已保存，但签发标记 $pending 未清除；请人工核对。"; return 1; }
+  say_ok "已签发独立节点。私有配对包：$bundle（root:600；仅经可信通道送至打包机）"
+}
+
+business_pair_revoke() {
+  [ "$(id -u)" -eq 0 ] && [ "$(installed_role)" = license ] || { say_error '只有授权机 root 可以撤销。'; return 1; }
+  record=$(business_pair_file)
+  [ -s "$record" ] || { say_error '没有本机签发记录；请在授权后台核对所有节点。'; return 1; }
+  build_id=$(jq -er '.build_node_id' "$record") || return 1
+  worker_id=$(jq -er '.worker_node_id' "$record") || return 1
+  container=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps -q appgog) || return 1
+  [ -n "$container" ] || return 1
+  docker exec -i "$container" node /app/scripts/docker/business-pair.js disable '' "$build_id" "$worker_id" || return 1
+  mv "$record" "$record.revoked.$(date -u +%Y%m%dT%H%M%SZ)" || return 1
+  [ ! -d "$SHARED_DIR/business-pair.pending" ] || rmdir "$SHARED_DIR/business-pair.pending" || return 1
+  say_ok '两项节点身份已撤销；打包机将无法访问授权机。'
+}
+
+business_pair_import() {
+  [ "$(installed_role)" = build ] || { say_error '只有独立打包机可导入。'; return 1; }
+  [ "$(id -u)" -eq 0 ] || { say_error '导入需要 root。'; return 1; }
+  APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/business-connect.sh" "$1"
+}
+
+business_menu() {
+  while :; do
+    header
+    printf '业务中心跨机配对（%s）\n' "$(installed_role)"
+    printf '%s\n' '  1. 查看角色和配对状态'
+    case "$(installed_role)" in
+      license) printf '%s\n' '  2. 签发打包机与 Worker 身份包' '  3. 撤销当前两项节点身份' ;;
+      build) printf '%s\n' '  2. 导入授权机签发的身份包并验收' ;;
+      all) printf '%s\n' '  同机部署无需跨机配对' ;;
+    esac
+    printf '%s\n' '  0. 返回主菜单'
+    tty_read '请选择：'
+    case "$REPLY_VALUE" in
+      1) business_pair_status; pause_menu ;;
+      2) case "$(installed_role)" in
+        license) confirm '签发两项新节点身份并导出 root 私有文件？' && business_pair_export ;;
+        build) tty_read '本机 root 私有配对包绝对路径：'; bundle_path=$REPLY_VALUE
+          [ -z "$bundle_path" ] || { confirm '确认核对授权机 HTTPS 与凭据后激活打包服务？' && business_pair_import "$bundle_path"; } ;;
+        *) say_error '此角色无需配对。' ;; esac; pause_menu ;;
+      3) if [ "$(installed_role)" = license ]; then confirm '撤销两项节点身份？打包机业务会停止。' && business_pair_revoke; else say_error '无效选项。'; fi; pause_menu ;;
+      0|'') return 0 ;;
+      *) say_error '无效选项。'; pause_menu ;;
+    esac
+  done
+}
 show_status() {
   header
   run_docker status
@@ -287,8 +392,8 @@ configure_domains() {
     [ -n "$cf_token" ] || { say_error 'Cloudflare API Token 不能为空。'; return 1; }
     public_ip=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || curl -4fsS --max-time 10 https://ifconfig.me/ip 2>/dev/null || true)
     [ -n "$public_ip" ] || { say_error '无法检测公网 IPv4。'; return 1; }
-    cloudflare_upsert "$cf_token" "$new_auth" "$public_ip" || return 1
-    cloudflare_upsert "$cf_token" "$new_build" "$public_ip" || return 1
+    [ "$(installed_role)" = build ] || cloudflare_upsert "$cf_token" "$new_auth" "$public_ip" || return 1
+    [ "$(installed_role)" = license ] || cloudflare_upsert "$cf_token" "$new_build" "$public_ip" || return 1
     cf_token=''; unset cf_token REPLY_VALUE
   fi
 
@@ -400,17 +505,18 @@ main_menu() {
       '  4. 重启全部服务' \
       '  5. 查看服务日志' \
       '  6. 修改并保存域名配置' \
-      '  7. 配置业务服务开关' \
-      '  8. 查看初始管理员凭证' \
+      '  7. 配置业务服务开关（授权机/同机）' \
+      '  8. 查看初始管理员凭证（授权机/同机）' \
       '  9. 安全更新最新版本' \
       ' 10. 创建完整备份' \
       ' 11. 从完整备份恢复' \
       ' 12. 系统诊断与高级工具' \
       ' 13. 修复系统源码' \
       ' 14. 卸载系统（保留数据）' \
-      ' 15. 导出控制中心安全回滚包（当前 Active 目标）' \
-      ' 16. 导入控制中心安全回滚包（旧源服务器）' \
+      ' 15. 导出控制中心安全回滚包（授权机/同机）' \
+      ' 16. 导入控制中心安全回滚包（授权机/同机）' \
       ' 17. 安全中心：本地查杀与云端加密对接' \
+      ' 18. 业务中心跨机配对（授权签发/打包导入）' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
     tty_read '请选择：'
@@ -421,8 +527,8 @@ main_menu() {
       4) confirm '确认重启全部服务？' && run_docker restart; pause_menu ;;
       5) logs_menu; pause_menu ;;
       6) configure_domains; pause_menu ;;
-      7) configure_services; pause_menu ;;
-      8) run_docker credentials; pause_menu ;;
+      7) if [ "$(installed_role)" = build ]; then say_error '服务开关由授权机管理。'; else configure_services; fi; pause_menu ;;
+      8) if [ "$(installed_role)" = build ]; then say_error '打包机没有授权管理员凭证。'; else run_docker credentials; fi; pause_menu ;;
       9) if online_update; then
            if [ -f "$INSTALL_ROOT/current/scripts/appgog.sh" ]; then
              APPGOG_ROOT= exec sh "$INSTALL_ROOT/current/scripts/appgog.sh"
@@ -434,9 +540,10 @@ main_menu() {
       12) advanced_menu ;;
       13) confirm '确认重新下载当前签名版本、备份并深度重建源码？' && repair_source; pause_menu ;;
       14) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
-      15) migration_rollback_export; pause_menu ;;
-      16) say_warn '请使用命令 appgog migration-rollback-import <迁移ID> 执行，避免输错文件。'; pause_menu ;;
+      15) if [ "$(installed_role)" = build ]; then say_error '打包机不持有授权控制中心。'; else migration_rollback_export; fi; pause_menu ;;
+      16) if [ "$(installed_role)" = build ]; then say_error '打包机不持有授权控制中心。'; else say_warn '请使用命令 appgog migration-rollback-import <迁移ID> 执行，避免输错文件。'; fi; pause_menu ;;
       17) security_menu ;;
+      18) business_menu ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -466,6 +573,10 @@ APPGOG 管理命令
                            在当前 Active 目标停止写入并导出最终加密快照
   appgog migration-rollback-import <迁移ID> [备份] [密钥] [manifest]
                            在旧源固定 rollback-inbox 中校验并导入最终快照
+  appgog business-status                查看部署角色和业务配对状态
+  appgog business-export                授权机签发 root 私有配对包
+  appgog business-import PATH           打包机导入并验证私有配对包
+  appgog business-revoke                授权机撤销当前节点身份
   appgog security-local status|scan  宿主检查结果或立即启动固定范围检查
   appgog security-doctor             验证云端身份和节点状态
   appgog security-connect URL BUNDLE_DIR CA_SHA256  用独立身份包配对云端
@@ -480,6 +591,10 @@ EOF
 case "${1:-menu}" in
   menu) main_menu ;;
   install|status|start|stop|restart|backup|credentials|doctor|diagnostics) run_docker "$1" ;;
+  business-status) business_pair_status ;;
+  business-export) business_pair_export ;;
+  business-import) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; business_pair_import "$2" ;;
+  business-revoke) confirm '撤销两个已签发节点身份？' && business_pair_revoke ;;
   security-local) shift; security_local "${1:-}" ;;
   security-doctor) security_cloud_doctor ;;
   security-connect) [ "$#" -eq 4 ] || { usage >&2; exit 2; }; security_connect "$2" "$3" "$4" ;;

@@ -446,8 +446,9 @@ case "${1:-help}" in
     fi
     ;;
   credentials)
-    require_docker
     require_config
+    [ "$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' .env | tail -n 1)" != build ] || fail '独立打包机没有管理员凭证；请在授权机执行该命令。'
+    require_docker
     compose run --rm --no-deps -T --entrypoint cat appgog /app/runtime/license/initial-admin.txt
     ;;
   status) require_docker; compose ps -a ;;

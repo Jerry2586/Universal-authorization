@@ -9,7 +9,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,6 +27,8 @@ jobs:
         run: node scripts/verify-bridge-integrity-performance.js
       - name: Fresh install, real build, update and complete restore
         run: sh scripts/docker/verify.sh
+      - name: Standalone license and unpaired build Docker smoke
+        run: sh scripts/docker/verify-split.sh
       - name: Package self-extracting installer
         env:
           APPGOG_ALLOW_UNSIGNED_ARTIFACTS: '1'

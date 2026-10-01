@@ -92,9 +92,11 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   const buildUrl = origin(env.BUILD_DOMAIN || env.BUILD_CENTER_PUBLIC_URL || '', '打包中心');
   if (authUrl === buildUrl) throw new Error('授权中心与打包中心需要两个不同域名');
   if (deploymentRole === 'build') {
+    const unpaired = env.APPGOG_BUSINESS_PAIRED === 'false';
+    if (unpaired && (env.BUILD_CENTER_NODE_TOKEN || env.WORKER_NODE_TOKEN)) throw new Error('待配对节点不应保存业务凭据');
     const buildToken = env.BUILD_CENTER_NODE_TOKEN;
     const workerToken = env.WORKER_NODE_TOKEN;
-    if (!validSecret(buildToken) || !validSecret(workerToken) || buildToken === workerToken) {
+    if (!unpaired && (!validSecret(buildToken) || !validSecret(workerToken) || buildToken === workerToken)) {
       throw new Error('打包分机必须提供两个独立、有效的节点凭证');
     }
     if (existsSync(identityPath) || existsSync(databasePath) || existsSync(privatePath)) {
@@ -106,6 +108,7 @@ export function initialize({ root = '/app', env = process.env } = {}) {
           !existsSync(join(configRoot, 'security/build.crt')) || !existsSync(join(configRoot, 'security/build.key')) ||
           !validSecret(env.SECURITY_CLOUD_BUILD_TOKEN)) throw new Error('打包分机云端身份不完整');
     }
+    if (unpaired) return { authUrl, buildUrl, deploymentRole, identity: null, unpaired: true };
     const values = { NODE_ENV: 'production', BUILD_CENTER_PORT: 8788, INTERNAL_LICENSE_URL: authUrl,
       BUILD_CENTER_NODE_TOKEN: buildToken };
     atomic(join(configRoot, 'build/runtime.env'), envFile(values));
