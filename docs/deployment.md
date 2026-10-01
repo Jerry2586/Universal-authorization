@@ -187,4 +187,3 @@ systemctl restart appgog-update-helper.service
 ```
 
 旧的 v1.2.60 更新助手尚不支持私有仓库认证，因此首次切换需要从已登录的 GitHub Release 手动取得**完整签名版本**并走离线 `.run` 升级流程。新版本完成发布、签名附件核验和服务器升级之后，后台“检查更新”才能经只读令牌访问私有 Release。令牌失效会明确视为发布源失败，不允许跳过 Ed25519 和 SHA-256 校验；若仍失败，请检查独立更新日志 `shared/logs/update.log`、令牌范围及服务器 GitHub API 出站连接。
-
