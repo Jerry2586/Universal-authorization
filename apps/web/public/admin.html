@@ -205,6 +205,13 @@
     </div>
     <p class="security-topology-note" id="security-topology-note" aria-live="polite">当前展示：打包、授权、安全中心分别部署在三台服务器。</p>
 
+    <section class="security-panel" aria-labelledby="security-local-heading">
+      <div class="security-panel-head"><div><span>HOST / LOCAL INSPECTION</span><h3 id="security-local-heading">授权服务器 Linux 环境检查</h3></div><button id="security-local-run" type="button">一键检查本机</button></div>
+      <p id="security-local-state" role="status">本机检查代理状态未知</p>
+      <p id="security-local-time">尚无检查时间</p>
+      <ul id="security-local-results" aria-label="检查项目"></ul>
+      <p class="security-action-note">固定范围只读检查；病毒特征查杀未接入时显示不可用。结果为配置线索，不能代替入侵取证。</p>
+    </section>
     <div class="security-section-title"><div><span>02 / OBSERVABILITY</span><h3>实时核验范围</h3><p>状态由双向 TLS 安全连接返回的云端数据和外部探测提供；未接入前不显示健康结论。</p></div><span class="security-outline-badge">LIVE DATA · 独立监测</span></div>
     <div class="security-monitor-grid">
       <article class="security-monitor-card"><div class="security-monitor-icon">01</div><div><span>PACKAGE PIPELINE</span><h4>打包服务</h4><p>独立云端探测打包服务的 HTTPS 健康状态。</p></div><span class="security-unknown" id="security-build-probe">暂无遥测</span></article>

@@ -635,6 +635,66 @@ EOF
   fi
 }
 
+install_host_security_agent() {
+  [ "$DEPLOYMENT_ROLE" = build ] && return 0
+  command -v systemctl >/dev/null 2>&1 || { log '宿主机检查需要 systemd；本机检查显示不可用'; return 0; }
+  if ! command -v python3 >/dev/null 2>&1; then
+    case "$DISTRO" in
+      ubuntu|debian) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 ;;
+      centos|rhel|rocky|almalinux|fedora|ol)
+        manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
+        "$manager" install -y python3 ;;
+      *) fail "不支持自动安装 Python3 的发行版：$DISTRO" ;;
+    esac
+  fi
+  mkdir -p /run/appgog-security
+  chmod 755 /run/appgog-security
+  printf 'd /run/appgog-security 0755 root root -\n' > /etc/tmpfiles.d/appgog-host-security.conf
+  # A root service must not execute directly from the switchable release symlink.
+  agent_dir=/usr/local/lib/appgog-security
+  install -d -o root -g root -m 0700 "$agent_dir"
+  agent_file="$agent_dir/host-security-agent.py"
+  agent_temp=$(mktemp "$agent_dir/.host-security-agent.XXXXXX")
+  install -o root -g root -m 0700 "$CURRENT_LINK/scripts/host-security-agent.py" "$agent_temp"
+  mv -f "$agent_temp" "$agent_file"
+  python_bin=$(command -v python3)
+  unit=/etc/systemd/system/appgog-host-security.service
+  unit_temp="$unit.$$"
+  cat > "$unit_temp" <<EOF
+[Unit]
+Description=APPGOG fixed scope host security inspection
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=$python_bin $agent_file
+Environment=APPGOG_INSTALL_ROOT=$INSTALL_ROOT
+Environment=APPGOG_HOST_SCAN_SOCKET=/run/appgog-security/scan.sock
+Environment=PYTHONDONTWRITEBYTECODE=1
+User=root
+ReadWritePaths=/run/appgog-security
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 644 "$unit_temp"
+  mv "$unit_temp" "$unit"
+  systemctl daemon-reload
+  systemctl enable appgog-host-security.service >/dev/null
+  if ! systemctl restart appgog-host-security.service; then
+    log '宿主机检查代理未启动；面板将显示不可用，请检查 journalctl -u appgog-host-security'
+  fi
+}
 print_result() {
   if [ "$DEPLOYMENT_ROLE" = build ]; then
     printf '\nAPPGOG 打包分机已安装：%s\n打包入口：https://%s/build\n授权上游：https://%s\n运行诊断：appgog doctor\n' "$INSTALL_ROOT" "$BUILD_DOMAIN" "$AUTH_DOMAIN"
@@ -753,6 +813,10 @@ if [ "$SKIP_START" = false ]; then
   if ! wait_public_https; then restore_previous_release; fail '部署健康检查失败，已恢复旧版本（如存在）。'; fi
   install_command
   install_update_helper
+  install_host_security_agent
+  if [ "$DEPLOYMENT_ROLE" != build ] && command -v python3 >/dev/null 2>&1; then
+    python3 "$CURRENT_LINK/scripts/host-security-agent.py" --write-baseline || log '安装基线生成失败；面板将显示不可用'
+  fi
 fi
 if [ "$SKIP_START" = false ]; then print_result
 else log '源码与环境已准备；按要求未启动，尚未验证公网 HTTPS。'

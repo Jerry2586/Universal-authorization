@@ -1,7 +1,24 @@
 import { cloudSecurityStatus } from './security-status.js';
+import { localSecurityScan } from './local-security-scan.js';
 export async function handleOperationsHttp({
   method, url, request, response, portal, updates, bridgeUpdates, rateLimit, readJson, respondJson, requireSession,
 }) {
+  if (url.pathname === '/web/admin/security/local-scan' && (method === 'GET' || method === 'POST')) {
+    const session = requireSession(method === 'POST', 'system.manage');
+    if (method === 'POST') {
+      rateLimit('local-security-scan:' + session.actor_id, 2, 60000);
+      // Reject caller-selected paths and commands; only the fixed host scan is available.
+      const body = await readJson(request);
+      if ((!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0)) {
+        respondJson(response, 400, { error: '不接受自定义检查参数' });
+        return true;
+      }
+    }
+    const result = await localSecurityScan(method === 'POST' ? 'scan' : 'status');
+    if (method === 'POST') portal.recordLocalSecurityScan(result.state, session.actor_id);
+    respondJson(response, method === 'POST' && result.state === 'running' ? 202 : 200, result);
+    return true;
+  }
   if (url.pathname === '/web/admin/security/status' && method === 'GET') {
     requireSession(false, 'system.manage');
     respondJson(response, 200, await cloudSecurityStatus());

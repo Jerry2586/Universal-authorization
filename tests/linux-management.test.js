@@ -69,7 +69,10 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /mv -Tf .*CURRENT_LINK/);
   assert.match(installer, /appgog-update-helper\.service/);
   assert.match(installer, /case "\$existing" in[\s\S]*"\$INSTALL_ROOT"\/\*/);
-  assert.doesNotMatch(installer, /ProtectSystem=strict/);
+  assert.doesNotMatch(installer.split('install_host_security_agent() {')[0], /ProtectSystem=strict/);
+  assert.match(installer, /install_host_security_agent\(\)[\s\S]*ProtectSystem=strict/);
+  assert.match(installer, /install -o root -g root -m 0700 "\$CURRENT_LINK\/scripts\/host-security-agent\.py"/);
+  assert.match(installer, /ExecStart=\$python_bin \$agent_file/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
   assert.match(installer, /DNS A 记录/);

@@ -45,6 +45,7 @@ services:
       - appgog-build-config:/app/runtime/build
       - appgog-worker-config:/app/runtime/worker
       - ${APPGOG_SHARED_DIR:-./shared}/security:/app/runtime/security:ro
+      - /run/appgog-security:/app/runtime/host-security:ro
       - appgog-caddy-data:/app/runtime/caddy-data
       - appgog-caddy-config:/app/runtime/caddy-config
     healthcheck:

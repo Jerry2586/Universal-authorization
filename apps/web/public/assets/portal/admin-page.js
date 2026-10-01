@@ -133,6 +133,28 @@ export function createAdminPage(shell) {
     });
   }
 
+  async function renderLocalSecurity() {
+    if (!can('system.manage')) return;
+    const status = $('security-local-state');
+    const timestamp = $('security-local-time');
+    const list = $('security-local-results');
+    if (!status || !list) return;
+    try {
+      const report = await request('/web/admin/security/local-scan');
+      status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: '本机检查完成', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '未知';
+      timestamp.textContent = report.checked_at ? `检查时间：${report.checked_at}` : (report.reason || '尚无检查时间');
+      list.replaceChildren();
+      for (const item of report.checks ?? []) {
+        const row = document.createElement('li');
+        row.textContent = `${item.name} · ${({ ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' })[item.state] || '未知'} · ${item.detail}`;
+        list.append(row);
+      }
+      if (report.state === 'running') setTimeout(() => void renderLocalSecurity(), 2000);
+    } catch (error) {
+      status.textContent = '本机代理不可用'; timestamp.textContent = error.message; list.replaceChildren();
+    }
+  }
+
   async function renderSecurity() {
     if (!can('system.manage')) return;
     const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
@@ -172,7 +194,16 @@ export function createAdminPage(shell) {
     licenseUi.bind();
     bindLicenseForm();
     bindSettingsForm();
-    void renderSecurity();
+    void renderSecurity(); void renderLocalSecurity();
+    $('security-local-run')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await request('/web/admin/security/local-scan', { method: 'POST', body: {} });
+        await renderLocalSecurity();
+      } catch (error) { notify(error.message, true); }
+      finally { button.disabled = false; }
+    });
     document.querySelectorAll('[data-security-mode]').forEach((button) => button.addEventListener('click', () => {
       const mode = button.dataset.securityMode;
       document.querySelector('[data-security-topology]')?.setAttribute('data-security-topology', mode);
@@ -216,5 +247,5 @@ export function createAdminPage(shell) {
       }
       if(!plans.length)options.append(element('p','暂无可用套餐，请先创建套餐。','muted'));
     }
-    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); void renderSecurity(); }, applySession, afterSession });
+    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); void renderSecurity(); void renderLocalSecurity(); }, applySession, afterSession });
 }
