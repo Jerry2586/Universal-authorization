@@ -15,6 +15,9 @@ cleanup() {
   for role in license build; do
     [ ! -f "$test_root/$role.env" ] || docker compose -p "appgog-split-$role" --env-file "$test_root/$role.env" -f compose.yaml down -v --remove-orphans >/dev/null 2>&1 || true
   done
+  # The container creates UID 1000-owned directories inside this disposable CI fixture.
+  # Restore ownership before removal; do not change production directory permissions.
+  sudo chown -R "$(id -u):$(id -g)" "$test_root"
   rm -rf "$test_root"
 }
 trap cleanup 0
