@@ -2,7 +2,7 @@
 
 日期：2026-10-01。
 
-APPGOG打包授权系统 v1.2.65 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
+APPGOG打包授权系统 v1.2.66 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
 
 ## 1. 前置条件
 
@@ -38,7 +38,7 @@ sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
 配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.65 sh ./install.sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.66 sh ./install.sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。
@@ -166,12 +166,40 @@ appgog migration-rollback-import <迁移ID>
 
 同机：业务服务器安装 `--role all`（默认），同时运行授权、打包、Worker；安全中心在另一台 Linux 服务器。三服务器：分别在授权机和打包机安装 `--role license`、`--role build`；安全中心在第三台服务器。两种模式的授权数据库、业务签名私钥都只在授权机，打包机仅持有独立服务节点凭据。同机或分机的业务节点由云端的独立证书和令牌识别。
 
-1. 授权机：两个域名分别解析至对应服务器后，从私有 Release 下载同一版本的签名 `.run`，执行 `sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role license --auth-domain auth.example.com --build-domain build.example.com`。安装器只检查和配置本机授权域名的 HTTPS/DNS。菜单 18 的“签发”会创建打包节点与 Worker 各一个身份，并生成 root:600 的私有 JSON 包；记录文件仅保存两个节点 ID。私有文件不可加入 Git、日志或公开目录。
-2. 打包机：执行 `sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role build --auth-domain auth.example.com --build-domain build.example.com`。尚未配对时只提供健康接口，业务和 Worker 不运行。授权机 `sudo appgog` 选 18 → 2，将显示的私有配对包经可信通道复制到打包机，设 root 所有、权限 0600；打包机 `sudo appgog` 选 18 → 2，输入绝对路径导入。先验证授权机公网 TLS、版本、打包节点和 Worker 凭据；重启并验证打包中心公网健康失败时恢复原配置。两边菜单 18 → 1 查看状态；授权机 18 → 3 可撤销两项身份并阻断远端业务。版本升级需要先安排两端维护窗口，保持相同正式版；在任一分机不能直接把角色改为同机部署。菜单 14 在每台服务器单独卸载程序、保留本机业务数据。签发中断会留下待核对标记并阻止再次签发；先在授权后台核对或撤销节点，再处理标记。
-3. 同机：原一键命令 `sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role all --auth-domain auth.example.com --build-domain build.example.com` 保持可用；菜单 18 显示同机无需配对。已有同机安装的升级保留角色、数据库、签名密钥和配置。首次私有 Release 获取需要登录；配置只读 Release 令牌后，各节点也可使用保存的 `sudo sh ./install.sh --role license|build|all` 获取签名 Latest 版本。仅本地源码验证使用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能以此替代签名生产发布。
-4. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
-5. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo appgog security-connect https://security.example.com:9443 /root/对应配对包 <独立获取的CA-SHA256指纹>`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
-6. 业务机执行 `sudo appgog security-doctor`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
+### 独立授权服务器：执行授权安装命令
+
+两个域名分别解析到授权服务器和打包服务器。从私有 Release 下载同一版本的签名 `.run` 并上传至授权服务器，在该服务器执行：
+
+```sh
+sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role license --auth-domain auth.example.com --build-domain build.example.com
+```
+
+`--role license` 仅启动授权服务；`--auth-domain` 是本机授权域名；`--build-domain` 是另一台打包机的域名。安装器只检查本机授权域名的 HTTPS/DNS。运行 `sudo appgog`，选 **18 → 2** 签发打包节点与 Worker 身份，生成 root:600 的私有 JSON 配对包；记录文件只保存两个节点 ID。私有文件不可放入 Git、日志或公开目录。
+
+### 独立打包服务器：执行打包安装命令
+
+将**相同版本**的签名 `.run` 上传至打包服务器，在这台服务器执行：
+
+```sh
+sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role build --auth-domain auth.example.com --build-domain build.example.com
+```
+
+`--role build` 启动打包中心和 Worker；`--auth-domain` 指向授权服务器；`--build-domain` 是本机打包域名。尚未配对时只提供健康接口，业务和 Worker 不运行。将授权机的私有配对包经可信通道复制到打包机，设置 root 所有、权限 0600；在打包机运行 `sudo appgog` 选 **18 → 2**，输入配对包绝对路径导入。系统验证授权机公网 TLS、版本和双节点凭据，重启后如打包中心公网健康检查失败则恢复原配置。两台服务器的菜单 **18 → 1** 显示配对状态；授权机菜单 **18 → 3** 撤销身份并阻断远端业务。升级时安排两机维护窗口并保持相同正式版，不能在其中一台直接改为同机角色。菜单 **14** 分别卸载本机程序并保留本机数据；签发中断留下的待核对标记需先在授权后台核对或撤销节点后处理。
+
+### 同一服务器：执行原一键安装命令
+
+两个业务域名都指向这台服务器时，在该服务器执行：
+
+```sh
+sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role all --auth-domain auth.example.com --build-domain build.example.com
+```
+
+`--role all` 同时运行授权、打包和 Worker。菜单 **18** 会显示同机无需配对；现有同机安装升级时保留角色、数据库、签名密钥和配置。首次取得私有 Release 需登录；配置只读令牌后，各节点可用保存的 `install.sh` 携带相应 `--role` 获取签名 Latest 版本。仅本地源码验证可用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能代替签名生产包。
+
+后续云端安全中心对接步骤：
+1. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
+2. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo appgog security-connect https://security.example.com:9443 /root/对应配对包 <独立获取的CA-SHA256指纹>`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
+3. 业务机执行 `sudo appgog security-doctor`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
 
 授权机和打包机均由宿主 systemd 代理开机执行首次固定范围扫描，此后约每五分钟复查；本地管理员手动检查共用同一锁和冷却。节点定期将状态、检查时间和计数经 mTLS 上报云端，详情仅留本机；云端超过十五分钟未见有效扫描或超过两分钟未收到节点报告时标为过期。云端的宿主结果是节点自报，不能独立证明节点未失守；此候选没有自动删除、隔离或重建机制。请先完成 Linux systemd、ClamAV、两/三机 TLS 与恢复演练再用于生产。
 

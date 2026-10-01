@@ -1,31 +1,53 @@
-# APPGOG打包授权系统 v1.2.65
+# APPGOG打包授权系统 v1.2.66
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.65 增加授权和打包节点每五分钟本机固定范围检查与云端自报时效、状态变更告警（候选，非独立宿主证据）；v1.2.63 增加授权机 Linux 本机配置检查、固定范围文件基线比对、可选 ClamAV 六文件检查和后台一键入口（候选，待 Linux 实机验收；不覆盖业务数据或整个宿主机）；v1.2.62 修复私有 Release 附件认证回下载；v1.2.61 增加授权后台的云端安全状态、文件摘要上报和分身份配对；目前云端只做监测与告警，分机角色安装已加入安装器，仍待 Linux 双拓扑实机验收。v1.2.60 完成纯净源码与授权桥的卸载解耦。授权桥 1.1.11 在 Xboard 正式卸载插件时撤销 bootstrap 宿主挂载，清除常驻 Guard、主题登记、安装身份和本地激活状态，并安排 PHP/Octane 运行时重载；站点在桥安装后追加的 bootstrap 自定义内容会保留。只删除保护清单但不执行正式卸载仍返回 423。官方产品 Git 和源 ZIP 不包含桥，也不依赖桥即可安装运行；桥、授权注入、签名和混淆仍只属于授权中心生成的客户保护包。
+v1.2.66 将三种一键安装命令按服务器角色分段说明；v1.2.65 增加授权和打包节点每五分钟本机固定范围检查与云端自报时效、状态变更告警（候选，非独立宿主证据）；v1.2.63 增加授权机 Linux 本机配置检查、固定范围文件基线比对、可选 ClamAV 六文件检查和后台一键入口（候选，待 Linux 实机验收；不覆盖业务数据或整个宿主机）；v1.2.62 修复私有 Release 附件认证回下载；v1.2.61 增加授权后台的云端安全状态、文件摘要上报和分身份配对；目前云端只做监测与告警，分机角色安装已加入安装器，仍待 Linux 双拓扑实机验收。v1.2.60 完成纯净源码与授权桥的卸载解耦。授权桥 1.1.11 在 Xboard 正式卸载插件时撤销 bootstrap 宿主挂载，清除常驻 Guard、主题登记、安装身份和本地激活状态，并安排 PHP/Octane 运行时重载；站点在桥安装后追加的 bootstrap 自定义内容会保留。只删除保护清单但不执行正式卸载仍返回 423。官方产品 Git 和源 ZIP 不包含桥，也不依赖桥即可安装运行；桥、授权注入、签名和混淆仍只属于授权中心生成的客户保护包。
 
 ## Linux 安装 + 专业管理菜单
 
-默认只运行 **一个 appgog Docker 容器**，包含 Node.js、SQLite、授权中心、打包中心、Worker 和 Caddy HTTPS。宿主机不需要额外配置 Node.js、数据库或反向代理。
+每台服务器只运行 **一个 appgog Docker 容器**。安装器会补齐所需的 Docker、Compose 等环境；Node.js、SQLite 与 Caddy HTTPS 由容器提供。选择下面一种部署方式，在对应服务器上执行该段的一行安装命令。
 
-仓库现为私有。首次安装请在已登录的 GitHub Release 页面下载该版本的签名 `.run`（以及供后续升级使用的 `install.sh`），传到业务服务器执行：
+### 安装前：下载同一版本的安装包
+
+仓库是私有的。首次安装时，先登录 [GitHub Release](https://github.com/Jerry2586/Universal-authorization/releases)，下载签名文件 `APPGOG-Packaging-Licensing-System-1.2.66.run`，上传到要安装的每台服务器。以下命令都假设终端当前目录已有这个文件。把示例域名换成你的真实域名；独立部署时，授权域名指向授权服务器，打包域名指向打包服务器。两台服务器必须使用**相同版本**。
+
+### 方式一：授权中心与打包中心装在同一台服务器
+
+**执行位置：** 这台业务服务器。**安装内容：** 授权中心、打包中心和 Worker。`--role all` 表示同机模式，也是未指定角色时的默认模式。执行这一行：
 
 ```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
+sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role all --auth-domain sq.example.com --build-domain db.example.com
 ```
 
-三种一键安装方式共用**同一份签名 `.run`**，在目标 Linux 服务器分别执行其中一行；安装器会补齐环境并自动检查本机 HTTPS。两台分机使用相同版本，两个域名分别指向授权机和打包机。
+`--auth-domain` 填授权中心域名；`--build-domain` 填打包中心域名。两个域名都应指向这台服务器。同机模式不需要跨机配对。
+
+### 方式二：仅安装授权中心
+
+**执行位置：** 独立的授权服务器。**安装内容：** 授权中心和其持久数据；`--role license` 不启动打包中心。执行这一行：
 
 ```sh
-# 一台服务器：授权 + 打包 + Worker（原安装方式）
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role all --auth-domain sq.example.com --build-domain db.example.com
-# 授权服务器：仅授权中心
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role license --auth-domain sq.example.com --build-domain db.example.com
-# 打包服务器：打包中心 + Worker；初装进入待配对状态
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role build --auth-domain sq.example.com --build-domain db.example.com
+sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role license --auth-domain sq.example.com --build-domain db.example.com
 ```
 
-分机安装完成后，在授权机运行 `sudo appgog`，选 **18 → 2**，生成仅 root 可读的私有配对包；通过可信通道复制到打包机，并保持 root 所有、权限 0600；在打包机选 **18 → 2** 输入配对包路径。程序核对 HTTPS、双方版本及两个独立节点凭据，通过后启动业务。菜单 **18 → 1** 查看配对状态；授权机 **18 → 3** 可撤销两项身份；两台机器各自菜单 **14** 可卸载程序并保留数据。菜单 **17** 保留本地查杀和云端安全中心的加密配对。私有仓库的首次安装须先经登录的 Release 页面取得签名 `.run`；配置只读 Release 令牌后可用 `install.sh --role ...` 下载最新正式签名版。
+`--auth-domain` 填本机授权域名；`--build-domain` 填稍后要部署的打包服务器域名。安装后在这台服务器运行 `sudo appgog`，菜单 **18 → 2** 签发打包机和 Worker 的私有配对包。
+
+### 方式三：仅安装打包中心
+
+**执行位置：** 独立的打包服务器。**安装内容：** 打包中心和 Worker；`--role build` 初装后处于待配对状态，业务请求暂不开放。执行这一行：
+
+```sh
+sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role build --auth-domain sq.example.com --build-domain db.example.com
+```
+
+`--auth-domain` 填授权服务器的域名；`--build-domain` 填本机打包域名。将授权机签发的配对包通过可信通道复制到打包机，确保文件由 root 持有且权限为 0600；在打包机运行 `sudo appgog`，菜单 **18 → 2** 输入配对包绝对路径。程序会核对 HTTPS、版本和节点凭据，验证通过后开放业务。
+
+### 安装后的 Linux 菜单
+
+在相应的服务器运行 `sudo appgog`：菜单 **18 → 1** 查看部署角色和配对状态，授权机 **18 → 3** 可撤销节点身份；菜单 **17** 查看本地安全检查、对接云端安全中心；菜单 **14** 卸载程序并保留数据库、密钥、上传文件和备份。
+
+首次下载私有仓库的 `.run` 需要登录 GitHub；配置只读 Release 令牌后，才可用 `install.sh --role all|license|build` 获取最新正式签名包。
+
 若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。首次升级到支持私有源的正式签名版本后，在服务器配置仓库限定的 `Contents: Read` 令牌文件 `/etc/appgog/github-release.token`（root:root，权限 600），然后可用已保存的 `install.sh` 或后台更新助手升级。升级以签名 Latest Release 为准，单独推送 Git 源码不会产生正式更新。详细步骤见部署说明。
 
 引导器识别 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora 和 Oracle Linux 以及 amd64/arm64，自动补齐 CA、OpenSSL、系统工具、Docker、Compose 和 Buildx。它获取最新正式 Release，先验证 Ed25519 清单签名，再校验 `.run` 的 SHA-256，最后下载安装包并部署。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
@@ -38,7 +60,7 @@ sudo sh ./APPGOG-Packaging-Licensing-System-1.2.65.run --role build --auth-domai
 
 仓库为私有仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.65` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.66` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -135,7 +157,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.65 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.66 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
