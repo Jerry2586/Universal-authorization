@@ -6,6 +6,12 @@ cd "$(dirname "$0")/../.."
 [ -f .env ] || { echo '先运行同机 Docker 验证并构建镜像' >&2; exit 1; }
 test_root=$(mktemp -d)
 cleanup() {
+  result=$?
+  if [ "$result" -ne 0 ]; then
+    for role in license build; do
+      [ ! -f "$test_root/$role.env" ] || docker compose -p "appgog-split-$role" --env-file "$test_root/$role.env" -f compose.yaml logs --tail=120 appgog >&2 || true
+    done
+  fi
   for role in license build; do
     [ ! -f "$test_root/$role.env" ] || docker compose -p "appgog-split-$role" --env-file "$test_root/$role.env" -f compose.yaml down -v --remove-orphans >/dev/null 2>&1 || true
   done
