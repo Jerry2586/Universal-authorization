@@ -1,8 +1,8 @@
 # Docker/Linux 部署说明
 
-日期：2026-10-01。
+日期：2026-10-02。
 
-APPGOG打包授权系统 v1.2.66 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
+APPGOG打包授权系统 v1.2.67 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
 
 ## 1. 前置条件
 
@@ -17,28 +17,22 @@ APPGOG打包授权系统 v1.2.66 的正式生产路线使用授权与打包同�
 
 首次安装会检查端口、公网 IPv4 与 DNS。已有系统升级复用 `.env` 中的现有域名，不执行首装专用的 DNS 指向强制匹配，但仍执行容器健康检查和公网 HTTPS 检查。`--skip-dns-check` 只适用于明确的离线预装；跳过后 Caddy 在 DNS 生效前无法取得受信任证书。
 
-## 2. 私有仓库安装与升级
+## 2. 一行命令安装与升级
 
-从已登录的私有 GitHub Release 下载正式签名 `.run`，上传到服务器并在 root 终端执行（替换版本号）：
+当前仓库及 Latest Release 可匿名读取。下方三条一行命令分别对应同机、仅授权、仅打包；在 root 终端选本机角色对应的一条执行，每次更新继续输入同一条。无需先上传 `.run`；引导器下载正式 Release 后校验 Ed25519 签名与 `.run` SHA-256，安装器补齐环境并部署。首次安装需两个真实域名与正确 DNS；已安装时保留原角色和域名。若仓库改为私有，匿名命令会失效，需从有权限的 Release 取得签名 `.run` 或提供独立的受控发布源。
 
-```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
-```
-
-若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。首次升级至支持私有源的正式签名版后，按本页末尾配置只读 Release 令牌。后续从已登录的 GitHub Release 下载 `install.sh` 并执行 `sudo sh ./install.sh`，或使用后台更新助手；单独推送源码不会产生正式更新。
-
-正式签名版的 `.run` 首次运行时识别系统和 CPU，补齐 CA、OpenSSL、下载与校验工具，获取最新正式 Release，验证 Ed25519 清单签名及 `.run` SHA-256，再由正式安装器补齐 Docker Engine、Compose v2.24+ 和 Buildx，提示输入两个真实域名并启动唯一的 appgog 容器。
+若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。下载引导器需要 `curl`，下载后缺失的 OpenSSL、校验工具、Docker Engine、Compose v2.24+ 和 Buildx 会自动补齐。仅推送源码不产生正式更新。
 
 今后发布更高版本后，使用签名 Release 的 `install.sh` 或后台助手：引导器读取 `/opt/appgog/current/package.json`，版本相同且运行健康时安全退出；目标版本更高则下载、验签，把整套程序写入新的 `/opt/appgog/releases/<版本>`，创建完整备份并原子切换 `current`。`.env`、日志与备份位于 `/opt/appgog/shared`，数据库、业务签名密钥、上传与构建成品保留在 Docker 数据卷；程序文件强制覆盖为发布版本，升级失败恢复旧链接和旧服务。目标版本更低时默认拒绝降级。
 
 默认安装到 /opt/appgog，安装全局 appgog 管理命令。要求 x86_64/amd64 或 aarch64/arm64、至少 4 GiB 可用磁盘、可联网的软件源和镜像仓库。已有 Docker 会复用，缺失插件从其已配置软件源补齐，无法获得受支持版本时明确报错。
 
-仓库是私有的，引导脚本必须从已登录的私有 Release 获取；正式版本同时发布源码 ZIP、版本化 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定 `install.sh`。引导器不信任下载站返回的文件名或哈希，只接受通过仓库内置公钥验证的签名清单。
+正式版本同时发布源码 ZIP、版本化 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定 `install.sh`。引导器不信任下载站返回的文件名或哈希，只接受通过仓库内置公钥验证的签名清单。
 
 配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.66 sh ./install.sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.67 sh ./install.sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。
@@ -168,33 +162,33 @@ appgog migration-rollback-import <迁移ID>
 
 ### 独立授权服务器：执行授权安装命令
 
-两个域名分别解析到授权服务器和打包服务器。从私有 Release 下载同一版本的签名 `.run` 并上传至授权服务器，在该服务器执行：
+两个域名分别解析到授权服务器和打包服务器。在授权服务器执行一行命令（首装和更新都用这一行）：
 
 ```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role license --auth-domain auth.example.com --build-domain build.example.com
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role license --auth-domain auth.example.com --build-domain build.example.com
 ```
 
 `--role license` 仅启动授权服务；`--auth-domain` 是本机授权域名；`--build-domain` 是另一台打包机的域名。安装器只检查本机授权域名的 HTTPS/DNS。运行 `sudo appgog`，选 **18 → 2** 签发打包节点与 Worker 身份，生成 root:600 的私有 JSON 配对包；记录文件只保存两个节点 ID。私有文件不可放入 Git、日志或公开目录。
 
 ### 独立打包服务器：执行打包安装命令
 
-将**相同版本**的签名 `.run` 上传至打包服务器，在这台服务器执行：
+在打包服务器执行一行命令（首装和更新都用这一行）：
 
 ```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role build --auth-domain auth.example.com --build-domain build.example.com
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role build --auth-domain auth.example.com --build-domain build.example.com
 ```
 
 `--role build` 启动打包中心和 Worker；`--auth-domain` 指向授权服务器；`--build-domain` 是本机打包域名。尚未配对时只提供健康接口，业务和 Worker 不运行。将授权机的私有配对包经可信通道复制到打包机，设置 root 所有、权限 0600；在打包机运行 `sudo appgog` 选 **18 → 2**，输入配对包绝对路径导入。系统验证授权机公网 TLS、版本和双节点凭据，重启后如打包中心公网健康检查失败则恢复原配置。两台服务器的菜单 **18 → 1** 显示配对状态；授权机菜单 **18 → 3** 撤销身份并阻断远端业务。升级时安排两机维护窗口并保持相同正式版，不能在其中一台直接改为同机角色。菜单 **14** 分别卸载本机程序并保留本机数据；签发中断留下的待核对标记需先在授权后台核对或撤销节点后处理。
 
-### 同一服务器：执行原一键安装命令
+### 同一服务器：执行原一键安装命令（首装与更新通用）
 
 两个业务域名都指向这台服务器时，在该服务器执行：
 
 ```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role all --auth-domain auth.example.com --build-domain build.example.com
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role all --auth-domain auth.example.com --build-domain build.example.com
 ```
 
-`--role all` 同时运行授权、打包和 Worker。菜单 **18** 会显示同机无需配对；现有同机安装升级时保留角色、数据库、签名密钥和配置。首次取得私有 Release 需登录；配置只读令牌后，各节点可用保存的 `install.sh` 携带相应 `--role` 获取签名 Latest 版本。仅本地源码验证可用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能代替签名生产包。
+`--role all` 同时运行授权、打包和 Worker。菜单 **18** 会显示同机无需配对；现有同机安装升级时保留角色、数据库、签名密钥和配置。当前公开 Release 无需令牌；各节点重复原命令即可获取签名 Latest 版本。仅本地源码验证可用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能代替签名生产包。
 
 后续云端安全中心对接步骤：
 1. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
@@ -206,9 +200,9 @@ sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role all --auth-domain 
 每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
 每台业务机的 `sudo appgog` 菜单 17 和命令 `sudo appgog security-local scan|status` 分别启动本地固定范围扫描、查看报告；云端身份诊断与配对独立显示。首次配对需要由云端服务器控制台取得 CA 证书 SHA-256 指纹，不能仅从收到的身份包读取后照抄；若已有 CA 变化，配对会拒绝，必须离线核对事件并安排审计后的 CA 恢复。普通网络失联只报告异常，不永久锁死管理入口。配对中的重启会短暂停服务，应在维护窗口进行。
 
-## 私有 GitHub Release 的在线安全更新
+## 仓库改为私有时的在线安全更新
 
-仓库设为私有后，公开的 `releases/latest/download` 和第三方代理不能获取附件。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：
+本节仅在未来把仓库设为私有时适用。当前公开仓库的三条在线命令无需令牌。私有仓库的匿名 `releases/latest/download` 和原始源码地址都不可获取；必须先从有权限的 Release 取得引导器和签名包，或建立独立的受控公开引导器，再配置令牌访问发布附件。v1.2.61 起在线更新助手和安装器会优先使用 GitHub Release API；在业务服务器上为 `Jerry2586/Universal-authorization` 配置仅 `Contents: Read` 的细粒度、限定仓库访问令牌，保存为 `/etc/appgog/github-release.token`，所有者为 root、权限为 600。不要把令牌写入 `.env`、网页、URL、命令行参数或仓库。用受控的交互式编辑器写入令牌后执行：
 
 ```sh
 install -d -m 700 /etc/appgog

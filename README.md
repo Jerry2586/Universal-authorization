@@ -1,66 +1,62 @@
-# APPGOG打包授权系统 v1.2.66
+# APPGOG打包授权系统 v1.2.67
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.66 将三种一键安装命令按服务器角色分段说明；v1.2.65 增加授权和打包节点每五分钟本机固定范围检查与云端自报时效、状态变更告警（候选，非独立宿主证据）；v1.2.63 增加授权机 Linux 本机配置检查、固定范围文件基线比对、可选 ClamAV 六文件检查和后台一键入口（候选，待 Linux 实机验收；不覆盖业务数据或整个宿主机）；v1.2.62 修复私有 Release 附件认证回下载；v1.2.61 增加授权后台的云端安全状态、文件摘要上报和分身份配对；目前云端只做监测与告警，分机角色安装已加入安装器，仍待 Linux 双拓扑实机验收。v1.2.60 完成纯净源码与授权桥的卸载解耦。授权桥 1.1.11 在 Xboard 正式卸载插件时撤销 bootstrap 宿主挂载，清除常驻 Guard、主题登记、安装身份和本地激活状态，并安排 PHP/Octane 运行时重载；站点在桥安装后追加的 bootstrap 自定义内容会保留。只删除保护清单但不执行正式卸载仍返回 423。官方产品 Git 和源 ZIP 不包含桥，也不依赖桥即可安装运行；桥、授权注入、签名和混淆仍只属于授权中心生成的客户保护包。
+v1.2.67 恢复三种可重复运行的一行在线安装命令（首装或更新）；v1.2.66 将三种安装命令按服务器角色分段说明；v1.2.65 增加授权和打包节点每五分钟本机固定范围检查与云端自报时效、状态变更告警（候选，非独立宿主证据）；v1.2.63 增加授权机 Linux 本机配置检查、固定范围文件基线比对、可选 ClamAV 六文件检查和后台一键入口（候选，待 Linux 实机验收；不覆盖业务数据或整个宿主机）；v1.2.62 修复私有 Release 附件认证回下载；v1.2.61 增加授权后台的云端安全状态、文件摘要上报和分身份配对；目前云端只做监测与告警，分机角色安装已加入安装器，仍待 Linux 双拓扑实机验收。v1.2.60 完成纯净源码与授权桥的卸载解耦。授权桥 1.1.11 在 Xboard 正式卸载插件时撤销 bootstrap 宿主挂载，清除常驻 Guard、主题登记、安装身份和本地激活状态，并安排 PHP/Octane 运行时重载；站点在桥安装后追加的 bootstrap 自定义内容会保留。只删除保护清单但不执行正式卸载仍返回 423。官方产品 Git 和源 ZIP 不包含桥，也不依赖桥即可安装运行；桥、授权注入、签名和混淆仍只属于授权中心生成的客户保护包。
 
 ## Linux 安装 + 专业管理菜单
 
 每台服务器只运行 **一个 appgog Docker 容器**。安装器会补齐所需的 Docker、Compose 等环境；Node.js、SQLite 与 Caddy HTTPS 由容器提供。选择下面一种部署方式，在对应服务器上执行该段的一行安装命令。
 
-### 安装前：下载同一版本的安装包
+### 安装前：配置域名
 
-仓库是私有的。首次安装时，先登录 [GitHub Release](https://github.com/Jerry2586/Universal-authorization/releases)，下载签名文件 `APPGOG-Packaging-Licensing-System-1.2.66.run`，上传到要安装的每台服务器。以下命令都假设终端当前目录已有这个文件。把示例域名换成你的真实域名；独立部署时，授权域名指向授权服务器，打包域名指向打包服务器。两台服务器必须使用**相同版本**。
+以下三条命令分别对应一种安装方式。**只在所选角色的服务器上执行该角色的一条命令**，终端需是 root（普通用户在 `sh` 前加 `sudo`）。无需提前下载 `.run`、进入特定目录或手动安装 Docker；服务器需要有 `curl` 和访问 GitHub 的网络。首次安装前将授权域名与打包域名分别解析至相应服务器，确保 80/443 可用。下面使用本站的真实域名；给其他站安装时替换两个域名。
 
-### 方式一：授权中心与打包中心装在同一台服务器
+每次发布新正式版后，在同一台服务器**重复执行原来那条命令**：未安装会首装，版本相同且健康会安全退出，有新签名版本会备份并升级。已安装时沿用已有域名和角色，不能用另一种命令把原服务器转换角色。引导器校验发布签名与文件哈希。
 
-**执行位置：** 这台业务服务器。**安装内容：** 授权中心、打包中心和 Worker。`--role all` 表示同机模式，也是未指定角色时的默认模式。执行这一行：
+### 方式一：授权中心与打包中心同机（原一键部署）
 
-```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role all --auth-domain sq.example.com --build-domain db.example.com
-```
-
-`--auth-domain` 填授权中心域名；`--build-domain` 填打包中心域名。两个域名都应指向这台服务器。同机模式不需要跨机配对。
-
-### 方式二：仅安装授权中心
-
-**执行位置：** 独立的授权服务器。**安装内容：** 授权中心和其持久数据；`--role license` 不启动打包中心。执行这一行：
+**执行位置：** 同机业务服务器。`--role all` 启动授权、打包和 Worker；两个域名都解析到这台服务器。安装或更新都输入同一行：
 
 ```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role license --auth-domain sq.example.com --build-domain db.example.com
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role all --auth-domain sq.appgog.top --build-domain db.appgog.top
 ```
 
-`--auth-domain` 填本机授权域名；`--build-domain` 填稍后要部署的打包服务器域名。安装后在这台服务器运行 `sudo appgog`，菜单 **18 → 2** 签发打包机和 Worker 的私有配对包。
+### 方式二：独立授权服务器
 
-### 方式三：仅安装打包中心
-
-**执行位置：** 独立的打包服务器。**安装内容：** 打包中心和 Worker；`--role build` 初装后处于待配对状态，业务请求暂不开放。执行这一行：
+**执行位置：** 授权服务器。`--role license` 只运行授权中心；`--auth-domain` 是本机域名，`--build-domain` 是打包服务器域名。安装或更新都输入同一行：
 
 ```sh
-sudo sh ./APPGOG-Packaging-Licensing-System-1.2.66.run --role build --auth-domain sq.example.com --build-domain db.example.com
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role license --auth-domain sq.appgog.top --build-domain db.appgog.top
 ```
 
-`--auth-domain` 填授权服务器的域名；`--build-domain` 填本机打包域名。将授权机签发的配对包通过可信通道复制到打包机，确保文件由 root 持有且权限为 0600；在打包机运行 `sudo appgog`，菜单 **18 → 2** 输入配对包绝对路径。程序会核对 HTTPS、版本和节点凭据，验证通过后开放业务。
+首次安装后执行 `appgog`，通过菜单 **18 → 2** 签发私有配对包，并经可信通道传给打包服务器。
+
+### 方式三：独立打包服务器
+
+**执行位置：** 打包服务器。`--role build` 运行打包中心和 Worker；`--auth-domain` 指向授权机，`--build-domain` 是本机域名。安装或更新都输入同一行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Universal-authorization/main/install-docker.sh | sh -s -- --role build --auth-domain sq.appgog.top --build-domain db.appgog.top
+```
+
+首次安装后处于待配对状态。将授权机签发的配对包以 root 所有、0600 权限放在打包机，在 `appgog` 菜单 **18 → 2** 导入；验证通过后开放业务。分机部署的两台服务器需保持相同正式版本。
 
 ### 安装后的 Linux 菜单
 
 在相应的服务器运行 `sudo appgog`：菜单 **18 → 1** 查看部署角色和配对状态，授权机 **18 → 3** 可撤销节点身份；菜单 **17** 查看本地安全检查、对接云端安全中心；菜单 **14** 卸载程序并保留数据库、密钥、上传文件和备份。
 
-首次下载私有仓库的 `.run` 需要登录 GitHub；配置只读 Release 令牌后，才可用 `install.sh --role all|license|build` 获取最新正式签名包。
+上述三条命令从当前公开可读的 GitHub `main` 获取稳定引导器。引导器获取 Latest 正式发布包，先验证 Ed25519 清单签名，再核对 `.run` SHA-256，最后安装或升级。若未来将仓库改为私有，匿名在线命令会失效；需另外提供公开的引导器和有权限的发布附件来源，或从有权限的 Release 下载 `.run` 离线安装。不能把访问令牌直接写进命令行或 README。
 
-若系统尚未安装 curl，Debian/Ubuntu 先执行 `apt-get update && apt-get install -y curl ca-certificates`；RHEL 系先执行 `dnf install -y curl ca-certificates`（旧系统用 `yum`）。首次升级到支持私有源的正式签名版本后，在服务器配置仓库限定的 `Contents: Read` 令牌文件 `/etc/appgog/github-release.token`（root:root，权限 600），然后可用已保存的 `install.sh` 或后台更新助手升级。升级以签名 Latest Release 为准，单独推送 Git 源码不会产生正式更新。详细步骤见部署说明。
-
-引导器识别 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora 和 Oracle Linux 以及 amd64/arm64，自动补齐 CA、OpenSSL、系统工具、Docker、Compose 和 Buildx。它获取最新正式 Release，先验证 Ed25519 清单签名，再校验 `.run` 的 SHA-256，最后下载安装包并部署。首次按提示填两个真实域名，安装器自动生成密钥和六位数字管理员密码、启动容器并检查公网 HTTPS。
-
-私有仓库的原始源码地址无法匿名获取引导器；配置只读令牌后，引导器通过 GitHub Release API 下载正式包。无论来自哪个源，签名或哈希不匹配都会拒绝执行。自有国内对象存储可通过 `APPGOG_CHINA_RELEASE_BASE=https://你的国内地址` 配置。完全断网时仍可上传版本化 `.run` 离线安装。传入一次性 `--cloudflare-token` 后可自动创建或更新两个 A 记录；Token 不写入 `.env` 或日志。
+若发行版缺少 `curl`，先用系统包管理器安装 `curl` 和 CA 证书；一行命令从网络获取引导器需要一个下载工具。引导器支持 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora、Oracle Linux 和 amd64/arm64，自动补齐 OpenSSL、校验工具、Docker、Compose 与 Buildx。安装器自动生成密钥和初始管理员密码、启动容器并检查公网 HTTPS。
 
 安装器会在构建前真实拉取 Node 与 Caddy 基础镜像做网络探测。Docker Hub、DNS 或 TLS 链路不可用时，会自动改用 DaoCloud 公开维护的 Docker Hub 镜像路径，并把成功选择同步到升级后的 `.env`；构建发生临时网络错误会自动重试 3 次。整个过程不会关闭 TLS，也不会配置 `insecure-registries`。探测和构建分别写入 `shared/logs/image-source-*.log` 与 `shared/logs/build-*.log`。
 
 重复执行同一命令时，引导器读取 `/opt/appgog/current/package.json`：版本相同且运行健康时安全退出；发现更高正式版本时下载并验签，把完整程序写入新的 `/opt/appgog/releases/<版本>`，创建备份并原子切换 `current`。`.env`、数据库、签名密钥、管理员身份、上传、构建成品和备份保留在 `/opt/appgog/shared` 与 Docker 数据卷中；升级失败会恢复旧程序链接和服务，默认拒绝自动降级。
 
-仓库为私有仓库。每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
+每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.66` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.67` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -84,7 +80,7 @@ appgog doctor
 
 完整安装、安全更新、备份和恢复步骤见 [Docker/Linux 部署说明](docs/deployment.md)。
 
-只有需要离线维护或二次开发时才使用本节。标准首装和跨版本升级始终使用上方固定的一行命令。手动方式先解压正式发布 ZIP 或用授权身份克隆私有仓库到 `/opt/appgog`，然后执行：
+只有需要离线维护或二次开发时才使用本节。标准首装和跨版本升级始终使用上方固定的一行命令。手动方式先解压正式发布 ZIP 或克隆仓库到 `/opt/appgog`，然后执行：
 
 ```sh
 cd /opt/appgog
@@ -157,7 +153,7 @@ npm run cms:install -- --role worker --license-url https://auth.example.com --no
 npm run cms:start
 ```
 
-生成可交付的干净 v1.2.66 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
+生成可交付的干净 v1.2.67 安装 ZIP、版本化 `.run`、稳定 `install.sh` 和签名清单（自动排除 `.env`、数据库、密钥、旧制品和 Git 历史）：
 
 ```powershell
 $env:APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH = 'C:\安全目录\appgog-release-private.pem'
