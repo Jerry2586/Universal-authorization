@@ -4,7 +4,7 @@ set -eu
 [ "${GITHUB_ACTIONS:-}" = true ] || { echo 'Only isolated GitHub Actions runners are supported' >&2; exit 1; }
 [ "$(id -u)" = 0 ] || { echo 'Requires root on the isolated runner' >&2; exit 1; }
 SOURCE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-TEST_ROOT=/opt/appgog-host-security-ci
+TEST_ROOT=/appgog-host-security-ci
 UNIT=/etc/systemd/system/appgog-host-security.service
 STATE=/var/lib/appgog-security
 AGENT=/usr/local/lib/appgog-security/host-security-agent.py
