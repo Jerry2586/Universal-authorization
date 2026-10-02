@@ -9,6 +9,7 @@ const read = (name) => readFileSync(resolve(root, name), 'utf8');
 test('admin UI exposes independent announcement, protected key reveal, and signed online update controls', () => {
   const html = read('apps/web/public/admin.html');
   const script = read('apps/web/public/assets/portal/admin-page.js');
+  const securityStyles = read('apps/web/public/assets/security-preview.css');
   const licenses = read('apps/web/public/assets/portal/licenses.js');
   const announcements = read('apps/web/public/assets/portal/announcements.js');
   const operations = read('apps/web/public/assets/portal/operations.js');
@@ -50,6 +51,22 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
   assert.match(html, /name="plan_code"/);
   assert.match(script, /createAnnouncementUi/);
   assert.match(script, /createOperationsUi/);
+  assert.match(html, /id="security-local-heading">授权服务器 Linux 环境检查/);
+  assert.match(html, /id="security-local-run"[^>]*>一键检查本机/);
+  assert.match(html, /id="security-local-state" role="status">本机检查代理状态未知/);
+  assert.match(html, /id="security-local-results" aria-label="检查项目">/);
+  assert.match(script, /request\('\/web\/admin\/security\/local-scan'\)/);
+  assert.match(script, /status\.dataset\.state = report\.summary_state \|\| 'unavailable'/);
+  assert.match(script, /finding: '本机检查发现安全问题'/);
+  assert.match(script, /row\.dataset\.state = item\.state/);
+  assert.match(script, /ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用', stale: '结果过期'/);
+  assert.match(script, /status\.dataset\.state = 'unavailable'/);
+  for (const state of ['ok', 'warning', 'finding', 'unavailable', 'stale']) {
+    assert.match(securityStyles, new RegExp(`#security-local-state\\[data-state=${state}\\]`));
+    assert.match(securityStyles, new RegExp(`#security-local-results li\\[data-state=${state}\\]`));
+  }
+  assert.doesNotMatch(html, /id="security-local-state"[^>]*>\s*(?:健康|正常|安全)\s*</);
+  assert.doesNotMatch(html, /id="security-local-results"[^>]*>[\s\S]*?<li[^>]*>[^<]*(?:健康|正常|安全)/);
   assert.match(announcements, /\/web\/admin\/announcement/);
   assert.match(announcements, /function preview/);
   assert.match(operations, /install-version/);

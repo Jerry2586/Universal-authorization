@@ -141,17 +141,21 @@ export function createAdminPage(shell) {
     if (!status || !list) return;
     try {
       const report = await request('/web/admin/security/local-scan');
-      status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: '本机检查完成', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '未知';
-      timestamp.textContent = report.checked_at ? `检查时间：${report.checked_at}` : (report.reason || '尚无检查时间');
+      status.dataset.state = report.summary_state || 'unavailable';
+      status.textContent = report.state === 'running' ? '本机检查正在执行'
+        : report.state === 'idle' ? '等待首次检查'
+          : ({ ok: '本机检查完成，固定范围未发现异常', stale: '本机检查结果已过期', warning: '本机检查完成，存在需复核项目', unavailable: '本机检查存在不可用项目', finding: '本机检查发现安全问题' })[report.summary_state] || '本机检查状态未知';
+      timestamp.textContent = report.checked_at ? `检查时间：${report.checked_at}${report.stale ? ' · 已过期，等待重新检查' : ''}` : (report.reason || '尚无检查时间');
       list.replaceChildren();
       for (const item of report.checks ?? []) {
         const row = document.createElement('li');
-        row.textContent = `${item.name} · ${({ ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' })[item.state] || '未知'} · ${item.detail}`;
+        row.dataset.state = item.state;
+        row.textContent = `${item.name} · ${({ ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用', stale: '结果过期' })[item.state] || '未知'} · ${item.detail}`;
         list.append(row);
       }
       if (report.state === 'running') setTimeout(() => void renderLocalSecurity(), 2000);
     } catch (error) {
-      status.textContent = '本机代理不可用'; timestamp.textContent = error.message; list.replaceChildren();
+      status.dataset.state = 'unavailable'; status.textContent = '本机代理不可用'; timestamp.textContent = error.message; list.replaceChildren();
     }
   }
 

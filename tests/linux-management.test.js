@@ -34,6 +34,7 @@ function text(path) {
 test('Linux installer installs Docker, protects existing configuration, and creates the global manager', () => {
   const installer = text(scripts.installer);
   const releaseInstaller = text(scripts.releaseInstallLibrary);
+  const hostSecurityInstaller = installer.split('install_host_security_agent() {')[1].split('\nprint_result() {')[0];
   assert.match(installer, /docker-ce docker-ce-cli containerd\.io docker-buildx-plugin docker-compose-plugin/);
   assert.match(installer, /appgog_compose_version_supported 24/);
   assert.match(text(scripts.dockerInstallLibrary), /compose_minor.*-ge "\$required_minor"/);
@@ -74,8 +75,12 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /case "\$existing" in[\s\S]*"\$INSTALL_ROOT"\/\*/);
   assert.doesNotMatch(installer.split('install_host_security_agent() {')[0], /ProtectSystem=strict/);
   assert.match(installer, /install_host_security_agent\(\)[\s\S]*ProtectSystem=strict/);
+  assert.match(installer, /install -o root -g root -m 0700 "\$CURRENT_LINK\/scripts\/host_posture_checks\.py" "\$agent_dir\/host_posture_checks\.py"/);
   assert.match(installer, /install -o root -g root -m 0700 "\$CURRENT_LINK\/scripts\/host-security-agent\.py"/);
+  assert.match(installer, /APPGOG_INSTALL_ROOT="\$INSTALL_ROOT" "\$python_bin" "\$agent_file" --write-posture-baseline/);
   assert.match(installer, /ExecStart=\$python_bin \$agent_file/);
+  assert.doesNotMatch(hostSecurityInstaller, /ExecStart=.*CURRENT_LINK/);
+  assert.doesNotMatch(installer, /--approve-host-baseline/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
   assert.match(installer, /DNS A 记录/);

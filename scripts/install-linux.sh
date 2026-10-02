@@ -658,6 +658,7 @@ install_host_security_agent() {
   install -d -o root -g root -m 0700 "$agent_dir"
   agent_file="$agent_dir/host-security-agent.py"
   agent_temp=$(mktemp "$agent_dir/.host-security-agent.XXXXXX")
+  install -o root -g root -m 0700 "$CURRENT_LINK/scripts/host_posture_checks.py" "$agent_dir/host_posture_checks.py"
   install -o root -g root -m 0700 "$CURRENT_LINK/scripts/host-security-agent.py" "$agent_temp"
   mv -f "$agent_temp" "$agent_file"
   python_bin=$(command -v python3)
@@ -702,6 +703,10 @@ EOF
   fi
   systemctl daemon-reload
   systemctl enable appgog-host-security.service >/dev/null
+  # Only after a healthy deployment: approve new signed program bytes; retain existing
+  # host configuration and port fingerprints instead of silently trusting changes.
+  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" "$python_bin" "$agent_file" --write-posture-baseline \
+    || log "程序/环境基线生成失败；后台将显示不可用"
   if ! systemctl restart appgog-host-security.service; then
     log '宿主机检查代理未启动；面板将显示不可用，请检查 journalctl -u appgog-host-security'
   fi

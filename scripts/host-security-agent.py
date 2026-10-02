@@ -13,6 +13,12 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
+# Installed as a root-owned module; the web container receives only the fixed scan socket.
+sys.path.insert(0, str(Path(__file__).parent))
+from host_posture_checks import (approve_host_baseline, backup_check, config_check,
+                                 container_check, inventory_check, ports_check,
+                                 ssh_check, write_posture_baseline)
+
 SOCKET = os.environ.get('APPGOG_HOST_SCAN_SOCKET', '/run/appgog-security/scan.sock')
 ROOT = Path(os.environ.get('APPGOG_INSTALL_ROOT', '/opt/appgog')).resolve()
 BASELINE = Path('/var/lib/appgog-security/baseline.json')
@@ -110,7 +116,8 @@ def malware_scan():
 
 
 def scan():
-    results = [integrity_check()]
+    results = [integrity_check(), inventory_check(ROOT), config_check(ROOT),
+               container_check(ROOT), ports_check(), ssh_check(), backup_check(ROOT)]
     try:
         info = Path('/etc/os-release').read_text(encoding='utf-8')
         distro = next((line[8:].strip('"') for line in info.splitlines() if line.startswith('PRETTY_NAME=')), 'Linux')
@@ -226,9 +233,17 @@ def main():
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['--write-baseline'] and os.geteuid() == 0:
-        write_baseline()
-    elif sys.argv[1:]:
+    action = sys.argv[1:]
+    if action in (['--write-baseline'], ['--write-posture-baseline'], ['--approve-host-baseline']):
+        if os.geteuid() != 0:
+            raise SystemExit('root required')
+        if action == ['--write-baseline']:
+            write_baseline()
+        elif action == ['--write-posture-baseline']:
+            write_posture_baseline(ROOT)
+        else:
+            approve_host_baseline(ROOT)
+    elif action:
         raise SystemExit('invalid action')
     else:
         main()
