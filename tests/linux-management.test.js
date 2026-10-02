@@ -144,7 +144,7 @@ test('deployment role resolver defaults legacy installs to all and fails closed 
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   for (const name of ['compose.yaml', 'compose.license.yaml', 'compose.build.yaml']) writeFileSync(join(fixture, name), 'services: {}\n');
   const envPath = join(fixture, '.env');
-  const command = `. "${scripts.deploymentRoleLibrary}"; role=$(appgog_deployment_role "${envPath}"); file=$(appgog_compose_file "${fixture}" "${envPath}"); printf '%s|%s\\n' "$role" "$file"`;
+  const command = `set -e; . "${scripts.deploymentRoleLibrary}"; role=$(appgog_deployment_role "${envPath}"); file=$(appgog_compose_file "${fixture}" "${envPath}"); printf '%s|%s\\n' "$role" "$file"`;
 
   writeFileSync(envPath, 'AUTH_DOMAIN=example.test\n');
   let result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });

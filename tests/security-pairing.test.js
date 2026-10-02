@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -37,7 +37,9 @@ function setup(t) {
   mkdirSync(bundle);
   mkdirSync(bin);
   writeFileSync(join(shared, '.env'), 'APPGOG_DEPLOYMENT_ROLE=license\nEXISTING_SETTING=keep\n');
-  writeFileSync(join(install, 'current', 'compose.yaml'), 'services: {}\n');
+  writeFileSync(join(install, 'current', 'compose.license.yaml'), 'services: {}\n');
+  mkdirSync(join(install, 'current', 'scripts', 'lib'), { recursive: true });
+  copyFileSync(resolve(import.meta.dirname, '../scripts/lib/deployment-role.sh'), join(install, 'current', 'scripts', 'lib', 'deployment-role.sh'));
   for (const [name, contents] of Object.entries({
     id: '#!/bin/sh\nprintf "0\\n"\n',
     docker: '#!/bin/sh\nexit 0\n',
