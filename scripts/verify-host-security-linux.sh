@@ -130,7 +130,44 @@ if systemctl is-active --quiet appgog-local-response.timer; then echo 'Response 
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
 [ -s "$STATE/events.json" ] && getent group appgog-security >/dev/null
+# Released history survives repeated uninstall and must not block a safe reinstall.
+incident_hash=$(sha256sum "$STATE/incident.json" | cut -d' ' -f1)
+cp -p "$STATE/incident.json" "$TEST_ROOT/released-incident.json"
+lifecycle uninstall
+[ "$(sha256sum "$STATE/incident.json" | cut -d' ' -f1)" = "$incident_hash" ]
+# No CLI remains: active, malformed, oversized, foreign or linked records stay fenced.
+for invalid in active malformed oversized foreign-root bad-container unsafe-mode symlink; do
+  python3 -I - "$STATE/incident.json" "$TEST_ROOT/released-incident.json" "$invalid" <<'PY'
+import json,os,sys
+path,backup,case=sys.argv[1:]
+if os.path.lexists(path): os.unlink(path)
+item=json.load(open(backup))
+if case == 'symlink':
+    os.symlink(backup,path)
+else:
+    if case == 'active': item['state']='contained'
+    if case == 'foreign-root': item['root']='/foreign-installation'
+    if case == 'bad-container': item['container_id']='short-id'
+    payload='invalid JSON' if case == 'malformed' else json.dumps(item)
+    if case == 'oversized': payload += ' ' * 32769
+    with open(path,'w') as stream: stream.write(payload)
+    os.chmod(path,0o666 if case == 'unsafe-mode' else 0o600)
+PY
+  for action in install uninstall; do
+    if lifecycle "$action" > "$TEST_ROOT/incident-guard.log" 2>&1; then
+      echo "Invalid retained incident accepted: $invalid / $action" >&2; exit 1
+    fi
+    [ ! -e /usr/local/sbin/appgog-security-response ] && [ ! -e "$UNIT" ]
+    [ "$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)" = "$config_hash" ]
+    [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
+  done
+done
+rm -f "$STATE/incident.json"
+cp -p "$TEST_ROOT/released-incident.json" "$STATE/incident.json"
 lifecycle install
+[ "$(sha256sum "$STATE/incident.json" | cut -d' ' -f1)" = "$incident_hash" ]
+systemctl is-active --quiet appgog-host-security.service
+systemctl is-active --quiet appgog-local-response.timer
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
 echo 'Isolated Linux agent: install, upgrade, rollback, socket grants, engine and preserving uninstall passed'

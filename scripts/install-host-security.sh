@@ -80,9 +80,38 @@ for file in "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
   fi
 done
 validate_unit
-if [ "$ACTION" = install ] && { [ -e "$STATE_DIR/incident.json" ] || [ -L "$STATE_DIR/incident.json" ]; }; then
-  safe_parents "$RESPONSE_CLI"; safe_file "$RESPONSE_CLI"
-  "$RESPONSE_CLI" guard >/dev/null || fail '事故未解除，禁止覆盖独立安全执行器'
+incident_guard() {
+  [ -e "$STATE_DIR/incident.json" ] || [ -L "$STATE_DIR/incident.json" ] || return 0
+  if [ -e "$RESPONSE_CLI" ] || [ -L "$RESPONSE_CLI" ]; then
+    safe_parents "$RESPONSE_CLI"; safe_file "$RESPONSE_CLI"
+    "$RESPONSE_CLI" guard >/dev/null
+    return $?
+  fi
+  # Uninstall preserves incident history. With no executor, accept only a bounded,
+  # root-owned released record for this installation; never discard its evidence.
+  safe_parents "$STATE_DIR/incident.json"; safe_file "$STATE_DIR/incident.json"
+  [ -x /usr/bin/python3 ] || fail '事故历史校验需要系统 Python3'
+  safe_parents "$(readlink -f /usr/bin/python3)"
+  safe_file "$(readlink -f /usr/bin/python3)"
+  /usr/bin/python3 -I - "$STATE_DIR/incident.json" "$INSTALL_ROOT" <<'PY'
+import json,os,re,stat,sys
+fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+try:
+    metadata=os.fstat(fd)
+    assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == 0 and not metadata.st_mode & 0o022
+    assert metadata.st_size <= 32768
+    payload=os.read(fd,32769)
+    assert len(payload) <= 32768
+    item=json.loads(payload)
+    assert isinstance(item,dict) and item.get('schema') == 1
+    assert item.get('root') == sys.argv[2] and item.get('state') == 'released'
+    assert isinstance(item.get('container_id'),str) and re.fullmatch(r'[a-f0-9]{64}',item['container_id'])
+finally:
+    os.close(fd)
+PY
+}
+if [ "$ACTION" = install ]; then
+  incident_guard || fail '事故未解除或历史无效，禁止覆盖独立安全执行器'
 fi
 stop_response() {
   for service in appgog-local-response.timer appgog-local-response.service; do
@@ -104,9 +133,7 @@ if [ "$ACTION" = uninstall ]; then
   for file in "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI"; do
     if [ -e "$file" ] || [ -L "$file" ]; then safe_parents "$file"; safe_file "$file"; fi
   done
-  if [ -f "$STATE_DIR/incident.json" ] || [ -L "$STATE_DIR/incident.json" ]; then
-    "$RESPONSE_CLI" guard >/dev/null || fail "事故未解除，禁止卸载隔离保护"
-  fi
+  incident_guard || fail '事故未解除或历史无效，禁止卸载隔离保护'
   stop_response
   if [ -e "$RESPONSE_TIMER" ]; then
     systemctl disable appgog-local-response.timer >/dev/null || fail '事故控制定时器无法禁用'
