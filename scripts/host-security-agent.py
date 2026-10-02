@@ -682,6 +682,121 @@ def container_contract_check():
                            'issues': unique_issues, 'binds': bind_evidence})
 
 
+def approved_baseline_pin(path):
+    """Validate and bind semantic baseline contents, excluding approval timestamps."""
+    baseline = json.loads(read_state(path, 1024 * 1024))
+    if not isinstance(baseline, dict) or not isinstance(baseline.get('files'), dict):
+        raise ValueError('invalid approved baseline inventory')
+    files = baseline['files']
+    if not files or len(files) > MAX_INVENTORY_FILES or any(not isinstance(name, str) or not name for name in files):
+        raise ValueError('invalid approved baseline count or path')
+    if baseline.get('schema') == 2:
+        if not isinstance(baseline.get('version'), str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', baseline['version']):
+            raise ValueError('invalid approved program version')
+        for name, digest in files.items():
+            if not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest):
+                raise ValueError('invalid approved program digest')
+            parts = name.split('/')
+            if any(part in {'', '.', '..'} for part in parts) or '\\' in name or name.startswith('/'):
+                raise ValueError('invalid approved program path')
+            if name not in PROGRAM_ROOT_FILES and (len(parts) < 2 or parts[0] not in PROGRAM_DIRS):
+                raise ValueError('unexpected approved program path')
+    elif baseline.get('schema') == 1:
+        for value in files.values():
+            if value == {'missing': True}:
+                continue
+            if not isinstance(value, dict) or any(type(value.get(key)) is not int or value[key] < 0 for key in ('mode', 'uid', 'gid')):
+                raise ValueError('invalid approved host metadata')
+            if value['mode'] > 0o7777 or ('link' in value and type(value['link']) is not bool):
+                raise ValueError('invalid approved host mode or link')
+            if 'digest' in value and (not isinstance(value['digest'], str) or not re.fullmatch(r'[a-f0-9]{64}', value['digest'])):
+                raise ValueError('invalid approved host digest')
+    else:
+        raise ValueError('unsupported approved baseline schema')
+    return hashlib.sha256(json.dumps({'schema': baseline.get('schema'), 'version': baseline.get('version'),
+                                     'files': files}, sort_keys=True,
+                                    separators=(',', ':')).encode()).hexdigest()
+
+
+def approved_image_check(baseline_checks=None):
+    """Read-only identity check against explicit local root approval; never enroll automatically."""
+    name, identifier = 'APPGOG 镜像身份', 'container.approved-image'
+    scope = 'full image ID and local-root-approved program/host baselines'
+    pin_path = STATE_DIR / 'approved-image.json'
+    if not pin_path.exists() and not pin_path.is_symlink():
+        return check(name, 'warning', '尚未由 root 独立核验并批准完整镜像 ID；仅有版本名不足以证明镜像可信',
+                     check_id=identifier, category='container', scope=scope,
+                     evidence={'approval': 'missing'})
+    try:
+        pin = json.loads(read_state(pin_path, 32768))
+        if not isinstance(pin, dict) or pin.get('schema') != 1 or pin.get('root') != str(ROOT) or \
+                not isinstance(pin.get('version'), str) or \
+                not re.fullmatch(r'sha256:[a-f0-9]{64}', pin.get('image_id', '')) or \
+                any(not re.fullmatch(r'[a-f0-9]{64}', pin.get(field, ''))
+                    for field in ('program_baseline', 'host_baseline')):
+            raise ValueError('invalid approval')
+        command = ['/usr/bin/docker', 'ps', '-aq', '--no-trunc',
+                   '--filter', 'label=com.docker.compose.project=appgog',
+                   '--filter', 'label=com.docker.compose.service=appgog']
+        environment = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}
+        listed = subprocess.run(command, capture_output=True, text=True, timeout=5,
+                                check=False, env=environment)
+        if listed.returncode != 0 or len(listed.stdout.encode()) > 4096:
+            raise OSError('container discovery failed')
+        ids = listed.stdout.split()
+        if len(ids) != 1 or not re.fullmatch(r'[a-f0-9]{64}', ids[0]):
+            raise ValueError('ambiguous full container identity')
+        inspected = subprocess.run(['/usr/bin/docker', 'inspect', ids[0]], capture_output=True,
+                                   text=True, timeout=5, check=False, env=environment)
+        if inspected.returncode != 0 or len(inspected.stdout.encode()) > 262144:
+            raise OSError('container inspection failed')
+        payload = json.loads(inspected.stdout)
+        if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+            raise ValueError('invalid inspection')
+        container = payload[0]
+        if container.get('Id') != ids[0] or not re.fullmatch(r'sha256:[a-f0-9]{64}', container.get('Image', '')):
+            raise ValueError('full container/image identity mismatch')
+        labels = container.get('Config', {}).get('Labels', {})
+        if labels.get('com.docker.compose.project') != 'appgog' or labels.get('com.docker.compose.service') != 'appgog':
+            raise ValueError('foreign container')
+        working = Path(labels.get('com.docker.compose.project.working_dir', ''))
+        if not working.is_absolute():
+            raise ValueError('missing installation identity')
+        working = working.resolve(strict=True)
+        if working != ROOT:
+            working.relative_to(ROOT / 'releases')
+        files = labels.get('com.docker.compose.project.config_files', '').split(',')
+        if len(files) != 1 or Path(files[0]).name not in {'compose.yaml', 'compose.license.yaml', 'compose.build.yaml'} or \
+                Path(files[0]).resolve(strict=True).parent != working:
+            raise ValueError('foreign Compose configuration')
+        drift = []
+        if container['Image'] != pin['image_id']:
+            drift.append('image-id-changed')
+        if pin['version'] != installed_version():
+            drift.append('version-changed')
+        if pin['program_baseline'] != approved_baseline_pin(BASELINE):
+            drift.append('program-baseline-changed')
+        if pin['host_baseline'] != approved_baseline_pin(HOST_BASELINE):
+            drift.append('host-baseline-changed')
+        # A matching metadata pin alone cannot bless an incomplete or changed installation.
+        checks = baseline_checks if baseline_checks is not None else [integrity_check(), host_configuration_check()]
+        if len(checks) != 2 or any(row.get('state') not in {'ok', 'finding'} for row in checks):
+            raise ValueError('current program/host coverage is unknown')
+        for label, row in zip(('program-files-changed', 'host-files-changed'), checks):
+            if row['state'] == 'finding':
+                drift.append(label)
+        return check(name, 'finding' if drift else 'ok',
+                     '镜像身份或批准基线发生变化：' + ', '.join(drift) + '；须独立复核，禁止自动重新批准'
+                     if drift else '完整镜像 ID 及程序/主机基线与本机 root 批准记录一致；仍非发布方镜像签名',
+                     check_id=identifier, category='container', severity='high' if drift else 'info', scope=scope,
+                     evidence={'container_id': ids[0], 'image_id': container['Image'],
+                               'approved_image_id': pin['image_id'], 'drift': drift})
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        return check(name, 'unavailable', '批准记录缺失字段、权限不安全、基线不可读或容器归属无法核验；不能判定可信',
+                     check_id=identifier, category='container', scope=scope,
+                     evidence={'approval': 'unverified'})
+
+
 def evaluate_permission(path, *, name, check_id, metadata=None, max_mode=0o600,
                         expected_uid=0, expected_gid=0, expect_directory=False, required=True):
     """Evaluate metadata only. Secret contents are never opened, returned or hashed."""
@@ -918,7 +1033,9 @@ def containment_check():
 
 
 def scan():
-    results = [integrity_check(), host_configuration_check(), container_contract_check(), containment_check()]
+    baseline_checks = [integrity_check(), host_configuration_check()]
+    results = [*baseline_checks, container_contract_check(),
+               approved_image_check(baseline_checks), containment_check()]
     try:
         info = Path('/etc/os-release').read_text(encoding='utf-8')
         distro = next((line[8:].strip('"') for line in info.splitlines() if line.startswith('PRETTY_NAME=')), 'Linux')

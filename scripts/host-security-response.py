@@ -150,11 +150,7 @@ def isolate(reason='manual'):
 
 
 def baseline_pin(path):
-    baseline = json.loads(AGENT.read_state(trusted(path), 1024 * 1024))
-    if not isinstance(baseline, dict) or not isinstance(baseline.get('files'), dict):
-        raise ValueError('invalid approved baseline inventory')
-    return hashlib.sha256(json.dumps({'schema': baseline.get('schema'), 'version': baseline.get('version'),
-                                      'files': baseline.get('files')}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return AGENT.approved_baseline_pin(trusted(path))
 
 
 def approve_image(expected):

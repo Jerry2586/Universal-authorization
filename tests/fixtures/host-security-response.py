@@ -55,8 +55,8 @@ class ResponseTests(unittest.TestCase):
         a.STATE_DIR = c.STATE
         a.BASELINE = c.STATE / 'baseline.json'
         a.HOST_BASELINE = c.STATE / 'host-baseline.json'
-        for path in (a.BASELINE, a.HOST_BASELINE):
-            a.atomic_json(path, {'schema': 2, 'version': VERSION, 'files': {'one': 'trusted'}})
+        a.atomic_json(a.BASELINE, {'schema': 2, 'version': VERSION, 'files': {'package.json': 'a' * 64}})
+        a.atomic_json(a.HOST_BASELINE, {'schema': 1, 'files': {'appgog.environment': {'missing': True}}})
         # Windows unit fixtures only: production root/path checking is exercised on Linux.
         self.addCleanup(patch.stopall)
         patch.object(c, 'trusted', lambda path, directory=False: Path(path)).start()
@@ -164,7 +164,7 @@ class ResponseTests(unittest.TestCase):
             c.resume('yes')
         with self.assertRaises(ValueError):
             c.approve_image(IMAGE)
-        a.atomic_json(a.BASELINE, {'schema': 2, 'version': VERSION, 'files': {'one': 'changed'}})
+        a.atomic_json(a.BASELINE, {'schema': 2, 'version': VERSION, 'files': {'package.json': 'c' * 64}})
         with self.assertRaisesRegex(ValueError, 'baseline differs'):
             c.resume('APPROVE-DATA-AND-RESUME')
         self.assertContained()

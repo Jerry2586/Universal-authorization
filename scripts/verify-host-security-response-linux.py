@@ -11,12 +11,25 @@ import time
 import zipfile
 
 assert os.environ.get('GITHUB_ACTIONS') == 'true' and os.geteuid() == 0
+assert sys.argv[2:] in ([], ['--official-recovery'])
+official_recovery = sys.argv[2:] == ['--official-recovery']
 root = Path(sys.argv[1]).resolve()
 assert str(root) == '/appgog-host-security-ci'
 cli = '/usr/local/sbin/appgog-security-response'
 state = Path('/var/lib/appgog-security')
 source = Path(__file__).resolve().parents[1]
 version = json.loads((source / 'package.json').read_text())['version']
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+control = load('linux_response_ci', Path('/usr/local/lib/appgog-security/host-security-response.py'))
+repair = load('linux_repair_ci', Path('/usr/local/lib/appgog-security/host-security-repair.py'))
+control.initialize()
 
 def run(args, *, success=True):
     result = subprocess.run(args, capture_output=True, text=True, timeout=120, check=False)
@@ -49,6 +62,19 @@ try:
         time.sleep(1)
     else:
         raise AssertionError('Test container did not become healthy')
+    if official_recovery:
+        # Actual production check functions, fresh official databases and real clamscan.
+        control.recovery_checks()
+        image_id = inspect(owned)['Image']
+        run([cli, 'approve-image', image_id])
+        approved_before = (state / 'approved-image.json').read_bytes()
+        assert control.AGENT.approved_image_check()['state'] == 'ok'
+        program_pin = control.baseline_pin(control.AGENT.BASELINE)
+        host_pin = control.baseline_pin(control.AGENT.HOST_BASELINE)
+        # Drift is introduced only after pre-incident approval; repair must restore the same pin.
+        changed_source = root / 'current/apps/web/public/admin.html'
+        changed_source.write_text(changed_source.read_text() + '\n<!-- isolated CI drift -->\n')
+        assert control.AGENT.integrity_check()['state'] == 'finding'
     run([cli, 'isolate'])
     incident = json.loads((state / 'incident.json').read_text())
     assert incident['container_id'] == owned and incident['state'] == 'contained'
@@ -74,15 +100,6 @@ try:
          '-out', str(keydir / 'release-public.pem')])
     (keydir / 'private.pem').chmod(0o600)
     (keydir / 'release-public.pem').chmod(0o600)
-    def load(name, path):
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        return module
-    control = load('linux_response_ci', Path('/usr/local/lib/appgog-security/host-security-response.py'))
-    repair = load('linux_repair_ci', Path('/usr/local/lib/appgog-security/host-security-repair.py'))
-    control.initialize()
     control.DIRECTORY = keydir
     bundle = root / 'ci-signed-source'
     bundle.mkdir(mode=0o700)
@@ -130,9 +147,30 @@ try:
     assert inspect(owned)['State']['Running'] is False and inspect(foreign)['State']['Running'] is True
     assert json.loads((state / 'incident.json').read_text())['state'] == 'source_repaired'
     run([cli, 'guard'], success=False)
-    # No verified clean image/data/antivirus conclusion: successful source repair never releases service.
-    run([cli, 'resume', 'APPROVE-DATA-AND-RESUME'], success=False)
-    print('Real Docker containment and actual Ed25519 source repair passed; service remained fenced.')
+    if official_recovery:
+        assert (state / 'approved-image.json').read_bytes() == approved_before
+        assert control.baseline_pin(control.AGENT.BASELINE) == program_pin
+        assert control.baseline_pin(control.AGENT.HOST_BASELINE) == host_pin
+        assert control.AGENT.approved_image_check()['state'] == 'ok'
+        run([cli, 'resume', 'MISSING-DATA-REVIEW'], success=False)
+        assert inspect(owned)['State']['Running'] is False
+        run([cli, 'resume', 'APPROVE-DATA-AND-RESUME'])
+        released = json.loads((state / 'incident.json').read_text())
+        assert released['state'] == 'released' and released['container_id'] == owned
+        assert released.get('data_reviewed_by_root_at') and not released.get('ci_teardown_only')
+        assert inspect(owned)['Image'] == image_id and inspect(owned)['State']['Running'] is True
+        assert inspect(owned)['State']['Health']['Status'] == 'healthy'
+        assert inspect(owned)['HostConfig']['RestartPolicy']['Name'] == 'unless-stopped'
+        assert inspect(foreign)['State']['Running'] is True
+        assert (state / 'approved-image.json').read_bytes() == approved_before
+        control.recovery_checks()
+        assert control.AGENT.container_contract_check()['state'] == 'ok'
+        run([cli, 'guard'])
+        print('Official fresh database, real clamscan, pre-incident image approval, containment, signed source repair and strict resume passed (isolated control fixture, not production business).')
+    else:
+        # No verified clean image/data/antivirus conclusion: source repair never releases service.
+        run([cli, 'resume', 'APPROVE-DATA-AND-RESUME'], success=False)
+        print('Real Docker containment and actual Ed25519 source repair passed; service remained fenced.')
 finally:
     # Only exact containers created by this disposable CI fixture are removed.
     for identifier in (owned, foreign):
@@ -140,7 +178,7 @@ finally:
             run(['docker', 'rm', '-f', identifier])
     # Keep the real evidence; CI teardown can uninstall only after an explicit test-only release marker.
     # This marker is not a production recovery or a successful resume claim.
-    if (state / 'incident.json').exists():
+    if not official_recovery and (state / 'incident.json').exists():
         item = json.loads((state / 'incident.json').read_text())
         item['state'] = 'released'
         item['ci_teardown_only'] = True
