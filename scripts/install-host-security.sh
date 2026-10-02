@@ -249,7 +249,8 @@ systemctl restart appgog-host-security.service
 systemctl is-active --quiet appgog-host-security.service || fail '服务未启动'
 attempt=0
 while [ "$attempt" -lt 10 ]; do
-  if [ -S "$RUNTIME_DIR/scan.sock" ] && [ "$(stat -c '%u:%g:%a' "$RUNTIME_DIR/scan.sock")" = "0:$GROUP_ID:660" ]; then
+  if [ -S "$RUNTIME_DIR/scan.sock" ] && [ "$(stat -c '%u:%g:%a' "$RUNTIME_DIR/scan.sock")" = "0:$GROUP_ID:660" ] &&
+     "$python_bin" -I -c 'import http.client,socket,sys; c=http.client.HTTPConnection("localhost",timeout=2); c.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); c.sock.settimeout(2); c.sock.connect(sys.argv[1]); c.request("GET","/status"); r=c.getresponse(); assert r.status==200; c.close()' "$RUNTIME_DIR/scan.sock" 2>/dev/null; then
     committed=true
     echo '本地代理已启动；扫描结论请查看后台或 appgog security-local status'
     exit 0
