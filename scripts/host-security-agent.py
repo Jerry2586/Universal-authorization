@@ -517,8 +517,26 @@ def validate_zip_budget(path, *, max_file_bytes=MAX_FILE_BYTES, max_scan_bytes=1
         magic = source.read(4)
     if magic not in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
         return
+    class MetadataReader:
+        # ZipFile reads central-directory metadata before infolist limits can run.
+        # Bound each read and the aggregate before allocating attacker-chosen sizes.
+        def __init__(self, source):
+            self.source, self.consumed = source, 0
+        def __getattr__(self, name):
+            return getattr(self.source, name)
+        def read(self, size=-1):
+            if size < 0:
+                position = self.source.tell()
+                self.source.seek(0, os.SEEK_END)
+                size = self.source.tell() - position
+                self.source.seek(position)
+            if size > 1024 * 1024 - self.consumed:
+                raise OSError('ZIP metadata read budget')
+            payload = self.source.read(size)
+            self.consumed += len(payload)
+            return payload
     try:
-        with zipfile.ZipFile(path) as archive:
+        with Path(path).open('rb') as source, zipfile.ZipFile(MetadataReader(source)) as archive:
             entries = archive.infolist()
             if (len(entries) > 100 or any(item.file_size >= max_file_bytes or item.flag_bits & 1 for item in entries)
                     or sum(item.file_size for item in entries) >= max_scan_bytes):

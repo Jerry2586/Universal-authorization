@@ -24,6 +24,16 @@ BUILD_DOMAIN=build.appgog.test
 chmod 600 "$TEST_ROOT/shared/.env"
 export APPGOG_INSTALL_ROOT=$TEST_ROOT APPGOG_HOST_ENV_FILE=$TEST_ROOT/shared/.env PYTHONDONTWRITEBYTECODE=1
 lifecycle() { sh "$RELEASE/scripts/install-host-security.sh" "$1"; }
+wait_report() {
+  attempt=0
+  while [ "$attempt" -lt 90 ]; do
+    curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock http://localhost/status > "$TEST_ROOT/report.json"
+    if jq -e '.state == "finished"' "$TEST_ROOT/report.json" >/dev/null; then return; fi
+    attempt=$((attempt + 1)); sleep 2
+  done
+  echo 'Initial/upgrade inspection did not finish' >&2
+  return 1
+}
 cleanup() {
   result=$?
   trap - 0 INT TERM
@@ -50,6 +60,10 @@ if APPGOG_ROOT="$UNTRUSTED" sh "$SOURCE/scripts/appgog.sh" status; then echo 'Un
 [ ! -e "$TEST_ROOT/unsafe-executed" ]
 lifecycle prepare
 lifecycle install
+# Preserve a completed pre-mutation report before testing transition history.
+# New Docker inspection may outlive installer readiness; socket readiness alone is insufficient.
+wait_report
+jq -e 'any(.checks[]; .id == "integrity.program" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 gid=$(getent group appgog-security | cut -d: -f3)
 [ "$(stat -c '%u:%g:%a' /run/appgog-security)" = "0:$gid:750" ]
 [ "$(stat -c '%u:%g:%a' /run/appgog-security/scan.sock)" = "0:$gid:660" ]
@@ -72,13 +86,11 @@ printf '
 lifecycle install
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
-attempt=0
-while [ "$attempt" -lt 90 ]; do
-  curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock http://localhost/status > "$TEST_ROOT/report.json"
-  if jq -e '.state == "finished"' "$TEST_ROOT/report.json" >/dev/null; then break; fi
-  attempt=$((attempt + 1)); sleep 2
-done
-jq -e '.state == "finished" and any(.checks[]; .id == "integrity.program" and .state == "finding") and (.history | length > 0)' "$TEST_ROOT/report.json" >/dev/null
+wait_report
+if ! jq -e '.state == "finished" and any(.checks[]; .id == "integrity.program" and .state == "finding") and (.history | length > 0)' "$TEST_ROOT/report.json" >/dev/null; then
+  jq '{state, checks: [.checks[] | {id,state}], history_count: (.history | length)}' "$TEST_ROOT/report.json" >&2
+  exit 1
+fi
 # A rejected upgrade must restore the prior active executable and service.
 agent_hash=$(sha256sum "$AGENT" | cut -d' ' -f1)
 printf '
