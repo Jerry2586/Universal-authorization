@@ -247,10 +247,10 @@ cleanup() {
     fi
     if [ "$rollback_ok" = true ]; then
       if [ "$old_active" = true ]; then
-        systemctl restart appgog-host-security.service && systemctl is-active --quiet appgog-host-security.service || rollback_ok=false
+        systemctl reset-failed appgog-host-security.service && systemctl restart appgog-host-security.service && systemctl is-active --quiet appgog-host-security.service || rollback_ok=false
       fi
       if [ "$old_response_active" = true ]; then
-        systemctl start appgog-local-response.timer && systemctl is-active --quiet appgog-local-response.timer || rollback_ok=false
+        systemctl reset-failed appgog-local-response.timer && systemctl start appgog-local-response.timer && systemctl is-active --quiet appgog-local-response.timer || rollback_ok=false
       fi
     fi
     if [ "$rollback_ok" != true ]; then
@@ -389,6 +389,8 @@ else echo '保留程序基线；升级差异须在可信版本核验后由 root 
 if [ ! -e "$STATE_DIR/host-baseline.json" ] && [ ! -L "$STATE_DIR/host-baseline.json" ]; then
   APPGOG_INSTALL_ROOT="$INSTALL_ROOT" "$python_bin" -I "$AGENT_FILE" --write-host-baseline || echo '首次主机配置基线失败；检查结果为不可用' >&2
 else echo '保留主机基线；不自动批准新增账户、端口或持久化配置'; fi
+# A validated reinstall/rollback may follow several failed starts inside systemd's window.
+systemctl reset-failed appgog-host-security.service
 systemctl restart appgog-host-security.service
 systemctl is-active --quiet appgog-host-security.service || fail '服务未启动'
 attempt=0
