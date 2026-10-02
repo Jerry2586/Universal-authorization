@@ -113,3 +113,23 @@ with socketserver.TCPServer(('127.0.0.1',0), a.Handler) as server:
   assert start.call_count==1
  server.shutdown(); worker.join(3)
 `));
+
+
+test('ZIP coverage limits and encrypted members cannot be accepted as clean',enabled,()=>run(fixture+`
+import zipfile
+with tempfile.TemporaryDirectory() as tmp:
+ p=fixture(tmp); target=p/'current/apps/input.zip'
+ with zipfile.ZipFile(target,'w',compression=zipfile.ZIP_DEFLATED) as z:
+  z.writestr('oversized',b'Z'*(9*1024*1024))
+ try: a.validate_zip_budget(target); raise AssertionError('oversized archive accepted')
+ except OSError: pass
+ with zipfile.ZipFile(target,'w') as z: z.writestr('small','ok')
+ a.validate_zip_budget(target)
+ with zipfile.ZipFile(target,'w') as z:
+  for i in range(101): z.writestr(str(i),'ok')
+ try: a.validate_zip_budget(target); raise AssertionError('entry budget accepted')
+ except OSError: pass
+ target.write_bytes(b'PK\\x03\\x04broken')
+ try: a.validate_zip_budget(target); raise AssertionError('broken ZIP accepted')
+ except OSError: pass
+`));

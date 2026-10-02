@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -507,6 +508,22 @@ def daily_database_identity():
     return records
 
 
+def validate_zip_budget(path):
+    """Reject known ZIP coverage gaps before trusting an engine clean exit."""
+    with Path(path).open('rb') as source:
+        magic = source.read(4)
+    if magic not in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
+        return
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+            if (len(entries) > 100 or any(item.file_size >= MAX_FILE_BYTES or item.flag_bits & 1 for item in entries)
+                    or sum(item.file_size for item in entries) >= 16 * 1024 * 1024):
+                raise OSError('ZIP scan coverage limit or encryption')
+    except (zipfile.BadZipFile, ValueError, NotImplementedError) as error:
+        raise OSError('invalid ZIP scan target') from error
+
+
 def malware_scan():
     """Bounded program scan only; missing coverage or stale DB never means clean."""
     scanner = SCANNER
@@ -522,6 +539,8 @@ def malware_scan():
         recorded = {name: file_identity(Path(name).lstat()) for name in selected}
         if any(not stat.S_ISREG(Path(name).lstat().st_mode) or Path(name).lstat().st_size >= MAX_FILE_BYTES for name in selected):
             raise OSError('unsupported scan target')
+        for name in selected:
+            validate_zip_budget(name)
         # clamscan validates the database content/signature; header age is an
         # additional freshness bound compatible with distribution ClamAV 1.0.
         database_identity = daily_database_identity()

@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix='appgog-engine-ci-') as temp:
         archive = root / 'apps' / 'limits.zip'
         with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as bundle:
             bundle.writestr('oversized.txt', b'Z' * (9 * 1024 * 1024))
-        assert agent.malware_scan()['state'] == 'finding', 'engine limit must not report clean'
+        assert agent.malware_scan()['state'] == 'unavailable', 'ZIP coverage limit must not report clean'
         archive.unlink()
         (agent.CLAM_DATABASE / 'acceptance.ndb').write_text('invalid database')
         assert agent.malware_scan()['state'] == 'unavailable', 'real engine database failure'
