@@ -7,10 +7,14 @@ INSTALL_DIR=${APPGOG_INSTALL_DIR:-/opt/appgog}
 SHARED="$INSTALL_DIR/shared"
 ENV_FILE="$SHARED/.env"
 SECURITY="$SHARED/security"
-[ -s "$ENV_FILE" ] && [ -s "$SECURITY/ca.crt" ] || { echo 'Cloud pairing is not installed' >&2; exit 1; }
-ROLE=$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' "$ENV_FILE" | tail -n 1)
-[ -n "$ROLE" ] || ROLE=all
-case "$ROLE" in all) ROLES='reader license build' ;; license) ROLES='reader license' ;; build) ROLES='build' ;; *) echo 'Invalid installed role' >&2; exit 1 ;; esac
+ROOT_DIR="$INSTALL_DIR/current"
+ROLE_LIBRARY="$ROOT_DIR/scripts/lib/deployment-role.sh"
+[ -s "$ENV_FILE" ] && [ -s "$SECURITY/ca.crt" ] && [ -f "$ROLE_LIBRARY" ] || { echo 'Cloud pairing is not installed' >&2; exit 1; }
+. "$ROLE_LIBRARY"
+ROLE=$(appgog_deployment_role "$ENV_FILE") || exit 1
+COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
+compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
+case "$ROLE" in all) ROLES='reader license build' ;; license) ROLES='reader license' ;; build) ROLES='reader build' ;; esac
 field() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
 CLOUD_URL=$(field SECURITY_CLOUD_URL)
 case "$CLOUD_URL" in https://*/*|https://*@*|https://*\?*|https://*\#*|'') echo 'Cloud origin is invalid' >&2; exit 1 ;; https://*) ;; *) echo 'Cloud HTTPS is required' >&2; exit 1 ;; esac
@@ -33,8 +37,8 @@ for role in $ROLES; do
   echo "Cloud identity accepted: $role"
 done
 if [ "$ROLE" = build ]; then
-  cd "$INSTALL_DIR/current"
-  docker compose exec -T appgog node --input-type=module - <<'NODE'
+  cd "$ROOT_DIR"
+  compose exec -T appgog node --input-type=module - <<'NODE'
 const { sendReport } = await import('./scripts/security-agent.js');
 const result = await sendReport({
   SECURITY_CLOUD_URL: process.env.SECURITY_CLOUD_URL,

@@ -67,6 +67,9 @@ test('modeled business layouts: three mTLS identities, wrong credentials and out
         assert.deepEqual(reports.map(report => report.actor), ['license', 'build']);
         assert.deepEqual(reports.map(report => report.host_scan), [
           { state: 'unavailable', checked_at: null }, { state: 'unavailable', checked_at: null }]);
+        assert.ok(reports.every(report => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(report.observed_at)));
+        assert.ok(reports.every(report => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(report.report_id)));
+        assert.notEqual(reports[0].report_id, reports[1].report_id);
         assert.equal(reports[0].files['apps/app.js'], reports[1].files['apps/app.js']);
         await new Promise(resolve => server.close(resolve)); server = null;
         assert.equal((await cloudSecurityStatus(envFor('reader'))).connected, false);

@@ -9,3 +9,7 @@ dist
 backups
 runtime
 .backup-key
+
+**/__pycache__
+**/*.py[cod]
+.codex

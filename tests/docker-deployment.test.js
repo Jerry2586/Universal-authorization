@@ -12,6 +12,13 @@ import { PACKAGE_VERSION } from '../packages/core/src/version.js';
 
 const env = { AUTH_DOMAIN: 'sq.appgog.test', BUILD_DOMAIN: 'db.appgog.test' };
 function fixture(t) { const root = mkdtempSync(join(tmpdir(), 'appgog-docker-')); t.after(() => rmSync(root, { recursive: true, force: true })); return root; }
+function composeSource(name) {
+  return readFileSync(join(resolve(import.meta.dirname, '..'), name), 'utf8');
+}
+function composeServices(source) {
+  const services = source.split('services:')[1].split('\nvolumes:')[0];
+  return [...services.matchAll(/^  ([\w-]+):$/gm)].map(match => match[1]);
+}
 test('Docker initializes once, retains identities on update, and isolates role credentials', t => {
   const root = fixture(t);
   const first = initialize({ root, env });
@@ -122,19 +129,36 @@ test('Docker preserves custom policy settings and rejects invalid replacements',
   assert.throws(() => initialize({ root, env: { ...env, INSTALL_ACTIVATION_WINDOW_SECONDS: '0' } }), /正整数/);
 });
 
-test('Compose runs exactly one service with persistent HTTPS and loopback upstreams', () => {
+test('role-specific Compose files keep one hardened service and least-privilege persistent mounts', () => {
   const start = readFileSync(join(resolve(import.meta.dirname, '..'), 'scripts/docker/start.js'), 'utf8');
-  const compose = readFileSync(join(resolve(import.meta.dirname, '..'), 'compose.yaml'), 'utf8');
+  const compose = composeSource('compose.yaml');
+  const licenseCompose = composeSource('compose.license.yaml');
+  const buildCompose = composeSource('compose.build.yaml');
   const caddy = readFileSync(join(resolve(import.meta.dirname, '..'), 'Caddyfile'), 'utf8');
-  const services = compose.split('services:')[1].split('\nvolumes:')[0];
-  assert.deepEqual([...services.matchAll(/^  ([\w-]+):$/gm)].map(match => match[1]), ['appgog']);
-  assert.match(compose, /appgog-caddy-data:\/app\/runtime\/caddy-data/);
+  for (const source of [compose, licenseCompose, buildCompose]) {
+    assert.deepEqual(composeServices(source), ['appgog']);
+    assert.match(source, /appgog-caddy-data:\/app\/runtime\/caddy-data/);
+    assert.match(source, /read_only: true/);
+    assert.match(source, /cap_drop: \[ALL\]/);
+    assert.match(source, /no-new-privileges:true/);
+    assert.match(source, /scripts\/docker\/health.js/);
+  }
+  assert.match(licenseCompose, /APPGOG_DEPLOYMENT_ROLE: license/);
+  assert.match(licenseCompose, /appgog-db:\/app\/var\/data/);
+  assert.match(licenseCompose, /appgog-keys:\/app\/var\/keys/);
+  assert.match(licenseCompose, /appgog-license-config:\/app\/runtime\/license/);
+  assert.doesNotMatch(licenseCompose, /appgog-build-config:\/app\/runtime\/build/);
+  assert.doesNotMatch(licenseCompose, /appgog-worker-config:\/app\/runtime\/worker/);
+  assert.match(buildCompose, /APPGOG_DEPLOYMENT_ROLE: build/);
+  assert.doesNotMatch(buildCompose, /appgog-db:\/app\/var\/data/);
+  assert.doesNotMatch(buildCompose, /appgog-keys:\/app\/var\/keys/);
+  assert.doesNotMatch(buildCompose, /appgog-uploads:\/app\/var\/uploads/);
+  assert.doesNotMatch(buildCompose, /appgog-license-config:\/app\/runtime\/license/);
+  for (const name of ['LICENSE_SERVICE_ENABLED', 'CUSTOMER_LOGIN_ENABLED', 'BUILD_CENTER_ENABLED', 'NEW_BUILDS_ENABLED', 'WORKER_ENABLED']) {
+    assert.match(buildCompose, new RegExp(`${name}: false`));
+  }
   assert.match(caddy, /reverse_proxy 127\.0\.0\.1:8787/);
   assert.match(caddy, /reverse_proxy 127\.0\.0\.1:8788/);
-  assert.match(compose, /read_only: true/);
-  assert.match(compose, /cap_drop: \[ALL\]/);
-  assert.match(compose, /no-new-privileges:true/);
-  assert.match(compose, /scripts\/docker\/health.js/);
   assert.match(start, /APPGOG_STARTUP_TIMEOUT_MS/);
   assert.match(start, /启动失败/);
 });
@@ -157,6 +181,23 @@ test('Cloud security identities are separate and initialization fails closed on 
   assert.ok(!runtime.includes(cloud.SECURITY_CLOUD_LICENSE_TOKEN));
   assert.ok(!runtime.includes(cloud.SECURITY_CLOUD_BUILD_TOKEN));
   assert.ok(runtime.includes(cloud.SECURITY_CLOUD_READER_TOKEN));
+});
+
+test('split build cloud linkage requires build and reader identities but never a license identity', t => {
+  const root = fixture(t);
+  const security = join(root, 'runtime/security');
+  mkdirSync(security, { recursive: true });
+  const cloud = { ...env, APPGOG_DEPLOYMENT_ROLE: 'build', APPGOG_BUSINESS_PAIRED: 'true',
+    BUILD_CENTER_NODE_TOKEN: 'n'.repeat(48), WORKER_NODE_TOKEN: 'w'.repeat(48),
+    SECURITY_CLOUD_URL: 'https://security.appgog.test:9443',
+    SECURITY_CLOUD_BUILD_TOKEN: 'b'.repeat(40), SECURITY_CLOUD_READER_TOKEN: 'r'.repeat(40) };
+  for (const name of ['ca.crt', 'build.crt', 'build.key']) writeFileSync(join(security, name), name);
+  assert.throws(() => initialize({ root, env: cloud }), /reader 身份凭据缺失/);
+  writeFileSync(join(security, 'reader.crt'), 'reader.crt');
+  writeFileSync(join(security, 'reader.key'), 'reader.key');
+  assert.doesNotThrow(() => initialize({ root, env: cloud }));
+  assert.equal(existsSync(join(security, 'license.crt')), false);
+  assert.equal(existsSync(join(security, 'license.key')), false);
 });
 
 test('split build node keeps authorization identity and signing keys off the build host', t => {

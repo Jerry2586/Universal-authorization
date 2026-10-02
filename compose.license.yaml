@@ -24,8 +24,7 @@ services:
       - path: .env
         required: false
     environment:
-      APPGOG_DEPLOYMENT_ROLE: ${APPGOG_DEPLOYMENT_ROLE:-all}
-      APPGOG_BUSINESS_PAIRED: ${APPGOG_BUSINESS_PAIRED:-}
+      APPGOG_DEPLOYMENT_ROLE: license
       AUTH_DOMAIN: ${AUTH_DOMAIN:-}
       BUILD_DOMAIN: ${BUILD_DOMAIN:-}
       LICENSE_SERVICE_ENABLED: ${LICENSE_SERVICE_ENABLED:-true}
@@ -44,8 +43,6 @@ services:
       - appgog-uploads:/app/var/uploads
       - ${APPGOG_SHARED_DIR:-./shared}/update-control:/app/var/update-control
       - appgog-license-config:/app/runtime/license
-      - appgog-build-config:/app/runtime/build
-      - appgog-worker-config:/app/runtime/worker
       - ${APPGOG_SHARED_DIR:-./shared}/security:/app/runtime/security:ro
       - /run/appgog-security:/app/runtime/host-security:ro
       - appgog-caddy-data:/app/runtime/caddy-data
@@ -62,7 +59,5 @@ volumes:
   appgog-artifacts:
   appgog-uploads:
   appgog-license-config:
-  appgog-build-config:
-  appgog-worker-config:
   appgog-caddy-data:
   appgog-caddy-config:

@@ -20,9 +20,11 @@ const scripts = {
   releaseDownloadLibrary: join(root, 'scripts/lib/release-download.sh'),
   releaseInstallLibrary: join(root, 'scripts/lib/release-install.sh'),
   managerMigrationLibrary: join(root, 'scripts/lib/manager-migration.sh'),
+  deploymentRoleLibrary: join(root, 'scripts/lib/deployment-role.sh'),
   migration: join(root, 'scripts/migration.sh'),
   dockerInstallLibrary: join(root, 'scripts/lib/docker-install.sh'),
   platformLibrary: join(root, 'scripts/lib/platform.sh'),
+  verifySplit: join(root, 'scripts/docker/verify-split.sh'),
 };
 
 function text(path) {
@@ -73,14 +75,20 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /appgog-update-helper\.service/);
   assert.match(installer, /case "\$existing" in[\s\S]*"\$INSTALL_ROOT"\/\*/);
   assert.doesNotMatch(installer.split('install_host_security_agent() {')[0], /ProtectSystem=strict/);
-  assert.match(installer, /install_host_security_agent\(\)[\s\S]*ProtectSystem=strict/);
-  assert.match(installer, /install -o root -g root -m 0700 "\$CURRENT_LINK\/scripts\/host-security-agent\.py"/);
-  assert.match(installer, /ExecStart=\$python_bin \$agent_file/);
+  assert.match(installer, /install_host_security_agent\(\)[\s\S]*install-host-security\.sh/);
+  const hostInstaller=text(join(root, 'scripts/install-host-security.sh'));
+  assert.match(hostInstaller, /ProtectSystem=strict/);
+  assert.match(hostInstaller, /install -o root -g root -m 0700/);
+  assert.match(hostInstaller, /ExecStart=\$python_bin -I \$AGENT_FILE/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
   assert.match(installer, /DNS A 记录/);
   assert.match(installer, /Caddy 自动申请并续期 HTTPS/);
   assert.match(installer, /wait_public_https/);
+  assert.match(installer, /validate_project_contract\(\)/);
+  assert.match(installer, /compose\.license\.yaml/);
+  assert.match(installer, /compose\.build\.yaml/);
+  assert.match(installer, /scripts\/lib\/deployment-role\.sh/);
 });
 
 test('split role menu restricts authorization-only operations and keeps business pairing available', () => {
@@ -98,6 +106,66 @@ test('split role menu restricts authorization-only operations and keeps business
   assert.match(connector, /needs_rollback=true[\s\S]*mv "\$tmp\/new-env" "\$envfile"/);
   assert.match(splitSmoke, /business\.status !== 503/);
   assert.match(splitSmoke, /ed25519-private\.pem/);
+});
+
+test('deployment role library selects one immutable compose contract and management scripts reuse it', () => {
+  const roleLibrary = text(scripts.deploymentRoleLibrary);
+  assert.match(roleLibrary, /appgog_deployment_role\(\)/);
+  assert.match(roleLibrary, /APPGOG_DEPLOYMENT_ROLE/);
+  assert.match(roleLibrary, /all\|license\|build/);
+  assert.match(roleLibrary, /compose\.yaml/);
+  assert.match(roleLibrary, /compose\.license\.yaml/);
+  assert.match(roleLibrary, /compose\.build\.yaml/);
+  assert.match(roleLibrary, /部署角色无效/);
+  assert.match(roleLibrary, /角色 Compose 文件不存在/);
+  assert.doesNotMatch(roleLibrary, /(^|\n)\s*\.\s+["']?\$?[^\n]*\.env/);
+
+  for (const script of [scripts.docker, scripts.manager, scripts.migration, scripts.securityConnect, scripts.securityDoctor]) {
+    const contents = text(script);
+    assert.match(contents, /scripts\/lib\/deployment-role\.sh/);
+    assert.match(contents, /appgog_compose_file/);
+    assert.doesNotMatch(contents, /-f\s+(?:"\$ROOT_DIR\/)?compose\.yaml/);
+  }
+
+  const migration = text(scripts.migration);
+  assert.match(migration, /appgog_require_control_role/);
+  const splitSmoke = text(scripts.verifySplit);
+  assert.match(splitSmoke, /compose\.license\.yaml/);
+  assert.match(splitSmoke, /compose\.build\.yaml/);
+});
+
+test('deployment role resolver defaults legacy installs to all and fails closed for invalid or missing contracts', t => {
+  if (process.platform === 'win32') {
+    t.skip('Windows Node test environment does not guarantee a POSIX shell on PATH');
+    return;
+  }
+  accessSync('/bin/sh', constants.X_OK);
+  const fixture = mkdtempSync(join(tmpdir(), 'appgog-role-'));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  for (const name of ['compose.yaml', 'compose.license.yaml', 'compose.build.yaml']) writeFileSync(join(fixture, name), 'services: {}\n');
+  const envPath = join(fixture, '.env');
+  const command = `. "${scripts.deploymentRoleLibrary}"; role=$(appgog_deployment_role "${envPath}"); file=$(appgog_compose_file "${fixture}" "${envPath}"); printf '%s|%s\\n' "$role" "$file"`;
+
+  writeFileSync(envPath, 'AUTH_DOMAIN=example.test\n');
+  let result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), `all|${join(fixture, 'compose.yaml')}`);
+
+  writeFileSync(envPath, 'APPGOG_DEPLOYMENT_ROLE=license\n');
+  result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), `license|${join(fixture, 'compose.license.yaml')}`);
+
+  writeFileSync(envPath, 'APPGOG_DEPLOYMENT_ROLE=attacker\n');
+  result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /部署角色无效/);
+
+  writeFileSync(envPath, 'APPGOG_DEPLOYMENT_ROLE=build\n');
+  rmSync(join(fixture, 'compose.build.yaml'));
+  result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /角色 Compose 文件不存在/);
 });
 test('stable bootstrap downloads, verifies, installs, upgrades, and rejects downgrade', () => {
   const bootstrap = text(scripts.bootstrap);

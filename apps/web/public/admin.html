@@ -209,7 +209,10 @@
       <div class="security-panel-head"><div><span>HOST / LOCAL INSPECTION</span><h3 id="security-local-heading">授权服务器 Linux 环境检查</h3></div><button id="security-local-run" type="button">一键检查本机</button></div>
       <p id="security-local-state" role="status">本机检查代理状态未知</p>
       <p id="security-local-time">尚无检查时间</p>
-      <ul id="security-local-results" aria-label="检查项目"></ul>
+      <p>每五分钟检查程序清单、固定主机配置、容器、SSH、权限与 TCP 监听。程序特征查杀需在 Linux 菜单安装 ClamAV；扫描范围不含业务数据和全部系统文件。</p>
+      <ul id="security-local-checks" aria-label="检查项目"></ul>
+      <details open><summary>最近告警与恢复记录</summary><p id="security-local-history-state">告警历史尚未读取</p><ul id="security-local-history" aria-label="最近告警与恢复记录"></ul></details>
+      <p>发现差异先核验和备份；程序修复使用 Linux 菜单的可信发布包修复。基线批准仅允许服务器 root 操作。</p>
       <p class="security-action-note">固定范围只读检查；ClamAV 未安装、特征库不可用或范围不完整时显示不可用。仅扫描固定程序清单，不覆盖业务数据和整个宿主机，也不能代替入侵取证。</p>
     </section>
     <div class="security-section-title"><div><span>02 / OBSERVABILITY</span><h3>实时核验范围</h3><p>状态由双向 TLS 安全连接返回的云端数据和外部探测提供；未接入前不显示健康结论。</p></div><span class="security-outline-badge">LIVE DATA · 独立监测</span></div>

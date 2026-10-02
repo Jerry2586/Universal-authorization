@@ -13,7 +13,7 @@ const releaseName = `APPGOG-Packaging-Licensing-System-${manifest.version}`;
 const output = join(outputDirectory, `${releaseName}.zip`);
 const checksumOutput = `${output}.sha256`;
 const files = new Map();
-const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'AGENTS.md', 'Caddyfile', 'Caddyfile.license', 'Caddyfile.build', 'compose.yaml', 'Dockerfile', 'package.json', 'pnpm-lock.yaml', 'README.md', 'release-contract.json', 'install-docker.sh'];
+const rootFiles = ['.env.example', '.env.docker.example', '.gitignore', '.dockerignore', 'AGENTS.md', 'Caddyfile', 'Caddyfile.license', 'Caddyfile.build', 'compose.yaml', 'compose.license.yaml', 'compose.build.yaml', 'Dockerfile', 'package.json', 'pnpm-lock.yaml', 'README.md', 'release-contract.json', 'install-docker.sh'];
 const sourceDirectories = ['apps', 'packages', 'scripts', 'docs'];
 
 function addFile(path) {
@@ -24,7 +24,7 @@ function addFile(path) {
 
 function walk(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) continue;
+    if (entry.isSymbolicLink() || ['node_modules', '__pycache__', '.git'].includes(entry.name) || /\.py[cod]$/.test(entry.name)) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) walk(path);
     else if (entry.isFile()) addFile(path);

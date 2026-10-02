@@ -71,6 +71,20 @@ function envFile(values) {
   }).join('\n') + '\n';
 }
 
+function validateCloudIdentities({ configRoot, env, deploymentRole, cloudUrl }) {
+  if (!cloudUrl) return;
+  if (new URL(cloudUrl).protocol !== 'https:') throw new Error('SECURITY_CLOUD_URL 必须使用 HTTPS');
+  const securityRoot = join(configRoot, 'security');
+  if (!existsSync(join(securityRoot, 'ca.crt'))) throw new Error('云端 CA 证书缺失');
+  const roles = deploymentRole === 'all' ? ['license', 'build', 'reader'] : [deploymentRole, 'reader'];
+  for (const role of roles) {
+    if (!validSecret(env[`SECURITY_CLOUD_${role.toUpperCase()}_TOKEN`])
+      || !existsSync(join(securityRoot, `${role}.crt`)) || !existsSync(join(securityRoot, `${role}.key`))) {
+      throw new Error(`云端 ${role} 身份凭据缺失`);
+    }
+  }
+}
+
 export function initialize({ root = '/app', env = process.env } = {}) {
   const configRoot = join(root, 'runtime');
   for (const name of ['license', 'build', 'worker', 'caddy-data', 'caddy-config']) mkdirSync(join(configRoot, name), { recursive: true });
@@ -103,11 +117,7 @@ export function initialize({ root = '/app', env = process.env } = {}) {
       throw new Error('已有授权中心身份或数据，拒绝转换为打包分机');
     }
     const cloudUrl = env.SECURITY_CLOUD_URL || '';
-    if (cloudUrl) {
-      if (new URL(cloudUrl).protocol !== 'https:' || !existsSync(join(configRoot, 'security/ca.crt')) ||
-          !existsSync(join(configRoot, 'security/build.crt')) || !existsSync(join(configRoot, 'security/build.key')) ||
-          !validSecret(env.SECURITY_CLOUD_BUILD_TOKEN)) throw new Error('打包分机云端身份不完整');
-    }
+    validateCloudIdentities({ configRoot, env, deploymentRole, cloudUrl });
     if (unpaired) return { authUrl, buildUrl, deploymentRole, identity: null, unpaired: true };
     const values = { NODE_ENV: 'production', BUILD_CENTER_PORT: 8788, INTERNAL_LICENSE_URL: authUrl,
       BUILD_CENTER_NODE_TOKEN: buildToken };
@@ -165,15 +175,8 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   const securityRoot = join(configRoot, 'security');
   let cloud = {};
   if (cloudUrl) {
-    if (new URL(cloudUrl).protocol !== 'https:') throw new Error('SECURITY_CLOUD_URL 必须使用 HTTPS');
+    validateCloudIdentities({ configRoot, env, deploymentRole, cloudUrl });
     const ca = join(securityRoot, 'ca.crt');
-    if (!existsSync(ca)) throw new Error('云端 CA 证书缺失');
-    for (const role of deploymentRole === 'all' ? ['license', 'build', 'reader'] : ['license', 'reader']) {
-      if (!validSecret(env[`SECURITY_CLOUD_${role.toUpperCase()}_TOKEN`])
-        || !existsSync(join(securityRoot, `${role}.crt`)) || !existsSync(join(securityRoot, `${role}.key`))) {
-        throw new Error(`云端 ${role} 身份凭据缺失`);
-      }
-    }
     cloud = { SECURITY_CLOUD_URL: cloudUrl, SECURITY_CLOUD_CA: ca,
       SECURITY_CLOUD_CLIENT_CERT: join(securityRoot, 'reader.crt'),
       SECURITY_CLOUD_CLIENT_KEY: join(securityRoot, 'reader.key'),

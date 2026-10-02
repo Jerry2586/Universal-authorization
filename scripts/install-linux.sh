@@ -403,6 +403,21 @@ detect_local_source() {
   if [ -f "$candidate/compose.yaml" ] && [ -f "$candidate/package.json" ]; then SOURCE_DIR=$candidate; fi
 }
 
+validate_project_contract() {
+  project_root=$1
+  for required_file in \
+    package.json \
+    compose.yaml \
+    compose.license.yaml \
+    compose.build.yaml \
+    scripts/docker.sh \
+    scripts/appgog.sh \
+    scripts/lib/deployment-role.sh
+  do
+    [ -f "$project_root/$required_file" ] || fail "APPGOG 安装包缺少必需文件：$required_file"
+  done
+}
+
 prepare_shared_layout() {
   mkdir -p "$RELEASES_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control/requests"
   chmod 700 "$SHARED_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control" 2>/dev/null || true
@@ -419,7 +434,7 @@ prepare_shared_layout() {
 
 stage_release() {
   project_root=$1
-  [ -f "$project_root/compose.yaml" ] && [ -f "$project_root/scripts/docker.sh" ] || fail '不是有效的 APPGOG 项目源码。'
+  validate_project_contract "$project_root"
   package_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$project_root/package.json" | head -n 1)
   [ -n "$package_version" ] || fail 'package.json 缺少版本号。'
   release_name=$package_version
@@ -433,6 +448,7 @@ stage_release() {
     --exclude=node_modules --exclude=runtime --exclude=var -cf "$staging" .
   tar -C "$stage_dir" -xf "$staging"
   rm -f "$staging"
+  validate_project_contract "$stage_dir"
   ln -s "$SHARED_DIR/.env" "$stage_dir/.env"
   ln -s "$SHARED_DIR/backups" "$stage_dir/backups"
   ln -s "$SHARED_DIR/logs" "$stage_dir/logs"
@@ -497,7 +513,8 @@ download_source() {
       copy_release_root "$temp_dir/repository"
       ;;
   esac
-  [ -n "$STAGED_RELEASE" ] && [ -f "$STAGED_RELEASE/compose.yaml" ] && [ -f "$STAGED_RELEASE/scripts/appgog.sh" ] || fail '下载内容不是有效安装包。'
+  [ -n "$STAGED_RELEASE" ] || fail '下载内容不是有效安装包。'
+  validate_project_contract "$STAGED_RELEASE"
 }
 
 write_env() {
@@ -640,71 +657,7 @@ EOF
 }
 
 install_host_security_agent() {
-  command -v systemctl >/dev/null 2>&1 || { log '宿主机检查需要 systemd；本机检查显示不可用'; return 0; }
-  if ! command -v python3 >/dev/null 2>&1; then
-    case "$DISTRO" in
-      ubuntu|debian) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 ;;
-      centos|rhel|rocky|almalinux|fedora|ol)
-        manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
-        "$manager" install -y python3 ;;
-      *) fail "不支持自动安装 Python3 的发行版：$DISTRO" ;;
-    esac
-  fi
-  mkdir -p /run/appgog-security
-  chmod 755 /run/appgog-security
-  printf 'd /run/appgog-security 0755 root root -\n' > /etc/tmpfiles.d/appgog-host-security.conf
-  # A root service must not execute directly from the switchable release symlink.
-  agent_dir=/usr/local/lib/appgog-security
-  install -d -o root -g root -m 0700 "$agent_dir"
-  agent_file="$agent_dir/host-security-agent.py"
-  agent_temp=$(mktemp "$agent_dir/.host-security-agent.XXXXXX")
-  install -o root -g root -m 0700 "$CURRENT_LINK/scripts/host-security-agent.py" "$agent_temp"
-  mv -f "$agent_temp" "$agent_file"
-  python_bin=$(command -v python3)
-  unit=/etc/systemd/system/appgog-host-security.service
-  unit_temp="$unit.$$"
-  cat > "$unit_temp" <<EOF
-[Unit]
-Description=APPGOG fixed scope host security inspection
-After=local-fs.target
-
-[Service]
-Type=simple
-ExecStart=$python_bin $agent_file
-Environment=APPGOG_INSTALL_ROOT=$INSTALL_ROOT
-Environment=APPGOG_HOST_SCAN_SOCKET=/run/appgog-security/scan.sock
-Environment=PYTHONDONTWRITEBYTECODE=1
-User=root
-ReadWritePaths=/run/appgog-security
-CPUQuota=80%
-MemoryMax=2G
-TasksMax=32
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictAddressFamilies=AF_UNIX
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  chmod 644 "$unit_temp"
-  mv "$unit_temp" "$unit"
-  if [ ! -e /var/lib/appgog-security/baseline.json ] && [ ! -L /var/lib/appgog-security/baseline.json ]; then
-    APPGOG_INSTALL_ROOT="$INSTALL_ROOT" "$python_bin" "$agent_file" --write-baseline || log "首次安装基线生成失败；面板将显示不可用"
-  else
-    log "保留既有完整性基线；升级后如有差异须核验后再重建基线"
-  fi
-  systemctl daemon-reload
-  systemctl enable appgog-host-security.service >/dev/null
-  if ! systemctl restart appgog-host-security.service; then
-    log '宿主机检查代理未启动；面板将显示不可用，请检查 journalctl -u appgog-host-security'
-  fi
+  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" APPGOG_HOST_ENV_FILE="$SHARED_DIR/.env"     sh "$CURRENT_LINK/scripts/install-host-security.sh" install || log '本地安全代理未就绪；请检查日志，面板不得显示已防护'
 }
 print_result() {
   if [ "$DEPLOYMENT_ROLE" = build ]; then
@@ -828,7 +781,6 @@ if [ "$SKIP_START" = false ]; then
   if ! wait_public_https; then restore_previous_release; fail '部署健康检查失败，已恢复旧版本（如存在）。'; fi
   install_command
   install_update_helper
-  install_host_security_agent
 fi
 if [ "$SKIP_START" = false ]; then print_result
 else log '源码与环境已准备；按要求未启动，尚未验证公网 HTTPS。'

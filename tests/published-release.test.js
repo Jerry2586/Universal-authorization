@@ -37,10 +37,15 @@ function buildReleaseFixture() {
     'Caddyfile.license',
     'Caddyfile.build',
     'compose.yaml',
+    'compose.license.yaml',
+    'compose.build.yaml',
     'scripts/install-linux.sh',
+    'scripts/install-host-security.sh',
+    'scripts/host-security-agent.py',
     'scripts/security-connect.sh',
     'scripts/security-doctor.sh', 'scripts/security-local.sh',
     'scripts/security-agent.js',
+    'scripts/lib/deployment-role.sh',
   ]) zipEntries.set(`${releaseName}/${path}`, readFileSync(join(root, path)));
   const zip = writeZip(zipEntries, { date: new Date('2026-09-25T00:00:00Z') });
   const run = Buffer.from(`#!/bin/sh\nopenssl pkeyutl -verify\n# ${Buffer.from(publicKeyPem).toString('base64')}\n`);

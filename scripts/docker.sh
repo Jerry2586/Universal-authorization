@@ -4,9 +4,13 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/lib/docker-install.sh"
 . "$ROOT_DIR/scripts/lib/backup.sh"
 . "$ROOT_DIR/scripts/lib/diagnostics.sh"
+. "$ROOT_DIR/scripts/lib/deployment-role.sh"
 cd "$ROOT_DIR"
 BACKUP_KEY_FILE=${APPGOG_BACKUP_KEY_FILE:-$ROOT_DIR/.backup-key}
-compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$ROOT_DIR/compose.yaml" "$@"; }
+ENV_FILE="$ROOT_DIR/.env"
+DEPLOYMENT_ROLE=$(appgog_deployment_role "$ENV_FILE") || exit 1
+COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
+compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$COMPOSE_FILE" "$@"; }
 fail() { echo "错误：$*" >&2; exit 1; }
 compose_version_supported() {
   appgog_compose_version_supported 24
@@ -21,6 +25,28 @@ require_config() {
   if [ ! -f .env ]; then
     echo '请复制 .env.docker.example 为 .env，只填写 AUTH_DOMAIN 和 BUILD_DOMAIN。' >&2
     exit 1
+  fi
+}
+host_security_lifecycle() {
+  action=$1
+  host_root=$ROOT_DIR
+  host_env=$ROOT_DIR/.env
+  # Release layouts share one stable installation root across upgrades.
+  if [ -L "$ROOT_DIR/.env" ]; then
+    resolved_env=$(readlink -f "$ROOT_DIR/.env" 2>/dev/null || true)
+    case "$resolved_env" in
+      */shared/.env)
+        host_root=$(dirname -- "$(dirname -- "$resolved_env")")
+        release_path=$(readlink -f "$ROOT_DIR")
+        case "$release_path" in "$host_root"/releases/*) host_env=$resolved_env ;; *) fail '共享配置链接不属于当前发布目录' ;; esac
+        ;;
+      *) fail '拒绝非发布布局的配置符号链接' ;;
+    esac
+  fi
+  if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    APPGOG_INSTALL_ROOT="$host_root" APPGOG_HOST_ENV_FILE="$host_env" sh "$ROOT_DIR/scripts/install-host-security.sh" "$action" || return 1
+  else
+    echo '本地安全代理不可用：需在带 systemd 的 Linux 上以 root 安装；业务容器可继续运行。' >&2
   fi
 }
 build_with_retry() {
@@ -243,7 +269,7 @@ doctor() {
     echo '[失败] .env 不存在'
     failed=1
   fi
-  if [ -f compose.yaml ] && compose config --quiet >/dev/null 2>&1; then
+  if [ -f "$COMPOSE_FILE" ] && compose config --quiet >/dev/null 2>&1; then
     echo '[正常] Compose 配置可解析'
   else
     echo '[失败] Compose 配置无效'
@@ -265,8 +291,7 @@ doctor() {
     free -h 2>/dev/null || true
   fi
   if [ -f .env ]; then
-    role=$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' .env | tail -n 1)
-    [ -n "$role" ] || role=all
+    role=$DEPLOYMENT_ROLE
     auth_domain=$(sed -n 's/^AUTH_DOMAIN=//p' .env | tail -n 1)
     build_domain=$(sed -n 's/^BUILD_DOMAIN=//p' .env | tail -n 1)
     for domain in "$auth_domain" "$build_domain"; do
@@ -388,14 +413,18 @@ case "${1:-help}" in
   install|update)
     require_docker
     require_config
+    host_security_lifecycle prepare
     deploy
+    host_security_lifecycle install
     echo '单容器安装完成。用 sh scripts/docker.sh credentials 查看初始管理员账号密码。'
     ;;
   start)
     require_docker
     require_config
+    host_security_lifecycle prepare
     prepare_update_control
     compose up -d --no-build --pull never --wait --wait-timeout 180
+    host_security_lifecycle install
     ;;
   stop)
     require_docker
@@ -405,9 +434,11 @@ case "${1:-help}" in
   restart)
     require_docker
     require_config
+    host_security_lifecycle prepare
     prepare_update_control
     if [ "${APPGOG_RESTORE_NO_START:-false}" != true ]; then
       compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
+      host_security_lifecycle install
     fi
     ;;
 
@@ -447,7 +478,7 @@ case "${1:-help}" in
     ;;
   credentials)
     require_config
-    [ "$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' .env | tail -n 1)" != build ] || fail '独立打包机没有管理员凭证；请在授权机执行该命令。'
+    [ "$DEPLOYMENT_ROLE" != build ] || fail '独立打包机没有管理员凭证；请在授权机执行该命令。'
     require_docker
     compose run --rm --no-deps -T --entrypoint cat appgog /app/runtime/license/initial-admin.txt
     ;;

@@ -1,3 +1,4 @@
+import { createSecurityUi } from './security-ui.js';
 import { createProductUi } from './products.js';
 import { $ } from './core.js';
 import { createPlanUi } from './plans.js';
@@ -32,6 +33,7 @@ export function createAdminPage(shell) {
   const productsUi = createProductUi(shell);
   const plansUi = createPlanUi(shell);
   const releaseUpload = createAdminReleaseUpload(shell);
+  const securityUi = createSecurityUi(shell);
 
   function applySession(session) {
     state.session = session;
@@ -133,60 +135,6 @@ export function createAdminPage(shell) {
     });
   }
 
-  async function renderLocalSecurity() {
-    if (!can('system.manage')) return;
-    const status = $('security-local-state');
-    const timestamp = $('security-local-time');
-    const list = $('security-local-results');
-    if (!status || !list) return;
-    try {
-      const report = await request('/web/admin/security/local-scan');
-      status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: '本机检查完成', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '未知';
-      timestamp.textContent = report.checked_at ? `检查时间：${report.checked_at}` : (report.reason || '尚无检查时间');
-      list.replaceChildren();
-      for (const item of report.checks ?? []) {
-        const row = document.createElement('li');
-        row.textContent = `${item.name} · ${({ ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' })[item.state] || '未知'} · ${item.detail}`;
-        list.append(row);
-      }
-      if (report.state === 'running') setTimeout(() => void renderLocalSecurity(), 2000);
-    } catch (error) {
-      status.textContent = '本机代理不可用'; timestamp.textContent = error.message; list.replaceChildren();
-    }
-  }
-
-  async function renderSecurity() {
-    if (!can('system.manage')) return;
-    const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
-    const probe = value => value === 'healthy' ? '可达 · 健康响应' : value === 'unreachable' ? '不可达 · 请检查' : value === 'unhealthy' ? '健康检查失败' : '未知 / 未配置';
-    set('security-cloud-state', '正在核对');
-    try {
-      const data = await request('/web/admin/security/status');
-      if (!data.connected) throw new Error(data.reason ?? '云端不可达');
-      set('security-cloud-state', '云端已连接');
-      set('security-cloud-reason', `验证于 ${data.generated_at ?? '未知时间'}`);
-      set('security-identity', '双重身份验证通过');
-      set('security-build-probe', probe(data.nodes?.['build-center']?.probe?.state));
-      set('security-license-probe', probe(data.nodes?.['license-center']?.probe?.state));
-      const hostLabel = host => !host?.fresh ? '未上报 / 检查过期' : ({ ok: '固定范围未发现异常', warning: '配置需复核', finding: '发现异常', unavailable: '检查不可用' })[host.state] || '检查未知';
-      set('security-build-host-scan', hostLabel(data.nodes?.['build-center']?.host_scan));
-      const host = data.nodes?.['license-center']?.host_scan;
-      set('security-host-scan', hostLabel(host));
-      const reports = Object.values(data.nodes ?? {});
-      const stale = reports.some(item => !item.report_fresh);
-      const changed = reports.some(item => item.integrity?.state === 'changed');
-      const matched = reports.length > 0 && reports.every(item => item.integrity?.state === 'matched' && item.report_fresh);
-      set('security-integrity', changed ? '发现文件偏移' : matched ? '可信摘要匹配' : stale ? '报告过期 / 未上报' : '基线未配置');
-      const latest = data.events?.[0];
-      set('security-event-title', latest ? `${latest.node}: ${latest.kind}` : '暂无安全事件');
-      set('security-event-message', latest ? `发生于 ${latest.at}` : '云端当前没有记录到探测或完整性告警。');
-    } catch (error) {
-      set('security-cloud-state', '无法验证'); set('security-cloud-reason', error.message);
-      set('security-identity', '验证失败 / 未配置'); set('security-build-probe', '未知');
-      set('security-license-probe', '未知'); set('security-integrity', '未知'); set('security-host-scan', '未知'); set('security-build-host-scan', '未知');
-      set('security-event-title', '云端状态未知'); set('security-event-message', '无法读取独立云端事件。');
-    }
-  }
   function bind() {
     productsUi.bind();
     plansUi.bind();
@@ -198,32 +146,7 @@ export function createAdminPage(shell) {
     licenseUi.bind();
     bindLicenseForm();
     bindSettingsForm();
-    void renderSecurity(); void renderLocalSecurity();
-    $('security-local-run')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      try {
-        await request('/web/admin/security/local-scan', { method: 'POST', body: {} });
-        await renderLocalSecurity();
-      } catch (error) { notify(error.message, true); }
-      finally { button.disabled = false; }
-    });
-    document.querySelectorAll('[data-security-mode]').forEach((button) => button.addEventListener('click', () => {
-      const mode = button.dataset.securityMode;
-      document.querySelector('[data-security-topology]')?.setAttribute('data-security-topology', mode);
-      document.querySelectorAll('[data-security-mode]').forEach((item) => {
-        const active = item === button;
-        item.classList.toggle('active', active);
-        item.setAttribute('aria-pressed', String(active));
-      });
-      for (const item of document.querySelectorAll('.security-node:not(.security-node-cloud) .security-node-footer span')) {
-        item.textContent = mode === 'combined' ? '同一台业务服务器' : '独立业务服务器';
-      }
-      const note = $('security-topology-note');
-      if (note) note.textContent = mode === 'combined'
-        ? '当前展示：打包中心与授权中心部署在同一台干净的 Linux 服务器；安全中心单独部署。'
-        : '当前展示：打包、授权、安全中心分别部署在三台服务器。';
-    }));
+    securityUi.bind();
     $('open-account-center')?.addEventListener('click', openAccountCenter);
     $('refresh-admin')?.addEventListener('click', refresh);
     for (const id of [
@@ -251,5 +174,5 @@ export function createAdminPage(shell) {
       }
       if(!plans.length)options.append(element('p','暂无可用套餐，请先创建套餐。','muted'));
     }
-    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); void renderSecurity(); void renderLocalSecurity(); }, applySession, afterSession });
+    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); securityUi.render(); }, applySession, afterSession });
 }

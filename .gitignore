@@ -17,3 +17,6 @@ var/demo/*
 !var/demo/.gitkeep
 backups/
 .backup-key
+
+__pycache__/
+*.py[cod]

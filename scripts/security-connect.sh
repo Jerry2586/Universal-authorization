@@ -29,7 +29,14 @@ done
 docker compose version >/dev/null 2>&1 || { echo 'Docker Compose v2 is required' >&2; exit 1; }
 case "$CLOUD_URL" in https://*/*|https://*@*|https://*\?*|https://*\#*|'') echo 'Use an HTTPS origin without path, userinfo or query' >&2; exit 2 ;; https://*) ;; *) echo 'HTTPS required' >&2; exit 2 ;; esac
 printf '%s' "$CLOUD_URL" | LC_ALL=C grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$' || { echo 'Invalid cloud hostname or port' >&2; exit 2; }
-[ -d "$BUNDLE" ] && [ -s "$BUNDLE/ca.crt" ] && [ -f "$INSTALL_DIR/shared/.env" ] && [ -f "$INSTALL_DIR/current/compose.yaml" ] || { echo 'Install the platform and provide the cloud credential bundle first' >&2; exit 1; }
+ROOT_DIR="$INSTALL_DIR/current"
+ENV_FILE="$INSTALL_DIR/shared/.env"
+ROLE_LIBRARY="$ROOT_DIR/scripts/lib/deployment-role.sh"
+[ -d "$BUNDLE" ] && [ -s "$BUNDLE/ca.crt" ] && [ -f "$ENV_FILE" ] && [ -f "$ROLE_LIBRARY" ] || { echo 'Install the platform and provide the cloud credential bundle first' >&2; exit 1; }
+. "$ROLE_LIBRARY"
+ROLE=$(appgog_deployment_role "$ENV_FILE") || exit 1
+COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
+compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 # First trust is pinned through an independent channel; routine re-pairing cannot replace the CA.
 new_ca=$(openssl x509 -in "$BUNDLE/ca.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
 printf '%s' "$new_ca" | LC_ALL=C grep -Eq '^[a-f0-9]{64}$' || { echo 'Invalid cloud CA certificate' >&2; exit 1; }
@@ -43,9 +50,7 @@ if [ -n "$CA_PIN" ]; then
   pin=$(printf '%s' "$CA_PIN" | tr -d ':' | tr '[:upper:]' '[:lower:]')
   [ "$pin" = "$new_ca" ] || { echo 'Cloud CA fingerprint mismatch; existing deployment unchanged' >&2; exit 1; }
 fi
-ROLE=$(sed -n 's/^APPGOG_DEPLOYMENT_ROLE=//p' "$INSTALL_DIR/shared/.env" | tail -n 1)
-[ -n "$ROLE" ] || ROLE=all
-case "$ROLE" in all) ROLES='reader license build' ;; license) ROLES='reader license' ;; build) ROLES='build' ;; *) echo 'Invalid installed role' >&2; exit 1 ;; esac
+case "$ROLE" in all) ROLES='reader license build' ;; license) ROLES='reader license' ;; build) ROLES='reader build' ;; esac
 for role in $ROLES; do
   for suffix in crt key token; do
     [ -s "$BUNDLE/$role.$suffix" ] || { echo "Missing $role.$suffix" >&2; exit 1; }
@@ -118,7 +123,7 @@ cd "$INSTALL_DIR/current"
 cutoff=$CUTOFF
 verify_reports() {
   if [ "$ROLE" = build ]; then
-    docker compose exec -T appgog node --input-type=module - <<'NODE'
+    compose exec -T appgog node --input-type=module - <<'NODE'
 const { sendReport } = await import('./scripts/security-agent.js');
 const result = await sendReport({
   SECURITY_CLOUD_URL: process.env.SECURITY_CLOUD_URL,
@@ -153,14 +158,14 @@ NODE
   done
   return 1
 }
-if docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 360 appgog && verify_reports; then
+if compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 360 appgog && verify_reports; then
   rm -rf "$BACKUP"
   echo "Cloud pairing active for role $ROLE; run security-doctor.sh to verify both nodes."
 else
   mv "$SHARED/security" "$BACKUP/failed-security"
   if [ -d "$BACKUP/security" ]; then mv "$BACKUP/security" "$SHARED/security"; fi
   cp -p "$BACKUP/env" "$SHARED/.env"
-  docker compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 360 appgog || true
+  compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 360 appgog || true
   echo "Pairing or fresh report verification failed. Previous configuration restored; diagnostic credentials remain in $BACKUP" >&2
   exit 1
 fi

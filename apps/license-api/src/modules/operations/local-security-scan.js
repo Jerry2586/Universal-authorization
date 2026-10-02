@@ -1,5 +1,34 @@
 import { request as unixRequest } from 'node:http';
 
+const CHECK_CATEGORIES = new Set(['host', 'container', 'permissions', 'ssh', 'network']);
+const CHECK_SEVERITIES = new Set(['info', 'low', 'medium', 'high', 'critical', 'unknown']);
+const CHECK_STATES = new Set(['ok', 'warning', 'finding', 'unavailable']);
+
+function safeTimestamp(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' || value.length > 40 ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value) ||
+      !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)) return null;
+  return value;
+}
+
+function sanitizeCheck(item) {
+  if (!item || typeof item.name !== 'string' || typeof item.detail !== 'string' || !CHECK_STATES.has(item.state)) return null;
+  const result = {
+    name: item.name.slice(0, 60),
+    state: item.state,
+    detail: item.detail.slice(0, 180),
+  };
+  if (typeof item.id === 'string' && /^[a-z0-9][a-z0-9._-]{0,79}$/.test(item.id)) result.id = item.id;
+  if (typeof item.category === 'string' && item.category.length <= 32 && CHECK_CATEGORIES.has(item.category)) result.category = item.category;
+  if (typeof item.severity === 'string' && CHECK_SEVERITIES.has(item.severity)) result.severity = item.severity;
+  const checkedAt = safeTimestamp(item.checked_at);
+  if (checkedAt !== null) result.checked_at = checkedAt;
+  if (typeof item.scope === 'string' && item.scope.length <= 120) result.scope = item.scope;
+  if (typeof item.evidence_digest === 'string' && /^[a-f0-9]{64}$/.test(item.evidence_digest)) result.evidence_digest = item.evidence_digest;
+  return result;
+}
+
 // One fixed local action. The browser never chooses a command or path.
 export function localSecurityScan(action, env = process.env) {
   if (!['status', 'scan'].includes(action)) throw new TypeError('Unknown security action');
@@ -9,22 +38,44 @@ export function localSecurityScan(action, env = process.env) {
       method: action === 'scan' ? 'POST' : 'GET', timeout: 5000,
       headers: action === 'scan' ? { 'Content-Length': '0' } : {} }, res => {
       let body = '';
+      let byteCount = 0;
       res.setEncoding('utf8');
       res.on('data', chunk => {
+        byteCount += Buffer.byteLength(chunk, 'utf8');
         body += chunk;
-        if (body.length > 16384) req.destroy(new Error('oversized response'));
+        if (byteCount > 32768) {
+          resolve({ state: 'unavailable', reason: '本机检查代理响应超出限制' });
+          res.destroy();
+          req.destroy();
+        }
       });
+      res.on('error', () => resolve({ state: 'unavailable', reason: '本机检查代理响应中断' }));
+      res.on('aborted', () => resolve({ state: 'unavailable', reason: '本机检查代理响应中断' }));
       res.on('end', () => {
         try {
           const result = JSON.parse(body);
-          if (![200, 202, 409, 429].includes(res.statusCode) || !['idle', 'running', 'finished', 'failed', 'unavailable'].includes(result.state)) {
+          const validStatus = action === 'status' ? res.statusCode === 200
+            : ([202, 409].includes(res.statusCode) && result?.state === 'running')
+              || (res.statusCode === 429 && result?.state === 'unavailable');
+          if (!validStatus || !['idle', 'running', 'finished', 'failed', 'unavailable'].includes(result?.state)) {
             resolve({ state: 'unavailable', reason: '本机检查代理返回异常' }); return;
           }
-          const checks = Array.isArray(result.checks) ? result.checks.slice(0, 20)
-            .filter(item => item && typeof item.name === 'string' && typeof item.detail === 'string'
-              && ['ok', 'warning', 'finding', 'unavailable'].includes(item.state))
-            .map(item => ({ name: item.name.slice(0, 60), state: item.state, detail: item.detail.slice(0, 180) })) : [];
-          resolve({ state: result.state, checked_at: result.checked_at ?? null, reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });
+          const checks = Array.isArray(result.checks) ? result.checks.slice(0, 20).map(sanitizeCheck).filter(Boolean) : [];
+          const history = Array.isArray(result.history) ? result.history.slice(-8).map(item => {
+            const clean = sanitizeCheck(item);
+            if (!clean || !clean.id || !clean.evidence_digest || !clean.checked_at) return null;
+            return { ...clean, previous_state: CHECK_STATES.has(item.previous_state) ? item.previous_state : null };
+          }).filter(Boolean) : [];
+          if (result.state === 'finished' && (!Array.isArray(result.checks) || result.checks.length > 20 ||
+              checks.length !== result.checks.length || checks.length === 0 || !safeTimestamp(result.checked_at))) {
+            resolve({ state: 'unavailable', reason: '本机检查报告缺失或不完整' }); return;
+          }
+          const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
+          const historyState = invalidHistory ? 'unavailable' : result.history.length > 8 ? 'truncated'
+            : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
+          resolve({ state: result.state, history,
+            history_state: historyState, checked_at: safeTimestamp(result.checked_at),
+            reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });
         } catch {
           resolve({ state: 'unavailable', reason: '本机检查代理响应无效' });
         }

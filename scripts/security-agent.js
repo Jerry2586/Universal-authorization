@@ -1,12 +1,12 @@
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { request as httpsRequest } from 'node:https';
 import { localSecurityScan } from '../apps/license-api/src/modules/operations/local-security-scan.js';
 
 const EXCLUDED = new Set(['.git', 'node_modules', 'var', '.codex', '.codex-tmp']);
-export function inventory(root, paths = ['apps', 'packages', 'scripts', 'Dockerfile', 'compose.yaml']) {
+export function inventory(root, paths = ['apps', 'packages', 'scripts', 'Dockerfile', 'compose.yaml', 'compose.license.yaml', 'compose.build.yaml']) {
   const base = resolve(root);
   const files = {};
   function walk(name) {
@@ -43,7 +43,8 @@ export async function sendReport(env = process.env) {
   if (target.protocol !== 'https:' || !env.SECURITY_CLOUD_TOKEN || env.SECURITY_CLOUD_TOKEN.length < 32) {
     throw Error('安全中心连接配置无效');
   }
-  const report = { files: inventory(env.SECURITY_SCAN_ROOT ?? process.cwd()) };
+  const report = { observed_at: new Date().toISOString(), report_id: randomUUID(),
+    files: inventory(env.SECURITY_SCAN_ROOT ?? process.cwd()) };
   if (env.SECURITY_REPORT_HOST === 'true') {
     const local = await localSecurityScan('status', { APPGOG_HOST_SCAN_SOCKET: env.SECURITY_HOST_SCAN_SOCKET });
     report.host_scan = summarizeHostScan(local);

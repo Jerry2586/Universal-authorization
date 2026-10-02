@@ -1,9 +1,28 @@
 #!/usr/bin/env sh
 set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+trusted_root_path() {
+  trusted_path=$1
+  while :; do
+    [ ! -L "$trusted_path" ] && [ -d "$trusted_path" ] && [ "$(stat -c %u "$trusted_path")" = 0 ] || return 1
+    trusted_mode=$(stat -c %a "$trusted_path") || return 1
+    [ $((trusted_mode % 100 / 10 / 2 % 2)) -eq 0 ] && [ $((trusted_mode % 10 / 2 % 2)) -eq 0 ] || return 1
+    [ "$trusted_path" != / ] || break
+    trusted_path=$(dirname -- "$trusted_path")
+  done
+}
+trusted_root_file() {
+  [ ! -L "$1" ] && [ -f "$1" ] && [ "$(stat -c %u "$1")" = 0 ] || return 1
+  trusted_mode=$(stat -c %a "$1") || return 1
+  [ $((trusted_mode % 100 / 10 / 2 % 2)) -eq 0 ] && [ $((trusted_mode % 10 / 2 % 2)) -eq 0 ] || return 1
+  trusted_root_path "$(dirname -- "$1")"
+}
 
 resolve_root() {
   if [ -n "${APPGOG_ROOT:-}" ]; then
-    CDPATH= cd -- "$APPGOG_ROOT" 2>/dev/null && pwd
+    CDPATH= cd -- "$APPGOG_ROOT" 2>/dev/null && pwd -P
     return
   fi
   script_path=$0
@@ -15,8 +34,17 @@ resolve_root() {
 }
 
 ROOT_DIR=$(resolve_root) || {
-  echo '无法定位 APPGOG 安装目录。请设置 APPGOG_ROOT。' >&2
+  echo '无法定位 APPGOG 安装目录。请检查安装目录。' >&2
   exit 1
+}
+[ "$(id -u)" != 0 ] || {
+  trusted_root_path "$ROOT_DIR" || { echo "安装目录或父目录不可信：$ROOT_DIR" >&2; exit 1; }
+  for trusted_script in dns lifecycle manager-migration signed-update deployment-role; do
+    trusted_root_file "$ROOT_DIR/scripts/lib/$trusted_script.sh" || { echo "管理脚本归属或权限异常：$trusted_script" >&2; exit 1; }
+  done
+  for trusted_script in appgog docker security-local security-connect security-doctor migration; do
+    trusted_root_file "$ROOT_DIR/scripts/$trusted_script.sh" || { echo "管理入口归属或权限异常：$trusted_script" >&2; exit 1; }
+  done
 }
 case "$ROOT_DIR" in */releases/*) INSTALL_ROOT=${ROOT_DIR%/releases/*} ;; *) INSTALL_ROOT=$ROOT_DIR ;; esac
 SHARED_DIR="$INSTALL_ROOT/shared"
@@ -27,8 +55,11 @@ OPERATIONS_LOG="$SHARED_DIR/logs/operations.log"
 . "$ROOT_DIR/scripts/lib/lifecycle.sh"
 . "$ROOT_DIR/scripts/lib/manager-migration.sh"
 . "$ROOT_DIR/scripts/lib/signed-update.sh"
+. "$ROOT_DIR/scripts/lib/deployment-role.sh"
+COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
+compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$COMPOSE_FILE" "$@"; }
 
-[ -f "$DOCKER_SCRIPT" ] && [ -f "$ROOT_DIR/compose.yaml" ] || {
+[ -f "$DOCKER_SCRIPT" ] && [ -f "$COMPOSE_FILE" ] || {
   echo "APPGOG 安装目录无效：$ROOT_DIR" >&2
   exit 1
 }
@@ -90,9 +121,10 @@ uninstall_keep_data() {
   uninstall_log="$SHARED_DIR/logs/uninstall.log"
   printf '%s 开始保留数据卸载\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$uninstall_log"
   run_docker backup 2>&1 | tee -a "$uninstall_log" || return 1
-  (cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml down --remove-orphans) 2>&1 | tee -a "$uninstall_log"
+  (cd "$ROOT_DIR" && compose down --remove-orphans) 2>&1 | tee -a "$uninstall_log"
   image=$(sed -n 's/^APPGOG_IMAGE=//p' "$ENV_FILE" | tail -n 1)
   [ -z "$image" ] || docker image rm "$image" >> "$uninstall_log" 2>&1 || true
+  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" APPGOG_HOST_ENV_FILE="$ENV_FILE" sh "$ROOT_DIR/scripts/install-host-security.sh" uninstall >> "$uninstall_log" 2>&1 || return 1
   systemctl disable --now appgog-update-helper.service >> "$uninstall_log" 2>&1 || true
   rm -f /etc/systemd/system/appgog-update-helper.service /usr/local/bin/appgog
   systemctl daemon-reload >/dev/null 2>&1 || true
@@ -182,7 +214,7 @@ service_state() {
     SERVICE_COLOR=$RED
     return
   fi
-  container=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps -a -q appgog 2>/dev/null)
+  container=$(cd "$ROOT_DIR" && compose ps -a -q appgog 2>/dev/null)
   health=''
   [ -z "$container" ] || health=$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container" 2>/dev/null)
   case "$health" in
@@ -216,12 +248,12 @@ header() {
 }
 
 installed_role() {
-  case "$(env_value APPGOG_DEPLOYMENT_ROLE)" in all|license|build) env_value APPGOG_DEPLOYMENT_ROLE ;; '') printf 'all' ;; *) printf 'unknown' ;; esac
+  appgog_deployment_role "$ENV_FILE"
 }
 
 security_local() {
   [ "$(id -u)" -eq 0 ] || { say_error '宿主检查需要 root 或 sudo。'; return 1; }
-  sh "$ROOT_DIR/scripts/security-local.sh" "$1"
+  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/security-local.sh" "$@"
 }
 
 security_cloud_doctor() {
@@ -243,6 +275,11 @@ security_menu() {
       '  2. 立即运行固定范围本地检查' \
       '  3. 检验云端加密身份和节点状态' \
       '  4. 与独立云端配对（需要离线交付的身份包）' \
+      '  5. 查看最近告警与恢复记录' \
+      '  6. 安装或更新本地 ClamAV 查杀引擎' \
+      '  7. 核验后批准当前程序基线（仅 root）' \
+      '  8. 核验后批准当前主机配置基线（仅 root）' \
+      '  9. 备份并使用可信签名发布包修复源码' \
       '  0. 返回主菜单'
     tty_read '请选择：'
     case "$REPLY_VALUE" in
@@ -255,6 +292,19 @@ security_menu() {
         tty_read '通过独立渠道取得的云端 CA SHA-256 指纹：'; ca_fingerprint=$REPLY_VALUE
         [ -n "$cloud_origin" ] && [ -n "$bundle_dir" ] && confirm '确认进行加密配对并重启业务容器？' && security_connect "$cloud_origin" "$bundle_dir" "$ca_fingerprint"
         pause_menu ;;
+      5) security_local history; pause_menu ;;
+      6) confirm '确认从发行版仓库安装 ClamAV 并更新特征库？' && security_local engine; pause_menu ;;
+      7)
+        printf '%s\n' '先独立核验签名发布包，排除被篡改文件；批准会接受当前程序。'
+        tty_read '输入已核验的完整版本号：'; approved_version=$REPLY_VALUE
+        [ -n "$approved_version" ] && security_local approve-program "$approved_version"
+        pause_menu ;;
+      8)
+        printf '%s\n' '先检查账户、SSH、sudo、定时任务、systemd、网络配置和 APPGOG 配置的合法变更。'
+        tty_read '确认全部合法后输入 APPROVE-HOST：'; approved_host=$REPLY_VALUE
+        [ "$approved_host" = APPROVE-HOST ] && security_local approve-host "$approved_host"
+        pause_menu ;;
+      9) confirm '确认创建备份并重新下载当前签名版本修复源码？' && repair_source; pause_menu ;;
       0|'') return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -294,7 +344,7 @@ business_pair_export() {
   # marker and blocks a second issuance until an operator reconciles nodes.
   mkdir "$pending" 2>/dev/null || { say_error '签发正在进行或待人工核对。'; return 1; }
   bundle=$(mktemp /root/appgog-business-pair.XXXXXXXX.json) || { rmdir "$pending"; return 1; }
-  container=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps -q appgog) || {
+  container=$(cd "$ROOT_DIR" && compose ps -q appgog) || {
     rm -f "$bundle"; rmdir "$pending"; return 1;
   }
   [ -n "$container" ] || { rm -f "$bundle"; rmdir "$pending"; say_error '授权容器未运行。'; return 1; }
@@ -325,7 +375,7 @@ business_pair_revoke() {
   [ -s "$record" ] || { say_error '没有本机签发记录；请在授权后台核对所有节点。'; return 1; }
   build_id=$(jq -er '.build_node_id' "$record") || return 1
   worker_id=$(jq -er '.worker_node_id' "$record") || return 1
-  container=$(cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml ps -q appgog) || return 1
+  container=$(cd "$ROOT_DIR" && compose ps -q appgog) || return 1
   [ -n "$container" ] || return 1
   docker exec -i "$container" node /app/scripts/docker/business-pair.js disable '' "$build_id" "$worker_id" || return 1
   mv "$record" "$record.revoked.$(date -u +%Y%m%dT%H%M%SZ)" || return 1
@@ -486,7 +536,7 @@ advanced_menu() {
       3) confirm '确认按最小权限修复 APPGOG 配置与密钥文件？' && run_docker repair-permissions; pause_menu ;;
       4) confirm '确认只清理未被任何容器使用的悬空镜像？' && run_docker cleanup-images; pause_menu ;;
       5) docker system df; pause_menu ;;
-      6) (cd "$ROOT_DIR" && docker compose -p "${APPGOG_PROJECT:-appgog}" -f compose.yaml config --quiet) && say_ok 'Compose 配置有效'; pause_menu ;;
+      6) (cd "$ROOT_DIR" && compose config --quiet) && say_ok 'Compose 配置有效'; pause_menu ;;
       7) printf '%s\n' "$ROOT_DIR"; pause_menu ;;
       8) usage; pause_menu ;;
       0|'') return 0 ;;
@@ -577,7 +627,9 @@ APPGOG 管理命令
   appgog business-export                授权机签发 root 私有配对包
   appgog business-import PATH           打包机导入并验证私有配对包
   appgog business-revoke                授权机撤销当前节点身份
-  appgog security-local status|scan  宿主检查结果或立即启动固定范围检查
+  appgog security-local status|scan|history|engine  本地检查、告警历史、查杀引擎
+  appgog security-local approve-program <版本>  核验后批准程序基线
+  appgog security-local approve-host APPROVE-HOST  核验后批准主机配置
   appgog security-doctor             验证云端身份和节点状态
   appgog security-connect URL BUNDLE_DIR CA_SHA256  用独立身份包配对云端
   appgog doctor          系统诊断
@@ -595,7 +647,7 @@ case "${1:-menu}" in
   business-export) business_pair_export ;;
   business-import) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; business_pair_import "$2" ;;
   business-revoke) confirm '撤销两个已签发节点身份？' && business_pair_revoke ;;
-  security-local) shift; security_local "${1:-}" ;;
+  security-local) shift; security_local "$@" ;;
   security-doctor) security_cloud_doctor ;;
   security-connect) [ "$#" -eq 4 ] || { usage >&2; exit 2; }; security_connect "$2" "$3" "$4" ;;
   update) online_update ;;

@@ -24,26 +24,22 @@ services:
       - path: .env
         required: false
     environment:
-      APPGOG_DEPLOYMENT_ROLE: ${APPGOG_DEPLOYMENT_ROLE:-all}
-      APPGOG_BUSINESS_PAIRED: ${APPGOG_BUSINESS_PAIRED:-}
+      APPGOG_DEPLOYMENT_ROLE: build
+      APPGOG_BUSINESS_PAIRED: ${APPGOG_BUSINESS_PAIRED:-false}
       AUTH_DOMAIN: ${AUTH_DOMAIN:-}
       BUILD_DOMAIN: ${BUILD_DOMAIN:-}
-      LICENSE_SERVICE_ENABLED: ${LICENSE_SERVICE_ENABLED:-true}
-      CUSTOMER_LOGIN_ENABLED: ${CUSTOMER_LOGIN_ENABLED:-true}
-      BUILD_CENTER_ENABLED: ${BUILD_CENTER_ENABLED:-true}
-      NEW_BUILDS_ENABLED: ${NEW_BUILDS_ENABLED:-true}
-      WORKER_ENABLED: ${WORKER_ENABLED:-true}
+      LICENSE_SERVICE_ENABLED: false
+      CUSTOMER_LOGIN_ENABLED: false
+      BUILD_CENTER_ENABLED: false
+      NEW_BUILDS_ENABLED: false
+      WORKER_ENABLED: false
     ports:
       - "${HTTP_PORT:-80}:8080"
       - "${HTTPS_PORT:-443}:8443"
       - "${HTTPS_PORT:-443}:8443/udp"
     volumes:
-      - appgog-db:/app/var/data
-      - appgog-keys:/app/var/keys
       - appgog-artifacts:/app/var/artifacts
-      - appgog-uploads:/app/var/uploads
       - ${APPGOG_SHARED_DIR:-./shared}/update-control:/app/var/update-control
-      - appgog-license-config:/app/runtime/license
       - appgog-build-config:/app/runtime/build
       - appgog-worker-config:/app/runtime/worker
       - ${APPGOG_SHARED_DIR:-./shared}/security:/app/runtime/security:ro
@@ -57,11 +53,7 @@ services:
       retries: 10
       start_period: 30s
 volumes:
-  appgog-db:
-  appgog-keys:
   appgog-artifacts:
-  appgog-uploads:
-  appgog-license-config:
   appgog-build-config:
   appgog-worker-config:
   appgog-caddy-data:

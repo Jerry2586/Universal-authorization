@@ -18,11 +18,16 @@ test('正式打包流程必须在生成前后执行发布合同校验', () => {
   const packager = readFileSync(resolve(root, 'scripts/package-cms.js'), 'utf8');
   assert.match(packager, /verifySourceContract\(\)/);
   assert.match(packager, /verifyPackagedArtifacts\(\{ allowUnsigned:/);
+  assert.match(packager, /compose\.license\.yaml/);
+  assert.match(packager, /compose\.build\.yaml/);
   const verifier = readFileSync(resolve(root, 'scripts/verify-release-contract.js'), 'utf8');
   assert.match(verifier, /release-manifest\.json\.sig/);
   assert.match(verifier, /Ed25519 验签失败/);
   assert.match(verifier, /正式 RUN 缺少内嵌 Ed25519 验签步骤/);
   assert.match(verifier, /APPGOG_ALLOW_UNSIGNED_ARTIFACTS === '1'/);
+  assert.match(verifier, /compose\.license\.yaml/);
+  assert.match(verifier, /compose\.build\.yaml/);
+  assert.match(verifier, /scripts\/lib\/deployment-role\.sh/);
   const publishedVerifier = readFileSync(resolve(root, 'scripts/verify-published-release.js'), 'utf8');
   assert.match(publishedVerifier, /releases\/latest/);
   assert.match(publishedVerifier, /assets\.length === expectedNames\.length/);

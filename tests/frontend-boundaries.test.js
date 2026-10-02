@@ -69,6 +69,8 @@ test('page controllers stay actor-bounded and all portal modules remain small', 
     'apps/web/public/assets/portal/announcements.js',
     'apps/web/public/assets/portal/members.js',
     'apps/web/public/assets/portal/operations.js',
+    'apps/web/public/assets/portal/security-ui.js',
+    'apps/web/public/assets/portal/security-poller.js',
   ];
   for (const module of modules) assert.ok(lines(module) <= 300, `${module} 超过 300 行，应继续按职责拆分`);
 });
