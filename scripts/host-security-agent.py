@@ -27,7 +27,9 @@ HOST_BASELINE = STATE_DIR / 'host-baseline.json'
 HISTORY_FILE = STATE_DIR / 'events.json'
 PROGRAM_DIRS = ('apps', 'packages', 'scripts')
 PROGRAM_ROOT_FILES = ('package.json', 'pnpm-lock.yaml', 'release-contract.json', 'Dockerfile',
-                      'compose.yaml', 'compose.license.yaml', 'compose.build.yaml')
+                      'compose.yaml', 'compose.license.yaml', 'compose.build.yaml',
+                      'Caddyfile', 'Caddyfile.license', 'Caddyfile.build',
+                      '.env.example', '.env.docker.example', '.dockerignore', 'install-docker.sh')
 IGNORED_DIRS = {'node_modules', '.git', '__pycache__'}
 MAX_INVENTORY_FILES = 4096
 MAX_INVENTORY_BYTES = 128 * 1024 * 1024
@@ -894,8 +896,29 @@ def listener_posture_check():
     return result
 
 
+def containment_check():
+    path = STATE_DIR / 'incident.json'
+    if not path.exists() and not path.is_symlink():
+        return check('本地事故隔离', 'ok', '没有活动隔离记录；这不代表整台主机无入侵',
+                     check_id='response.containment', category='host', scope='independent local response')
+    try:
+        item = json.loads(read_state(path, 32768))
+        if item.get('schema') != 1 or item.get('root') != str(ROOT) or item.get('state') not in {
+            'isolating', 'contained', 'containment_failed', 'source_repaired', 'recovering', 'released'
+        }:
+            raise ValueError('invalid incident')
+        active = item['state'] != 'released'
+        return check('本地事故隔离', 'finding' if active else 'ok',
+                     '隔离状态：' + item['state'] + ('；仅允许 root 经独立核验恢复' if active else '；已留存恢复记录'),
+                     check_id='response.containment', category='host', severity='critical' if active else 'info',
+                     scope='independent local response', evidence={'state': item['state'], 'updated_at': item.get('updated_at')})
+    except (OSError, ValueError, TypeError):
+        return check('本地事故隔离', 'unavailable', '独立隔离记录异常，普通恢复应保持禁止',
+                     check_id='response.containment', category='host', scope='independent local response')
+
+
 def scan():
-    results = [integrity_check(), host_configuration_check(), container_contract_check()]
+    results = [integrity_check(), host_configuration_check(), container_contract_check(), containment_check()]
     try:
         info = Path('/etc/os-release').read_text(encoding='utf-8')
         distro = next((line[8:].strip('"') for line in info.splitlines() if line.startswith('PRETTY_NAME=')), 'Linux')

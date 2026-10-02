@@ -699,6 +699,10 @@ wait_public_https() {
   done
 }
 
+if [ -e /var/lib/appgog-security/incident.json ] || [ -L /var/lib/appgog-security/incident.json ]; then
+  [ -x /usr/local/sbin/appgog-security-response ] || fail '本地隔离记录存在，独立控制器缺失；禁止更新覆盖证据。'
+  /usr/local/sbin/appgog-security-response guard >/dev/null || fail '先在独立本地事故菜单核验恢复，再执行普通安装/升级。'
+fi
 prepare_shared_layout
 if [ -f "$SHARED_DIR/.env" ]; then
   UPGRADE_MODE=true

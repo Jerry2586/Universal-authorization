@@ -25,6 +25,11 @@ trusted_root_file() {
 ROOT=$(CDPATH= cd -- "$ROOT" && pwd -P) || exit 1
 trusted_root_path "$ROOT" || { echo "安装目录或父目录不可信" >&2; exit 1; }
 case "${1:-}" in
+  response)
+    shift
+    controller=/usr/local/sbin/appgog-security-response
+    trusted_root_file "$controller" || { echo "独立事故控制器缺失或不可信" >&2; exit 1; }
+    exec "$controller" "$@" ;;
   engine)
     [ "$#" -eq 1 ] || exit 2
     case "$ROOT" in /*) ;; *) exit 2 ;; esac
@@ -64,7 +69,7 @@ case "${1:-}" in
       429) echo 'Host scan cooldown active (60 seconds)' >&2; exit 1 ;;
       *) echo "Host scan rejected: HTTP $code" >&2; exit 1 ;;
     esac ;;
-  *) echo 'Usage: appgog security-local status|scan|history|engine|approve-program VERSION|approve-host APPROVE-HOST' >&2; exit 2 ;;
+  *) echo 'Usage: appgog security-local status|scan|history|engine|approve-program VERSION|approve-host APPROVE-HOST|response ACTION' >&2; exit 2 ;;
 esac
 [ "$#" -eq 1 ] || exit 2
 result=$(curl --silent --show-error --fail --unix-socket "$SOCKET" --max-time 5 'http://localhost/status') || exit 1

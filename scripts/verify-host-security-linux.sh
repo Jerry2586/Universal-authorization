@@ -15,7 +15,7 @@ done
 install -d -o root -g root -m 0700 "$TEST_ROOT/releases/candidate" "$TEST_ROOT/shared"
 RELEASE=$TEST_ROOT/releases/candidate
 cp -R "$SOURCE/apps" "$SOURCE/packages" "$SOURCE/scripts" "$RELEASE/"
-for name in package.json pnpm-lock.yaml release-contract.json Dockerfile compose.yaml compose.license.yaml compose.build.yaml; do cp "$SOURCE/$name" "$RELEASE/$name"; done
+for name in package.json pnpm-lock.yaml release-contract.json Dockerfile compose.yaml compose.license.yaml compose.build.yaml Caddyfile Caddyfile.license Caddyfile.build .env.example .env.docker.example .dockerignore install-docker.sh; do cp "$SOURCE/$name" "$RELEASE/$name"; done
 chown -R root:root "$TEST_ROOT"
 ln -s releases/candidate "$TEST_ROOT/current"
 printf 'AUTH_DOMAIN=license.appgog.test
@@ -56,6 +56,14 @@ gid=$(getent group appgog-security | cut -d: -f3)
 [ "$(stat -c '%u:%g:%a' "$STATE/baseline.json")" = '0:0:600' ]
 [ "$(stat -c '%u:%g:%a' "$STATE/host-baseline.json")" = '0:0:600' ]
 systemctl is-active --quiet appgog-host-security.service
+systemctl is-enabled --quiet appgog-local-response.timer
+systemctl is-active --quiet appgog-local-response.timer
+[ "$(stat -c '%u:%g:%a' /usr/local/sbin/appgog-security-response)" = '0:0:700' ]
+[ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/response-config.json)" = '0:0:600' ]
+[ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/release-public.pem)" = '0:0:600' ]
+response_hash=$(sha256sum /usr/local/lib/appgog-security/host-security-response.py | cut -d' ' -f1)
+config_hash=$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)
+key_hash=$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)
 program_hash=$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)
 host_hash=$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)
 printf '
@@ -80,14 +88,45 @@ if lifecycle install; then echo 'Broken candidate unexpectedly installed' >&2; e
 [ "$(sha256sum "$AGENT" | cut -d' ' -f1)" = "$agent_hash" ]
 systemctl is-active --quiet appgog-host-security.service
 cp "$SOURCE/scripts/host-security-agent.py" "$RELEASE/scripts/host-security-agent.py"
+[ "$(sha256sum /usr/local/lib/appgog-security/host-security-response.py | cut -d' ' -f1)" = "$response_hash" ]
+[ "$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)" = "$config_hash" ]
+[ "$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)" = "$key_hash" ]
+systemctl is-active --quiet appgog-local-response.timer
+# A later-phase error must restore all independent files and a stopped-but-enabled timer.
+systemctl stop appgog-local-response.timer
+printf '
+invalid response syntax (
+' >> "$RELEASE/scripts/host-security-response.py"
+if lifecycle install; then echo 'Broken response candidate unexpectedly installed' >&2; exit 1; fi
+[ "$(sha256sum /usr/local/lib/appgog-security/host-security-response.py | cut -d' ' -f1)" = "$response_hash" ]
+systemctl is-enabled --quiet appgog-local-response.timer
+if systemctl is-active --quiet appgog-local-response.timer; then echo 'Rollback changed prior inactive timer state' >&2; exit 1; fi
+cp "$SOURCE/scripts/host-security-response.py" "$RELEASE/scripts/host-security-response.py"
+lifecycle install
+systemctl is-active --quiet appgog-local-response.timer
+# Independent key pin mismatch fails without silently rotating the trust root.
+printf 'invalid key
+' > "$RELEASE/scripts/release-public.pem"
+if lifecycle install; then echo 'Changed independent signing pin accepted' >&2; exit 1; fi
+[ "$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)" = "$key_hash" ]
+cp "$SOURCE/scripts/release-public.pem" "$RELEASE/scripts/release-public.pem"
 # Verify real non-root containers can use only the explicitly granted socket.
 docker pull node:24-bookworm-slim
 client='const http=require("http"); const r=http.get({socketPath:"/scan/scan.sock",path:"/status"},s=>{let b="";s.on("data",c=>b+=c);s.on("end",()=>{if(s.statusCode!==200||!JSON.parse(b).state)process.exit(2)});});r.on("error",()=>process.exit(3));'
 docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user "65534:$gid" --group-add "$gid" -v /run/appgog-security:/scan:ro node:24-bookworm-slim node -e "$client"
 if docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 -v /run/appgog-security:/scan:ro node:24-bookworm-slim node -e "$client"; then echo 'Unauthorized container accessed scan socket' >&2; exit 1; fi
 python3 -I "$SOURCE/scripts/verify-host-security-engine.py" "$SOURCE/scripts/host-security-agent.py"
+python3 -I "$SOURCE/scripts/verify-host-security-response-linux.py" "$TEST_ROOT"
+# Successful signed repair creates a new approved source baseline; preserve that exact baseline thereafter.
+program_hash=$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)
 lifecycle uninstall
 [ ! -e "$UNIT" ] && [ ! -e "$AGENT" ] && [ ! -e /run/appgog-security/scan.sock ]
+[ ! -e /usr/local/sbin/appgog-security-response ]
+[ ! -e /etc/systemd/system/appgog-local-response.timer ]
+[ ! -e /etc/systemd/system/appgog-local-response.service ]
+[ "$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)" = "$config_hash" ]
+[ "$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)" = "$key_hash" ]
+if systemctl is-active --quiet appgog-local-response.timer; then echo 'Response timer survived uninstall' >&2; exit 1; fi
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
 [ -s "$STATE/events.json" ] && getent group appgog-security >/dev/null

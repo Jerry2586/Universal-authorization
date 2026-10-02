@@ -125,6 +125,14 @@ with tempfile.TemporaryDirectory() as tmp:
  except OSError: pass
  with zipfile.ZipFile(target,'w') as z: z.writestr('small','ok')
  a.validate_zip_budget(target)
+ # Set both on-disk ZIP encryption flags; validator must reject rather than return clean.
+ import struct
+ encrypted=bytearray(target.read_bytes())
+ central=encrypted.index(b'PK\\x01\\x02')
+ for offset in (6,central+8): struct.pack_into('<H',encrypted,offset,struct.unpack_from('<H',encrypted,offset)[0]|1)
+ target.write_bytes(encrypted)
+ try: a.validate_zip_budget(target); raise AssertionError('encrypted member accepted')
+ except OSError: pass
  with zipfile.ZipFile(target,'w') as z:
   for i in range(101): z.writestr(str(i),'ok')
  try: a.validate_zip_budget(target); raise AssertionError('entry budget accepted')

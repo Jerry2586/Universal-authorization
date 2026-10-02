@@ -12,6 +12,13 @@ DEPLOYMENT_ROLE=$(appgog_deployment_role "$ENV_FILE") || exit 1
 COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
 compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$COMPOSE_FILE" "$@"; }
 fail() { echo "错误：$*" >&2; exit 1; }
+incident_guard() {
+  if [ -e /var/lib/appgog-security/incident.json ] || [ -L /var/lib/appgog-security/incident.json ]; then
+    [ -f /usr/local/sbin/appgog-security-response ] && [ ! -L /usr/local/sbin/appgog-security-response ] || fail '隔离记录存在，独立恢复控制器缺失；禁止启动。'
+    /usr/local/sbin/appgog-security-response guard >/dev/null || fail '本地安全事故未解除；请使用独立事故恢复菜单。'
+  fi
+}
+
 compose_version_supported() {
   appgog_compose_version_supported 24
 }
@@ -411,6 +418,7 @@ EOF
 }
 case "${1:-help}" in
   install|update)
+    incident_guard
     require_docker
     require_config
     host_security_lifecycle prepare
@@ -419,6 +427,7 @@ case "${1:-help}" in
     echo '单容器安装完成。用 sh scripts/docker.sh credentials 查看初始管理员账号密码。'
     ;;
   start)
+    incident_guard
     require_docker
     require_config
     host_security_lifecycle prepare
@@ -432,6 +441,7 @@ case "${1:-help}" in
     compose stop appgog
     ;;
   restart)
+    incident_guard
     require_docker
     require_config
     host_security_lifecycle prepare
@@ -444,6 +454,7 @@ case "${1:-help}" in
 
   backup) require_docker; require_config; backup ;;
   restore)
+    incident_guard
     require_docker
     require_config
     [ -n "${2:-}" ] && [ -f "$2" ] || { echo '用法：sh scripts/docker.sh restore /绝对路径/备份.tar.gz.enc' >&2; exit 1; }

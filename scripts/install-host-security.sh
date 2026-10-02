@@ -9,6 +9,13 @@ INSTALL_ROOT=${APPGOG_INSTALL_ROOT:-$SOURCE_DIR}
 ENV_FILE=${APPGOG_HOST_ENV_FILE:-$SOURCE_DIR/.env}
 AGENT_DIR=/usr/local/lib/appgog-security
 AGENT_FILE=$AGENT_DIR/host-security-agent.py
+RESPONSE_FILE=$AGENT_DIR/host-security-response.py
+REPAIR_FILE=$AGENT_DIR/host-security-repair.py
+RESPONSE_CONFIG=$AGENT_DIR/response-config.json
+PUBLIC_KEY=$AGENT_DIR/release-public.pem
+RESPONSE_CLI=/usr/local/sbin/appgog-security-response
+RESPONSE_UNIT=/etc/systemd/system/appgog-local-response.service
+RESPONSE_TIMER=/etc/systemd/system/appgog-local-response.timer
 UNIT=/etc/systemd/system/appgog-host-security.service
 TMPFILES=/etc/tmpfiles.d/appgog-host-security.conf
 STATE_DIR=/var/lib/appgog-security
@@ -65,7 +72,27 @@ validate_unit() {
 }
 safe_parents "$UNIT"
 safe_parents "$TMPFILES"
+for file in "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
+  safe_parents "$file"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    safe_file "$file"
+    grep -Fxq "# APPGOG-LOCAL-RESPONSE-MANAGED $INSTALL_ROOT" "$file" || fail "事故控制服务归属不符"
+  fi
+done
 validate_unit
+if [ "$ACTION" = install ] && { [ -e "$STATE_DIR/incident.json" ] || [ -L "$STATE_DIR/incident.json" ]; }; then
+  safe_parents "$RESPONSE_CLI"; safe_file "$RESPONSE_CLI"
+  "$RESPONSE_CLI" guard >/dev/null || fail '事故未解除，禁止覆盖独立安全执行器'
+fi
+stop_response() {
+  for service in appgog-local-response.timer appgog-local-response.service; do
+    if [ "$(systemctl show -p LoadState --value "$service" 2>/dev/null)" = loaded ]; then
+      systemctl stop "$service" || fail "无法停止事故控制服务：$service"
+      systemctl is-active --quiet "$service" && fail "事故控制服务仍在运行：$service"
+    fi
+  done
+  return 0
+}
 
 if [ "$ACTION" = uninstall ]; then
   # Validate all removable artifacts before touching the running service.
@@ -74,13 +101,25 @@ if [ "$ACTION" = uninstall ]; then
     [ ! -L "$AGENT_DIR" ] && [ -d "$AGENT_DIR" ] && [ "$(stat -c %u "$AGENT_DIR")" = 0 ] || fail '代理目录归属异常'
     [ ! -e "$AGENT_FILE" ] || safe_file "$AGENT_FILE"
   fi
+  for file in "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI"; do
+    if [ -e "$file" ] || [ -L "$file" ]; then safe_parents "$file"; safe_file "$file"; fi
+  done
+  if [ -f "$STATE_DIR/incident.json" ] || [ -L "$STATE_DIR/incident.json" ]; then
+    "$RESPONSE_CLI" guard >/dev/null || fail "事故未解除，禁止卸载隔离保护"
+  fi
+  stop_response
+  if [ -e "$RESPONSE_TIMER" ]; then
+    systemctl disable appgog-local-response.timer >/dev/null || fail '事故控制定时器无法禁用'
+    systemctl is-enabled --quiet appgog-local-response.timer && fail '事故控制定时器仍启用'
+  fi
   [ ! -L "$RUNTIME_DIR" ] || fail '运行目录异常'
   if [ -e "$UNIT" ] || systemctl is-active --quiet appgog-host-security.service; then
     systemctl stop appgog-host-security.service
     systemctl is-active --quiet appgog-host-security.service && fail '代理仍在运行，停止卸载'
     systemctl disable appgog-host-security.service || true
   fi
-  rm -f "$UNIT" "$TMPFILES" "$AGENT_FILE"
+  rm -f "$UNIT" "$TMPFILES" "$AGENT_FILE" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"
+  # Independent contract, public key, incident and evidence survive uninstall.
   if [ -S "$RUNTIME_DIR/scan.sock" ]; then rm -f "$RUNTIME_DIR/scan.sock"; fi
   systemctl daemon-reload
   echo '本地安全服务已停止；基线、告警、专用组和 GID 配置保留，便于重装沿用权限'
@@ -156,14 +195,16 @@ safe_directory "$STATE_DIR" 0700 root
 safe_parents "$SOURCE_DIR/scripts/host-security-agent.py"
 safe_file "$SOURCE_DIR/scripts/host-security-agent.py"
 # Restore the previous executable/unit/updater definition if activation fails.
-for file in "$AGENT_FILE" "$UNIT" "$TMPFILES"; do
+for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
   if [ -e "$file" ] || [ -L "$file" ]; then safe_file "$file"; fi
 done
 transaction=$(mktemp -d "$AGENT_DIR/.install.XXXXXX")
-old_active=false; old_enabled=false; committed=false
+old_active=false; old_enabled=false; old_response_enabled=false; old_response_active=false; committed=false
+systemctl is-enabled --quiet appgog-local-response.timer && old_response_enabled=true
+systemctl is-active --quiet appgog-local-response.timer && old_response_active=true
 systemctl is-active --quiet appgog-host-security.service && old_active=true
 systemctl is-enabled --quiet appgog-host-security.service && old_enabled=true
-for file in "$AGENT_FILE" "$UNIT" "$TMPFILES"; do
+for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
   if [ -e "$file" ] || [ -L "$file" ]; then
     cp -p "$file" "$transaction/$(basename "$file").old" || { rm -f "$transaction/"*.old; rmdir "$transaction"; fail '原代理备份失败'; }
   fi
@@ -172,26 +213,60 @@ cleanup() {
   result=$?
   trap - 0 INT TERM
   if [ "$committed" != true ]; then
-    systemctl stop appgog-host-security.service || true
-    for file in "$AGENT_FILE" "$UNIT" "$TMPFILES"; do
+    rollback_stopped=true
+    for service in appgog-local-response.timer appgog-local-response.service appgog-host-security.service; do
+      if [ "$(systemctl show -p LoadState --value "$service" 2>/dev/null)" = loaded ]; then
+        systemctl stop "$service" || rollback_stopped=false
+        systemctl is-active --quiet "$service" && rollback_stopped=false
+      fi
+    done
+    if [ "$rollback_stopped" != true ]; then
+      echo "服务无法停止；未覆盖运行中的执行器，回滚材料保留：$transaction" >&2
+      exit 1
+    fi
+    rollback_ok=true
+    for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
       backup="$transaction/$(basename "$file").old"
       if [ -f "$backup" ]; then
-        cp -p "$backup" "$file" || echo "原文件恢复失败：$file" >&2
-      else rm -f "$file" || echo "新文件清理失败：$file" >&2; fi
+        cp -p "$backup" "$file" || { echo "原文件恢复失败：$file" >&2; rollback_ok=false; }
+      else rm -f "$file" || { echo "新文件清理失败：$file" >&2; rollback_ok=false; }; fi
     done
-    systemctl daemon-reload || true
-    if [ "$old_enabled" = true ]; then systemctl enable appgog-host-security.service >/dev/null || true
-    else systemctl disable appgog-host-security.service >/dev/null 2>&1 || true; fi
-    if [ "$old_active" = true ]; then systemctl restart appgog-host-security.service || echo '旧代理恢复失败，请查看 journalctl' >&2; fi
+    # Never start a partially restored executor or discard its recovery materials.
+    if [ "$rollback_ok" != true ]; then
+      echo "文件回滚不完整；服务保持停止，恢复材料保留：$transaction" >&2
+      exit 1
+    fi
+    systemctl daemon-reload || rollback_ok=false
+    if [ -f "$RESPONSE_TIMER" ]; then
+      if [ "$old_response_enabled" = true ]; then systemctl enable appgog-local-response.timer >/dev/null || rollback_ok=false
+      else systemctl disable appgog-local-response.timer >/dev/null 2>&1 || rollback_ok=false; fi
+    fi
+    if [ -f "$UNIT" ]; then
+      if [ "$old_enabled" = true ]; then systemctl enable appgog-host-security.service >/dev/null || rollback_ok=false
+      else systemctl disable appgog-host-security.service >/dev/null 2>&1 || rollback_ok=false; fi
+    fi
+    if [ "$rollback_ok" = true ]; then
+      if [ "$old_active" = true ]; then
+        systemctl restart appgog-host-security.service && systemctl is-active --quiet appgog-host-security.service || rollback_ok=false
+      fi
+      if [ "$old_response_active" = true ]; then
+        systemctl start appgog-local-response.timer && systemctl is-active --quiet appgog-local-response.timer || rollback_ok=false
+      fi
+    fi
+    if [ "$rollback_ok" != true ]; then
+      echo "旧服务恢复不完整；恢复材料保留：$transaction，请查看 journalctl" >&2
+      exit 1
+    fi
     echo '本地安全代理激活失败，已尝试恢复原服务；保留环境补齐、安全组、GID 配置与基线' >&2
   fi
-  rm -f "$transaction/host-security-agent.py.old" "$transaction/appgog-host-security.service.old" "$transaction/appgog-host-security.conf.old" "$transaction/agent.new" "$transaction/unit.new"
+  rm -f "$transaction/host-security-agent.py.old" "$transaction/appgog-host-security.service.old" "$transaction/appgog-host-security.conf.old" "$transaction/agent.new" "$transaction/unit.new" "$transaction/host-security-response.py.old" "$transaction/host-security-repair.py.old" "$transaction/response-config.json.old" "$transaction/release-public.pem.old" "$transaction/appgog-security-response.old" "$transaction/appgog-local-response.service.old" "$transaction/appgog-local-response.timer.old"
   rmdir "$transaction" || true
   exit "$result"
 }
 trap cleanup 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
+stop_response
 agent_temp=$transaction/agent.new
 install -o root -g root -m 0700 "$SOURCE_DIR/scripts/host-security-agent.py" "$agent_temp"
 python_bin=/usr/bin/python3
@@ -200,6 +275,74 @@ safe_parents "$(readlink -f "$python_bin")"
 safe_file "$(readlink -f "$python_bin")"
 "$python_bin" -I -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$agent_temp"
 mv -f "$agent_temp" "$AGENT_FILE"
+
+# Install the response channel independently of the mutable business release.
+for name in host-security-response.py host-security-repair.py; do
+  safe_parents "$SOURCE_DIR/scripts/$name"
+  safe_file "$SOURCE_DIR/scripts/$name"
+  "$python_bin" -I -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$SOURCE_DIR/scripts/$name"
+  install -o root -g root -m 0700 "$SOURCE_DIR/scripts/$name" "$AGENT_DIR/$name"
+done
+safe_parents "$SOURCE_DIR/scripts/release-public.pem"
+safe_file "$SOURCE_DIR/scripts/release-public.pem"
+if [ ! -e "$PUBLIC_KEY" ]; then install -o root -g root -m 0600 "$SOURCE_DIR/scripts/release-public.pem" "$PUBLIC_KEY"; fi
+cmp -s "$PUBLIC_KEY" "$SOURCE_DIR/scripts/release-public.pem" || fail '独立发布公钥与候选不同；拒绝自动换信任根'
+# Never silently rotate an existing independent signing-key pin.
+"$python_bin" -I - "$INSTALL_ROOT" "$SOURCE_DIR/package.json" "$RESPONSE_CONFIG" <<'PY'
+import json,os,re,sys,tempfile
+root,package,target=sys.argv[1:]
+version=json.load(open(package))['version']
+assert re.fullmatch(r'\d+\.\d+\.\d+',version)
+if os.path.exists(target):
+    assert json.load(open(target)).get('root') == root, 'different independent installation'
+fd,tmp=tempfile.mkstemp(dir=os.path.dirname(target))
+with os.fdopen(fd,'w') as f:
+    json.dump({'schema':1,'root':root,'version':version},f); f.flush(); os.fsync(f.fileno())
+os.chmod(tmp,0o600); os.replace(tmp,target)
+PY
+safe_parents "$RESPONSE_CLI"
+cat > "$RESPONSE_CLI" <<'EOF'
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+exec /usr/bin/python3 -I /usr/local/lib/appgog-security/host-security-response.py "$@"
+EOF
+chmod 700 "$RESPONSE_CLI"
+cat > "$RESPONSE_UNIT" <<EOF
+# APPGOG-LOCAL-RESPONSE-MANAGED $INSTALL_ROOT
+[Unit]
+Description=APPGOG independent bounded local incident response
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=$RESPONSE_CLI evaluate
+User=root
+TimeoutStartSec=180
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=$STATE_DIR
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=2G
+TasksMax=32
+EOF
+cat > "$RESPONSE_TIMER" <<EOF
+# APPGOG-LOCAL-RESPONSE-MANAGED $INSTALL_ROOT
+[Unit]
+Description=APPGOG local response evaluation every five minutes
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=300
+Unit=appgog-local-response.service
+[Install]
+WantedBy=timers.target
+EOF
+chmod 644 "$RESPONSE_UNIT" "$RESPONSE_TIMER"
+
 unit_temp=$transaction/unit.new
 cat > "$unit_temp" <<EOF
 # APPGOG-HOST-SECURITY-MANAGED
@@ -239,6 +382,7 @@ printf 'd %s 0750 root %s -\n' "$RUNTIME_DIR" "$GROUP" > "$TMPFILES"
 chmod 644 "$TMPFILES"
 systemctl daemon-reload
 systemctl enable appgog-host-security.service >/dev/null
+systemctl enable appgog-local-response.timer >/dev/null
 if [ ! -e "$STATE_DIR/baseline.json" ] && [ ! -L "$STATE_DIR/baseline.json" ]; then
   APPGOG_INSTALL_ROOT="$INSTALL_ROOT" "$python_bin" -I "$AGENT_FILE" --write-baseline || echo '首次程序基线失败；检查结果为不可用' >&2
 else echo '保留程序基线；升级差异须在可信版本核验后由 root 批准'; fi
@@ -251,6 +395,8 @@ attempt=0
 while [ "$attempt" -lt 10 ]; do
   if [ -S "$RUNTIME_DIR/scan.sock" ] && [ "$(stat -c '%u:%g:%a' "$RUNTIME_DIR/scan.sock")" = "0:$GROUP_ID:660" ] &&
      "$python_bin" -I -c 'import http.client,socket,sys; c=http.client.HTTPConnection("localhost",timeout=2); c.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); c.sock.settimeout(2); c.sock.connect(sys.argv[1]); c.request("GET","/status"); r=c.getresponse(); assert r.status==200; c.close()' "$RUNTIME_DIR/scan.sock" 2>/dev/null; then
+    systemctl enable --now appgog-local-response.timer >/dev/null || fail '事故评估定时器无法启动'
+    systemctl is-active --quiet appgog-local-response.timer || fail '事故评估定时器未运行'
     committed=true
     echo '本地代理已启动；扫描结论请查看后台或 appgog security-local status'
     exit 0
