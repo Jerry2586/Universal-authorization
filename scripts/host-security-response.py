@@ -172,9 +172,9 @@ def approve_image(expected):
 
 def recovery_checks():
     checks = [AGENT.integrity_check(), AGENT.host_configuration_check(), AGENT.secret_permissions_check(),
-              AGENT.malware_scan()]
+              AGENT.malware_scan(), AGENT.business_malware_scan()]
     if any(row['state'] != 'ok' for row in checks):
-        raise ValueError('fresh source/host/permissions/antivirus checks did not all pass')
+        raise ValueError('fresh source/host/permissions/program and business antivirus checks did not all pass')
 
 
 def resume(confirmation):

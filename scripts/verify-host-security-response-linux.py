@@ -48,13 +48,24 @@ run(['docker', 'tag', 'node:24-bookworm-slim', image])
 foreign = run(['docker', 'run', '-d', '--network', 'none', '--name', 'appgog-security-foreign-ci',
     'node:24-bookworm-slim', 'node', '-e', 'setInterval(()=>{},1000)']).stdout.strip()
 owned = None
+created_volumes = []
+volume_roots = {}
 try:
+    for category in ('uploads', 'artifacts'):
+        name = 'appgog_appgog-' + category
+        run(['docker', 'volume', 'inspect', name], success=False)
+        run(['docker', 'volume', 'create', '--label', 'com.docker.compose.project=appgog',
+            '--label', 'com.docker.compose.volume=appgog-' + category, name])
+        created_volumes.append(name)
+        volume_roots[category] = Path(json.loads(run(['docker', 'volume', 'inspect', name]).stdout)[0]['Mountpoint'])
     owned = run(['docker', 'run', '-d', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
         '--security-opt', 'no-new-privileges', '--user', '65534:65534', '--restart', 'unless-stopped',
         '--label', 'com.docker.compose.project=appgog', '--label', 'com.docker.compose.service=appgog',
         '--label', 'com.docker.compose.project.working_dir=' + str(root / 'releases/candidate'),
         '--label', 'com.docker.compose.project.config_files=' + str(root / 'releases/candidate/compose.yaml'),
         '--health-cmd', 'node -e "process.exit(0)"', '--health-interval', '1s', '--health-timeout', '2s',
+        '--mount', 'type=volume,source=appgog_appgog-uploads,target=/app/var/uploads',
+        '--mount', 'type=volume,source=appgog_appgog-artifacts,target=/app/var/artifacts',
         '--name', 'appgog-security-owned-ci', image, 'node', '-e', 'setInterval(()=>{},1000)']).stdout.strip()
     for attempt in range(30):
         if inspect(owned)['State'].get('Health', {}).get('Status') == 'healthy':
@@ -64,6 +75,35 @@ try:
         raise AssertionError('Test container did not become healthy')
     if official_recovery:
         # Actual production check functions, fresh official databases and real clamscan.
+        uploads = volume_roots['uploads']
+        artifacts = volume_roots['artifacts']
+        with zipfile.ZipFile(uploads / 'benign.zip', 'w') as package:
+            package.writestr('hello.txt', 'APPGOG harmless controlled upload')
+        (artifacts / 'benign.txt').write_text('APPGOG harmless controlled artifact')
+        assert control.AGENT.business_malware_scan()['state'] == 'ok'
+        eicar = b''.join((b'X5O!P%@AP[4', b'\\PZX54(P^)7CC)7}', b'$EICAR-STANDARD-', b'ANTIVIRUS-TEST-FILE!$H+H*'))
+        testfile = uploads / 'controlled-eicar.txt'
+        testfile.write_bytes(eicar)
+        assert control.AGENT.business_malware_scan()['state'] == 'finding'
+        assert testfile.read_bytes() == eicar  # scanner never deletes uploads
+        testfile.unlink()  # remove only this fixture-created test file
+        controlled_link = uploads / 'controlled-link'
+        controlled_link.symlink_to(artifacts / 'benign.txt')
+        assert control.AGENT.business_malware_scan()['state'] == 'unavailable'
+        controlled_link.unlink()
+        encrypted = uploads / 'controlled-encrypted.zip'
+        encrypted.write_bytes((uploads / 'benign.zip').read_bytes())
+        payload = bytearray(encrypted.read_bytes())
+        for marker, offset in [(b'PK\x03\x04', 6), (b'PK\x01\x02', 8)]:
+            payload[payload.index(marker) + offset] |= 1
+        encrypted.write_bytes(payload)
+        assert control.AGENT.business_malware_scan()['state'] == 'unavailable'
+        encrypted.unlink()
+        oversized = artifacts / 'controlled-oversized'
+        with oversized.open('wb') as stream:
+            stream.truncate(64 * 1024 * 1024)
+        assert control.AGENT.business_malware_scan()['state'] == 'unavailable'
+        oversized.unlink()
         control.recovery_checks()
         image_id = inspect(owned)['Image']
         run([cli, 'approve-image', image_id])
@@ -154,6 +194,12 @@ try:
         assert control.AGENT.approved_image_check()['state'] == 'ok'
         run([cli, 'resume', 'MISSING-DATA-REVIEW'], success=False)
         assert inspect(owned)['State']['Running'] is False
+        testfile.write_bytes(eicar)
+        run([cli, 'resume', 'APPROVE-DATA-AND-RESUME'], success=False)
+        assert inspect(owned)['State']['Running'] is False
+        assert json.loads((state / 'incident.json').read_text())['state'] != 'released'
+        assert testfile.read_bytes() == eicar
+        testfile.unlink()
         run([cli, 'resume', 'APPROVE-DATA-AND-RESUME'])
         released = json.loads((state / 'incident.json').read_text())
         assert released['state'] == 'released' and released['container_id'] == owned
@@ -166,7 +212,7 @@ try:
         control.recovery_checks()
         assert control.AGENT.container_contract_check()['state'] == 'ok'
         run([cli, 'guard'])
-        print('Official fresh database, real clamscan, pre-incident image approval, containment, signed source repair and strict resume passed (isolated control fixture, not production business).')
+        print('Owned upload/artifact scan and infected-business recovery rejection passed. Official fresh database, real clamscan, pre-incident image approval, containment, signed source repair and strict resume passed (isolated control fixture, not production business).')
     else:
         # No verified clean image/data/antivirus conclusion: source repair never releases service.
         run([cli, 'resume', 'APPROVE-DATA-AND-RESUME'], success=False)
@@ -176,6 +222,8 @@ finally:
     for identifier in (owned, foreign):
         if identifier:
             run(['docker', 'rm', '-f', identifier])
+    for name in created_volumes:
+        run(['docker', 'volume', 'rm', name])
     # Keep the real evidence; CI teardown can uninstall only after an explicit test-only release marker.
     # This marker is not a production recovery or a successful resume claim.
     if not official_recovery and (state / 'incident.json').exists():

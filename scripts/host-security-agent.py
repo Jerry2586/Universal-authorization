@@ -7,6 +7,7 @@ import math
 import os
 import posixpath
 import re
+import selectors
 import tempfile
 import socketserver
 import stat
@@ -510,7 +511,7 @@ def daily_database_identity():
     return records
 
 
-def validate_zip_budget(path):
+def validate_zip_budget(path, *, max_file_bytes=MAX_FILE_BYTES, max_scan_bytes=16 * 1024 * 1024):
     """Reject known ZIP coverage gaps before trusting an engine clean exit."""
     with Path(path).open('rb') as source:
         magic = source.read(4)
@@ -519,8 +520,8 @@ def validate_zip_budget(path):
     try:
         with zipfile.ZipFile(path) as archive:
             entries = archive.infolist()
-            if (len(entries) > 100 or any(item.file_size >= MAX_FILE_BYTES or item.flag_bits & 1 for item in entries)
-                    or sum(item.file_size for item in entries) >= 16 * 1024 * 1024):
+            if (len(entries) > 100 or any(item.file_size >= max_file_bytes or item.flag_bits & 1 for item in entries)
+                    or sum(item.file_size for item in entries) >= max_scan_bytes):
                 raise OSError('ZIP scan coverage limit or encryption')
     except (zipfile.BadZipFile, ValueError, NotImplementedError) as error:
         raise OSError('invalid ZIP scan target') from error
@@ -568,6 +569,218 @@ def malware_scan():
         return check('病毒特征查杀', 'unavailable', 'ClamAV 扫描失败或特征库不可用', check_id='malware.program', scope=scope)
     return check('病毒特征查杀', 'ok', '本次程序清单未发现已知特征；此结论不能证明整机未入侵',
                  check_id='malware.program', scope=scope)
+
+
+def business_docker_json(*args):
+    """Fixed Docker commands: discard stderr and bound stdout while it is produced."""
+    if os.name != 'posix':
+        raise OSError('business inspection requires Linux')
+    process = subprocess.Popen(['/usr/bin/docker', *args], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd='/',
+        env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'})
+    deadline = time.monotonic() + 5
+    output = bytearray()
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not ready.select(remaining):
+                    raise OSError('Docker inspection timed out')
+                chunk = os.read(process.stdout.fileno(), min(65536, 262145 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > 262144:
+                    raise OSError('Docker inspection output exceeded limit')
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
+            raise OSError('Docker inspection failed')
+        return json.loads(output.decode('utf-8'))
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=2)
+        process.stdout.close()
+
+
+def business_volume_roots():
+    """Only owned Compose local volumes; never accept a caller-supplied scan path."""
+    docker_json = business_docker_json
+    ids = docker_json('ps', '-a', '--no-trunc', '--filter', 'label=com.docker.compose.project=appgog',
+                      '--filter', 'label=com.docker.compose.service=appgog', '--format', '{{json .ID}}')
+    if not isinstance(ids, str) or not re.fullmatch(r'[a-f0-9]{64}', ids):
+        raise ValueError('ambiguous business container')
+    payload = docker_json('inspect', ids)
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        raise ValueError('invalid business container inspection')
+    container = payload[0]
+    if container.get('Id') != ids:
+        raise ValueError('container identity mismatch')
+    labels = container.get('Config', {}).get('Labels', {})
+    if labels.get('com.docker.compose.project') != 'appgog' or labels.get('com.docker.compose.service') != 'appgog':
+        raise ValueError('foreign business container')
+    working = Path(labels.get('com.docker.compose.project.working_dir', ''))
+    if not working.is_absolute():
+        raise ValueError('missing installation identity')
+    working = working.resolve(strict=True)
+    if working != ROOT:
+        working.relative_to(ROOT / 'releases')
+    config_files = labels.get('com.docker.compose.project.config_files', '').split(',')
+    if len(config_files) != 1:
+        raise ValueError('ambiguous deployment role')
+    compose = Path(config_files[0])
+    if not compose.is_absolute() or compose.name not in {'compose.yaml', 'compose.license.yaml', 'compose.build.yaml'} or compose.resolve(strict=True).parent != working:
+        raise ValueError('foreign deployment role')
+    role = {'compose.yaml': 'all', 'compose.license.yaml': 'license', 'compose.build.yaml': 'build'}[compose.name]
+    expected = {'artifacts': '/app/var/artifacts'}
+    if role != 'build':
+        expected['uploads'] = '/app/var/uploads'
+    docker_root = docker_json('info', '--format', '{{json .DockerRootDir}}')
+    if not isinstance(docker_root, str) or not Path(docker_root).is_absolute() or Path(docker_root) == Path('/') or '..' in Path(docker_root).parts or str(Path(docker_root)) != docker_root:
+        raise ValueError('invalid Docker data root')
+    mounts = container.get('Mounts')
+    if not isinstance(mounts, list) or len(mounts) > 64:
+        raise ValueError('invalid mounts')
+    roots = {}
+    for category, destination in expected.items():
+        selected = [item for item in mounts if isinstance(item, dict) and item.get('Destination') == destination]
+        volume_name = 'appgog_appgog-' + category
+        if len(selected) != 1 or selected[0].get('Type') != 'volume' or selected[0].get('Name') != volume_name:
+            raise ValueError('unexpected business volume')
+        volume = docker_json('volume', 'inspect', volume_name)
+        if not isinstance(volume, list) or len(volume) != 1 or not isinstance(volume[0], dict):
+            raise ValueError('invalid volume inspection')
+        volume = volume[0]
+        volume_labels = volume.get('Labels') or {}
+        expected_root = Path(docker_root) / 'volumes' / volume_name / '_data'
+        if volume.get('Name') != volume_name or volume.get('Driver') != 'local' or volume.get('Scope') != 'local' or volume.get('Options') not in (None, {}) or volume_labels.get('com.docker.compose.project') != 'appgog' or volume_labels.get('com.docker.compose.volume') != 'appgog-' + category:
+            raise ValueError('untrusted volume contract')
+        if volume.get('Mountpoint') != str(expected_root) or selected[0].get('Source') != str(expected_root):
+            raise ValueError('volume source drift')
+        for ancestor in reversed((expected_root, *expected_root.parents)):
+            metadata = ancestor.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                raise OSError('unsafe business volume path')
+        roots[category] = expected_root
+    return {'container_id': ids, 'role': role, 'roots': roots}
+
+
+def business_directory(path):
+    """Pin each ancestor without following links; callers close the final descriptor."""
+    if os.name != 'posix':
+        return None  # Windows-only development fallback; Linux acceptance uses dirfds.
+    target = Path(path).absolute()
+    if '..' in target.parts:
+        raise OSError('business path traversal')
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(target.anchor, flags)
+    try:
+        for part in target.parts[1:]:
+            opened = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = opened
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def business_snapshot(roots, copy_to=None):
+    """Bounded no-follow copies; includes hidden directories and records empty dirs."""
+    files, directories, total, count = {}, {}, 0, 0
+    started = time.monotonic()
+    for category, root in sorted(roots.items()):
+        pending = [root]
+        while pending:
+            folder = pending.pop()
+            before = folder.lstat()
+            if not stat.S_ISDIR(before.st_mode) or stat.S_ISLNK(before.st_mode):
+                raise OSError('unsafe business directory')
+            descriptor = business_directory(folder)
+            try:
+                if descriptor is not None and file_identity(os.fstat(descriptor)) != file_identity(before):
+                    raise OSError('business directory replaced')
+                directories[category + '/' + folder.relative_to(root).as_posix()] = file_identity(before)
+                with os.scandir(descriptor if descriptor is not None else folder) as entries:
+                    for entry in entries:
+                        count += 1
+                        if count > 2048 or time.monotonic() - started > 15:
+                            raise OSError('business inventory count/time limit')
+                        path = folder / entry.name
+                        metadata = entry.stat(follow_symlinks=False) if descriptor is not None else path.lstat()
+                        if stat.S_ISDIR(metadata.st_mode):
+                            pending.append(path)
+                            continue
+                        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size >= 64 * 1024 * 1024:
+                            raise OSError('unsupported business file')
+                        total += metadata.st_size
+                        if total > 128 * 1024 * 1024:
+                            raise OSError('business inventory byte limit')
+                        payload = read_regular(path, 64 * 1024 * 1024)
+                        if file_identity(metadata) != file_identity(path.lstat()) or len(payload) != metadata.st_size:
+                            raise OSError('business file changed')
+                        key = category + '/' + path.relative_to(root).as_posix()
+                        files[key] = (file_identity(metadata), hashlib.sha256(payload).hexdigest())
+                        if copy_to is not None:
+                            # Numeric private names prevent option/newline injection and customer name leakage.
+                            destination = Path(copy_to) / (str(len(files)).zfill(5) + '.scan')
+                            with destination.open('xb') as stream:
+                                stream.write(payload)
+                            destination.chmod(0o600)
+                if (file_identity(before) != file_identity(folder.lstat()) or
+                        descriptor is not None and file_identity(before) != file_identity(os.fstat(descriptor))):
+                    raise OSError('business directory changed')
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+    return {'files': files, 'directories': directories, 'bytes': total}
+
+
+def business_malware_scan():
+    name, identifier, scope = '上传与构建成品查杀', 'malware.business', 'owned uploads/artifacts volumes; bounded snapshot'
+    try:
+        if not SCANNER.is_file() or not os.access(SCANNER, os.X_OK):
+            raise OSError('scanner unavailable')
+        owned = business_volume_roots()
+        database_identity = daily_database_identity()
+        private_directory(STATE_DIR)
+        with tempfile.TemporaryDirectory(prefix='.business-scan-', dir=str(STATE_DIR)) as temporary:
+            inventory = business_snapshot(owned['roots'], copy_to=temporary)
+            selected = sorted(str(path) for path in Path(temporary).iterdir())
+            for path in selected:
+                validate_zip_budget(path, max_file_bytes=64 * 1024 * 1024, max_scan_bytes=128 * 1024 * 1024)
+            if selected:
+                result = subprocess.run([
+                    str(SCANNER), '--no-summary', '--infected', '--max-filesize=64M',
+                    '--max-scansize=128M', '--max-files=100', '--max-recursion=8',
+                    '--alert-exceeds-max=yes', '--alert-encrypted=yes', '--tempdir=' + temporary,
+                    '--database=' + str(CLAM_DATABASE), '--follow-file-symlinks=0', '--follow-dir-symlinks=0', *selected,
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60, check=False)
+                code = result.returncode
+            else:
+                # Still ask the actual engine to load/validate the database; an empty volume isn't DB validation.
+                marker = Path(temporary) / 'empty.scan'
+                marker.write_bytes(b'APPGOG empty business inventory')
+                result = subprocess.run([str(SCANNER), '--no-summary', '--infected',
+                    '--database=' + str(CLAM_DATABASE), str(marker)], stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=60, check=False)
+                code = result.returncode
+            stable = (business_volume_roots() == owned and business_snapshot(owned['roots']) == inventory
+                      and daily_database_identity() == database_identity)
+        if not stable:
+            raise OSError('business inventory/database changed during scan')
+        scope = f"{owned['role']} 上传/成品快照 {len(inventory['files'])} 个文件；不含数据库、密钥、发布目录依赖和整个宿主机"
+        if code == 1:
+            return check(name, 'finding', '发现疑似特征、加密内容或引擎限制；须人工复核，不自动删除',
+                         check_id=identifier, category='malware', scope=scope)
+        if code != 0:
+            raise OSError('engine failed')
+        return check(name, 'ok', '本次有界上传/成品快照未发现已知特征；不代表整机清白',
+                     check_id=identifier, category='malware', scope=scope,
+                     evidence={'files': len(inventory['files']), 'bytes': inventory['bytes'], 'role': owned['role']})
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        return check(name, 'unavailable', '归属不明、链接/特殊文件、清单超限或变化、加密 ZIP、病毒库/扫描失败；结果未知',
+                     check_id=identifier, category='malware', scope=scope)
 
 
 def expected_platform_image():
@@ -1058,6 +1271,7 @@ def scan():
             results.append(check(label, 'unavailable', '无法读取路径或权限'))
     results.append(listener_posture_check())
     results.append(malware_scan())
+    results.append(business_malware_scan())
     return results
 
 

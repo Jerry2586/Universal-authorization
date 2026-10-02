@@ -76,7 +76,7 @@ class ResponseTests(unittest.TestCase):
         patch.object(c, 'docker', self.docker).start()
         patch.object(a, 'scan', lambda: [a.check('program', 'ok', 'clean', check_id='integrity.program')]).start()
         for name in ('integrity_check', 'host_configuration_check', 'secret_permissions_check',
-                     'malware_scan', 'container_contract_check'):
+                     'malware_scan', 'business_malware_scan', 'container_contract_check'):
             patch.object(a, name, lambda: {'state': 'ok'}).start()
 
     def docker(self, *args):
@@ -180,6 +180,17 @@ class ResponseTests(unittest.TestCase):
             c.resume('APPROVE-DATA-AND-RESUME')
         self.assertContained()
         self.assertFalse(self.container['State']['Running'])
+
+    def test_business_unknown_or_finding_never_starts_or_releases(self):
+        self.pinned()
+        for state in ('unavailable', 'finding', 'warning'):
+            before = len(self.calls)
+            with patch.object(a, 'business_malware_scan', lambda: {'state': state}):
+                with self.assertRaisesRegex(ValueError, 'business antivirus'):
+                    c.resume('APPROVE-DATA-AND-RESUME')
+            self.assertFalse(any(call[0] == 'start' for call in self.calls[before:]))
+            self.assertFalse(self.container['State']['Running'])
+            self.assertContained()
 
     def test_contract_failure_stops_recovery_and_records_failed_recontainment(self):
         self.pinned()
