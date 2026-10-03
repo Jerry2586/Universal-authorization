@@ -19,6 +19,8 @@ STATE_DIR = Path('/var/lib/appgog-security')
 CONFIG = Path('/usr/local/lib/appgog-security/response-config.json')
 REPORT = STATE_DIR / 'firewall-report.json'
 BASELINE = STATE_DIR / 'firewall-baseline.json'
+NAMESPACE_PROOF = STATE_DIR / 'firewall-namespace.json'
+SERVICE_COLLECTION = False
 COMMANDS = (
     ('nftables', '/usr/sbin/nft', ('-j', '-s', '-n', 'list', 'ruleset'), True),
     ('iptables', '/usr/sbin/iptables-save', ('-M', '/bin/false'), True),
@@ -87,20 +89,55 @@ def trusted_executable(path):
     return path
 
 
-def host_namespace():
-    # systemd binds PID 1's nsfs file before reducing service capabilities.
-    # Accessing /proc/1/ns/net directly can require ptrace capabilities; do not
-    # grant them just to prove namespace identity. Compare the kernel nsfs inode.
-    current = os.stat('/proc/self/ns/net')
-    try:
-        host = os.stat('/run/appgog-security/firewall-host-netns', follow_symlinks=False)
-        if not stat.S_ISREG(host.st_mode) or host.st_uid != 0 or host.st_mode & 0o022:
-            raise ValueError('untrusted namespace anchor')
-    except FileNotFoundError:
-        # Root CLI outside the service has no bind mount. A denied direct lookup
-        # must fail, never assume it is the host namespace.
-        host = os.stat('/proc/1/ns/net')
+def invocation_id():
+    value = os.environ.get('INVOCATION_ID', '')
+    if not re.fullmatch(r'[a-f0-9]{32}', value):
+        raise ValueError('service invocation unavailable')
+    return value
+
+
+def boot_id():
+    with open('/proc/sys/kernel/random/boot_id', 'r', encoding='ascii') as stream:
+        value = stream.read(128).strip()
+    if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', value):
+        raise ValueError('boot identity unavailable')
+    return value
+
+
+def prepare_namespace():
+    # A fixed privileged preflight reads kernel identity only. It never reads
+    # rules, launches tools, accepts paths, or writes outside this private file.
+    invocation = invocation_id()
+    host, current = os.stat('/proc/1/ns/net'), os.stat('/proc/self/ns/net')
     if (current.st_dev, current.st_ino) != (host.st_dev, host.st_ino):
+        raise ValueError('preflight is not in the host namespace')
+    agent.atomic_json(NAMESPACE_PROOF, {'schema': 1, 'invocation': invocation,
+        'boot': boot_id(), 'created': time.monotonic(),
+        'dev': host.st_dev, 'ino': host.st_ino})
+
+
+def host_namespace():
+    current = os.stat('/proc/self/ns/net')
+    if SERVICE_COLLECTION:
+        # The reduced-capability collector cannot inspect PID 1 through procfs.
+        # Consume only the private proof refreshed by ExecStartPre for this
+        # exact systemd activation and boot. Never fall back on a denied lookup.
+        proof = json.loads(agent.read_state(NAMESPACE_PROOF, 1024), object_pairs_hook=unique_object)
+        if not isinstance(proof, dict) or set(proof) != {'schema', 'invocation', 'boot', 'created', 'dev', 'ino'} or type(proof.get('schema')) is not int or proof['schema'] != 1:
+            raise ValueError('invalid namespace proof')
+        if proof['invocation'] != invocation_id() or proof['boot'] != boot_id():
+            raise ValueError('foreign namespace proof')
+        now = time.monotonic()
+        if type(proof['created']) not in (int, float) or not 0 <= proof['created'] <= now:
+            raise ValueError('invalid namespace proof time')
+        if now - proof['created'] > 120 or any(type(proof[field]) is not int or not 0 <= proof[field] < 2 ** 64 for field in ('dev', 'ino')):
+            raise ValueError('stale or invalid namespace proof')
+        identity = (proof['dev'], proof['ino'])
+    else:
+        # Normal root CLI always checks PID 1 directly, ignoring any saved proof.
+        host = os.stat('/proc/1/ns/net')
+        identity = (host.st_dev, host.st_ino)
+    if (current.st_dev, current.st_ino) != identity:
         return False
     binary = trusted_executable('/usr/bin/systemd-detect-virt')
     result = subprocess.run([binary, '--container', '--quiet'], stdin=subprocess.DEVNULL,
@@ -270,9 +307,15 @@ def approve(expected):
 
 
 def main(arguments):
+    global SERVICE_COLLECTION
     if os.geteuid() != 0:
         raise ValueError('root required')
-    if arguments == ['collect']:
+    if arguments == ['prepare-namespace']:
+        prepare_namespace()
+    elif arguments == ['collect-service']:
+        SERVICE_COLLECTION = True
+        collect()
+    elif arguments == ['collect']:
         collect()
     elif arguments == ['fingerprint']:
         print(snapshot()['digest'])

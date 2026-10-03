@@ -483,12 +483,12 @@ Description=APPGOG fixed read-only host firewall snapshot
 After=docker.service
 [Service]
 Type=oneshot
-ExecStart=$python_bin -I $FIREWALL_FILE collect
+ExecStartPre=+$python_bin -I $FIREWALL_FILE prepare-namespace
+ExecStart=$python_bin -I $FIREWALL_FILE collect-service
 User=root
 TimeoutStartSec=40
 NoNewPrivileges=true
 PrivateTmp=true
-BindReadOnlyPaths=/proc/1/ns/net:$RUNTIME_DIR/firewall-host-netns
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=$STATE_DIR

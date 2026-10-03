@@ -118,6 +118,7 @@ if ! jq -e '.state == "finished" and .snapshot.sources.nftables and .snapshot.so
 import importlib.util,json,os
 s=importlib.util.spec_from_file_location('diagnostic_firewall','/usr/local/lib/appgog-security/host-security-firewall.py')
 f=importlib.util.module_from_spec(s); s.loader.exec_module(f)
+f.SERVICE_COLLECTION=True
 for label, operation in (
     ('self-network-namespace',lambda: os.readlink('/proc/self/ns/net')),
     ('init-network-namespace',lambda: os.readlink('/proc/1/ns/net')),
@@ -164,7 +165,9 @@ firewall_executable_hash=$(sha256sum /usr/local/lib/appgog-security/host-securit
 systemctl is-enabled --quiet appgog-firewall-monitor.timer
 systemctl is-active --quiet appgog-firewall-monitor.timer
 grep -Fxq 'RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6' /etc/systemd/system/appgog-firewall-monitor.service
-grep -Fxq 'BindReadOnlyPaths=/proc/1/ns/net:/run/appgog-security/firewall-host-netns' /etc/systemd/system/appgog-firewall-monitor.service
+grep -Fxq 'ExecStartPre=+/usr/bin/python3 -I /usr/local/lib/appgog-security/host-security-firewall.py prepare-namespace' /etc/systemd/system/appgog-firewall-monitor.service
+grep -Fxq 'ExecStart=/usr/bin/python3 -I /usr/local/lib/appgog-security/host-security-firewall.py collect-service' /etc/systemd/system/appgog-firewall-monitor.service
+[ "$(stat -c '%u:%g:%a' "$STATE/firewall-namespace.json")" = '0:0:600' ]
 grep -Fxq 'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW' /etc/systemd/system/appgog-firewall-monitor.service
 [ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/host-security-firewall.py)" = '0:0:700' ]
 checkpoint=firewall-isolated-namespace

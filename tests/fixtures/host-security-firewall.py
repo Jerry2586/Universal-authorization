@@ -108,30 +108,40 @@ class Firewall(unittest.TestCase):
             with patch.object(f.subprocess, 'run', side_effect=subprocess.TimeoutExpired('fixed', 2)):
                 with self.assertRaises(subprocess.TimeoutExpired): f.host_namespace()
 
-    def test_bound_namespace_works_without_init_proc_access_and_rejects_bad_anchors(self):
-        own = SimpleNamespace(st_dev=7, st_ino=9, st_uid=0, st_mode=0o100444)
-        def bound(path, **options):
-            if path == '/proc/1/ns/net':
-                raise PermissionError(13, 'permission denied')
-            if path == '/run/appgog-security/firewall-host-netns':
-                self.assertEqual(options, {'follow_symlinks': False})
-            return own
-        with patch.object(f.os, 'stat', side_effect=bound) as probe, patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'), patch.object(f.subprocess, 'run', return_value=SimpleNamespace(returncode=1)):
+    def test_private_namespace_proof_is_fresh_for_exact_activation_and_boot(self):
+        own = SimpleNamespace(st_dev=7, st_ino=9)
+        proof = {'schema': 1, 'invocation': 'a' * 32, 'boot': 'b' * 36, 'created': 990, 'dev': 7, 'ino': 9}
+        with patch.object(f, 'SERVICE_COLLECTION', True), patch.object(f.os, 'stat', return_value=own) as probe, patch.object(a, 'read_state', return_value=json.dumps(proof).encode()), patch.object(f, 'invocation_id', return_value='a'*32), patch.object(f, 'boot_id', return_value='b'*36), patch.object(f.time, 'monotonic', return_value=1000), patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'), patch.object(f.subprocess, 'run', return_value=SimpleNamespace(returncode=1)):
             self.assertTrue(f.host_namespace())
             self.assertNotIn('/proc/1/ns/net', [call.args[0] for call in probe.call_args_list])
-        for change in ({'st_dev':8}, {'st_ino':10}, {'st_uid':1000}, {'st_mode':0o120777}, {'st_mode':0o100666}):
-            changed = SimpleNamespace(**(vars(own) | change))
-            with patch.object(f.os, 'stat', side_effect=[own, changed]), patch.object(f.subprocess, 'run') as command:
-                try:
+            for change in ({'schema': True}, {'invocation':'c'*32}, {'boot':'c'*36}, {'created':879}, {'created':1001}, {'created':True}, {'created':float('nan')}, {'created':float('inf')}, {'created':10**500}, {'dev':True}, {'dev':-1}, {'ino':2**64}, {'extra':'bad'}):
+                with self.subTest(change=change), patch.object(a, 'read_state', return_value=json.dumps(proof | change).encode()):
+                    with self.assertRaises(ValueError): f.host_namespace()
+            for change in ({'dev':8}, {'ino':10}):
+                with patch.object(a, 'read_state', return_value=json.dumps(proof | change).encode()):
                     self.assertFalse(f.host_namespace())
-                except ValueError:
-                    self.assertTrue('st_uid' in change or 'st_mode' in change)
-                command.assert_not_called()
-        with patch.object(f.os, 'stat', side_effect=[own, FileNotFoundError(), PermissionError(13, 'permission denied')]), patch.object(f.subprocess, 'run') as command:
+            for error in (FileNotFoundError(), PermissionError(13, 'permission denied')):
+                with patch.object(a, 'read_state', side_effect=error):
+                    with self.assertRaises(OSError): f.host_namespace()
+            with patch.object(a, 'read_state', return_value=b'{}'):
+                with self.assertRaises(ValueError): f.host_namespace()
+
+    def test_root_cli_ignores_proof_and_denied_init_access_never_falls_back(self):
+        own = SimpleNamespace(st_dev=7, st_ino=9)
+        with patch.object(f.os, 'stat', side_effect=[own, PermissionError(13, 'denied')]), patch.object(a, 'read_state') as state:
             with self.assertRaises(PermissionError): f.host_namespace()
-            command.assert_not_called()
-        with patch.object(f.os, 'stat', side_effect=[own, FileNotFoundError(), own]), patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'), patch.object(f.subprocess, 'run', return_value=SimpleNamespace(returncode=1)):
-            self.assertTrue(f.host_namespace())
+            state.assert_not_called()
+        with patch.object(f.os.environ, 'get', return_value='invalid'):
+            with self.assertRaises(ValueError): f.invocation_id()
+
+    def test_privileged_preflight_records_only_identity_and_rejects_other_namespace(self):
+        own = SimpleNamespace(st_dev=7, st_ino=9)
+        with patch.object(f, 'invocation_id', return_value='a'*32), patch.object(f, 'boot_id', return_value='b'*36), patch.object(f.time, 'monotonic', return_value=1000), patch.object(f.os, 'stat', return_value=own), patch.object(a, 'atomic_json') as write:
+            f.prepare_namespace()
+            self.assertEqual(write.call_args.args, (f.NAMESPACE_PROOF, {'schema':1, 'invocation':'a'*32, 'boot':'b'*36, 'created':1000, 'dev':7, 'ino':9}))
+            with patch.object(f.os, 'stat', side_effect=[own, SimpleNamespace(st_dev=8, st_ino=9)]):
+                with self.assertRaises(ValueError): f.prepare_namespace()
+            self.assertEqual(write.call_count, 1)
 
     def test_capture_races_and_deadlines_are_rejected(self):
         with patch.object(f, 'snapshot_once', side_effect=[snapshot(), snapshot(0)]):
