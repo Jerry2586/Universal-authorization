@@ -111,12 +111,38 @@ checkpoint=firewall-host-snapshot
 # Read-only actual host snapshot; never approve a snapshot implicitly.
 systemctl start appgog-firewall-monitor.service
 if ! jq -e '.state == "finished" and .snapshot.sources.nftables and .snapshot.sources.iptables and .snapshot.sources.ip6tables' "$STATE/firewall-report.json" >/dev/null; then
-  python3 -I - /usr/local/lib/appgog-security/host-security-firewall.py <<'PY'
-import importlib.util,sys
-s=importlib.util.spec_from_file_location('diagnostic_firewall',sys.argv[1])
+  # CI-only probe retains the installed service's exact sandbox. Do not print rules.
+  diagnostic=/usr/local/lib/appgog-security/ci-firewall-diagnostic.py
+  diagnostic_dropin=/etc/systemd/system/appgog-firewall-monitor.service.d
+  cat > "$diagnostic" <<'PY'
+import importlib.util,json,os
+s=importlib.util.spec_from_file_location('diagnostic_firewall','/usr/local/lib/appgog-security/host-security-firewall.py')
 f=importlib.util.module_from_spec(s); s.loader.exec_module(f)
-f.snapshot()
+for label, operation in (
+    ('self-network-namespace',lambda: os.readlink('/proc/self/ns/net')),
+    ('init-network-namespace',lambda: os.readlink('/proc/1/ns/net')),
+    ('container-detection',lambda: f.trusted_executable('/usr/bin/systemd-detect-virt')),
+    ('complete-snapshot',lambda: f.snapshot())):
+    try:
+        operation()
+        print(json.dumps({'probe':label,'state':'ok'}),flush=True)
+    except Exception as error:
+        print(json.dumps({'probe':label,'state':'failed','error':type(error).__name__,'errno':getattr(error,'errno',None)}),flush=True)
 PY
+  chmod 700 "$diagnostic"
+  install -d -m 0755 "$diagnostic_dropin"
+  cat > "$diagnostic_dropin/ci.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=/usr/bin/python3 -I $diagnostic
+StandardOutput=journal
+EOF
+  systemctl daemon-reload
+  systemctl start appgog-firewall-monitor.service
+  journalctl -u appgog-firewall-monitor.service --no-pager -n 20
+  rm -f "$diagnostic" "$diagnostic_dropin/ci.conf"
+  rmdir "$diagnostic_dropin"
+  systemctl daemon-reload
   exit 1
 fi
 [ "$(stat -c '%u:%g:%a' "$STATE/firewall-report.json")" = '0:0:600' ]
