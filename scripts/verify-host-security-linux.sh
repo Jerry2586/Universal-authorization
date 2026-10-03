@@ -74,6 +74,23 @@ if ! jq -e '(.checks | length <= 24) and any(.checks[]; .id == "network.udp-list
 fi
 [ "$(wc -c < "$TEST_ROOT/report.json")" -le 32768 ]
 [ ! -e "$STATE/network-baseline.json" ]
+# Exercise proc network lookups across kernel timestamp refresh boundaries.
+python3 - "$AGENT" <<'PY'
+import importlib.util
+import sys
+import time
+spec = importlib.util.spec_from_file_location('acceptance_agent', sys.argv[1])
+agent = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(agent)
+for attempt in range(4):
+    agent.route_snapshot()
+    agent.fixed_proc_text('/proc/net/udp')
+    agent.fixed_proc_text('/proc/net/udp6')
+    for path in agent.KERNEL_POLICY:
+        agent.fixed_proc_text(path)
+    if attempt < 3:
+        time.sleep(0.55)
+PY
 fingerprint=$(sh "$RELEASE/scripts/security-local.sh" network-fingerprint)
 if sh "$RELEASE/scripts/security-local.sh" approve-network invalid > "$TEST_ROOT/network-refusal.log" 2>&1; then echo 'Invalid network fingerprint accepted' >&2; exit 1; fi
 [ ! -e "$STATE/network-baseline.json" ]

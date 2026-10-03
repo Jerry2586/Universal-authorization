@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const python=process.env.APPGOG_TEST_PYTHON||'python3';
 const available=spawnSync(python,['--version']).status===0;
 function run(script) {
- const bootstrap='import importlib.util,socketserver,json,pathlib,tempfile,os,unittest.mock as mock\nif not hasattr(socketserver,"UnixStreamServer"): socketserver.UnixStreamServer=socketserver.TCPServer\ns=importlib.util.spec_from_file_location("a",'+JSON.stringify(resolve('scripts/host-security-agent.py'))+')\na=importlib.util.module_from_spec(s); s.loader.exec_module(a)\n';
+ const bootstrap='import importlib.util,socketserver,json,pathlib,tempfile,os,types,unittest.mock as mock\nif not hasattr(socketserver,"UnixStreamServer"): socketserver.UnixStreamServer=socketserver.TCPServer\ns=importlib.util.spec_from_file_location("a",'+JSON.stringify(resolve('scripts/host-security-agent.py'))+')\na=importlib.util.module_from_spec(s); s.loader.exec_module(a)\n';
  const result=spawnSync(python,['-c',bootstrap+script],{encoding:'utf8',timeout:10000,env:{...process.env,PYTHONDONTWRITEBYTECODE:'1'}});
  assert.equal(result.status,0,result.stderr||result.error?.message);
 }
@@ -46,9 +46,18 @@ test('route observation and kernel checks fail closed for races and partial outp
 ));
 
 test('fixed proc readers reject arbitrary paths and bypass only known kernel net aliases',{skip:!available},()=>run(
- 'with mock.patch.object(a,"read_regular",return_value=b"safe") as reader:\n assert a.fixed_proc_text("/proc/net/udp")=="safe"\n assert reader.call_args.args[0]==pathlib.Path("/proc")/str(os.getpid())/"net"/"udp"\n assert a.fixed_proc_text("/proc/sys/kernel/kptr_restrict")=="safe"\n assert reader.call_args.args[0]==pathlib.Path("/proc/sys/kernel/kptr_restrict")\n for path in ["/etc/shadow","/proc/net/tcp","/proc/self/net/udp"]:\n  try: a.fixed_proc_text(path); raise AssertionError("arbitrary proc path accepted")\n  except ValueError: pass\n'
+ 'with mock.patch.object(a,"read_regular",return_value=b"safe") as reader:\n assert a.fixed_proc_text("/proc/net/udp")=="safe"\n assert reader.call_args.args[0]==pathlib.Path("/proc")/str(os.getpid())/"net"/"udp"\n assert reader.call_args.kwargs=={"proc_lookup":True}\n assert a.fixed_proc_text("/proc/sys/kernel/kptr_restrict")=="safe"\n assert reader.call_args.args[0]==pathlib.Path("/proc/sys/kernel/kptr_restrict")\n for path in ["/etc/shadow","/proc/net/tcp","/proc/self/net/udp"]:\n  try: a.fixed_proc_text(path); raise AssertionError("arbitrary proc path accepted")\n  except ValueError: pass\n'
 ));
 
 test('all network and runtime check markers survive restart within the unchanged 24-check contract',{skip:!available},()=>run(
  'with tempfile.TemporaryDirectory() as tmp:\n a.HISTORY_FILE=pathlib.Path(tmp)/"events.json"\n a.EVENTS=[]; a.PREVIOUS={}; a.HISTORY_VALID=True\n checks=[a.check("item", "unavailable", "bounded",check_id="host.item-"+str(i)) for i in range(23)]\n a.save_history(checks)\n a.EVENTS=[]; a.PREVIOUS={}\n assert a.load_history() is True\n assert len(a.PREVIOUS)==23\n payload=json.loads(a.HISTORY_FILE.read_bytes())\n for i in range(23,25): payload["previous"]["host.item-"+str(i)]={"state":"ok","digest":"0"*64}\n a.atomic_json(a.HISTORY_FILE,payload)\n original=a.HISTORY_FILE.read_bytes()\n assert a.load_history() is False\n assert a.HISTORY_FILE.read_bytes()==original\n'
+));
+
+test('fixed proc lookup timestamps may refresh while descriptor and named-entry replacements remain rejected',{skip:!available},()=>run(
+ 'with tempfile.TemporaryDirectory() as tmp:\n path=pathlib.Path(tmp)/"entry"; path.write_bytes(b"safe")\n base=path.stat()\n keys=("st_dev","st_ino","st_mode","st_uid","st_gid","st_size","st_mtime_ns","st_ctime_ns")\n values={key:getattr(base,key) for key in keys}\n named=types.SimpleNamespace(**{**values,"st_mtime_ns":values["st_mtime_ns"]+1000000000,"st_ctime_ns":values["st_ctime_ns"]+1000000000})\n'+
+ ' def get_stat(target,*args,**kwargs):\n  if str(target) in ("entry",str(path)): return named\n  return base\n'+
+ ' with mock.patch.object(a.os,"fstat",return_value=base), mock.patch.object(a.os,"stat",side_effect=get_stat):\n  assert a.read_regular(path,4,proc_lookup=True)==b"safe"\n  try: a.read_regular(path,4); raise AssertionError("regular file timestamp change accepted")\n  except OSError: pass\n'+
+ ' for key in ("st_dev","st_ino","st_mode","st_uid","st_gid","st_size"):\n  named=types.SimpleNamespace(**{**values,key:values[key]+1})\n  with mock.patch.object(a.os,"fstat",return_value=base), mock.patch.object(a.os,"stat",side_effect=get_stat):\n   try: a.read_regular(path,4,proc_lookup=True); raise AssertionError("changed proc identity accepted: "+key)\n   except OSError: pass\n'+
+ ' named=types.SimpleNamespace(**values)\n changed=types.SimpleNamespace(**{**values,"st_mtime_ns":values["st_mtime_ns"]+1})\n with mock.patch.object(a.os,"fstat",side_effect=[base,changed]), mock.patch.object(a.os,"stat",side_effect=get_stat):\n  try: a.read_regular(path,4,proc_lookup=True); raise AssertionError("open proc descriptor changed")\n  except OSError: pass\n'+
+ ' try: a.read_regular(path,3,proc_lookup=True); raise AssertionError("proc size limit bypassed")\n except OSError: pass\n'
 ));

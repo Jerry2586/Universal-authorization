@@ -114,7 +114,7 @@ def check(name, state, detail, *, check_id=None, category='host', severity=None,
     }
 
 
-def read_regular(path, limit=MAX_FILE_BYTES):
+def read_regular(path, limit=MAX_FILE_BYTES, *, proc_lookup=False):
     """No-follow descriptor reads, including ancestors, with size/race limits."""
     target = Path(path).absolute()
     parent_fd = None
@@ -148,7 +148,17 @@ def read_regular(path, limit=MAX_FILE_BYTES):
                 raise OSError('file limit exceeded')
         after = os.fstat(fd)
         named = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False) if parent_fd is not None else target.lstat()
-        if file_identity(before) != file_identity(after) or file_identity(after) != file_identity(named):
+        if proc_lookup:
+            # Fixed proc entries can instantiate a new inode on path lookup,
+            # with fresh timestamps (proc_net_d_revalidate/proc_get_inode).
+            # The open descriptor must remain unchanged; the named entry must
+            # still have the same device, inode, type, ownership and size.
+            named_identity = lambda item: (item.st_dev, item.st_ino, item.st_mode,
+                                            item.st_uid, item.st_gid, item.st_size)
+            same_named_entry = named_identity(after) == named_identity(named)
+        else:
+            same_named_entry = file_identity(after) == file_identity(named)
+        if file_identity(before) != file_identity(after) or not same_named_entry:
             raise OSError('file changed during read')
         return b''.join(chunks)
     finally:
@@ -1265,7 +1275,7 @@ def fixed_proc_text(path):
         target = Path(path)
     else:
         raise ValueError('unsupported proc inspection path')
-    return read_regular(target, MAX_NETWORK_BYTES).decode('ascii', errors='strict')
+    return read_regular(target, MAX_NETWORK_BYTES, proc_lookup=True).decode('ascii', errors='strict')
 
 
 def udp_posture_from_text(ipv4_text, ipv6_text):
