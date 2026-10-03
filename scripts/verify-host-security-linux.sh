@@ -65,6 +65,8 @@ lifecycle install
 # New Docker inspection may outlive installer readiness; socket readiness alone is insufficient.
 wait_report
 jq -e 'any(.checks[]; .id == "integrity.program" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
+# Enabling an installer-owned timer must not invalidate the fresh host baseline.
+jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 gid=$(getent group appgog-security | cut -d: -f3)
 [ "$(stat -c '%u:%g:%a' /run/appgog-security)" = "0:$gid:750" ]
 [ "$(stat -c '%u:%g:%a' /run/appgog-security/scan.sock)" = "0:$gid:660" ]

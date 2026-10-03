@@ -485,6 +485,8 @@ chmod 644 "$TMPFILES"
 systemctl daemon-reload
 systemctl enable appgog-host-security.service >/dev/null
 systemctl enable appgog-local-response.timer >/dev/null
+# Include every managed enablement link in the first approved host inventory.
+systemctl enable appgog-cloudflare-monitor.timer >/dev/null
 if [ ! -e "$STATE_DIR/baseline.json" ] && [ ! -L "$STATE_DIR/baseline.json" ]; then
   APPGOG_INSTALL_ROOT="$INSTALL_ROOT" "$python_bin" -I "$AGENT_FILE" --write-baseline || echo '首次程序基线失败；检查结果为不可用' >&2
 else echo '保留程序基线；升级差异须在可信版本核验后由 root 批准'; fi
