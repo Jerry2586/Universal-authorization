@@ -48,7 +48,7 @@ function buildReleaseFixture() {
     'scripts/host-security-repair.py', 'scripts/host-security-cloudflare.py', 'scripts/host-security-firewall.py',
     'scripts/verify-host-security-linux.sh',
     'scripts/verify-host-security-response-linux.py', 'scripts/verify-host-security-firewall-linux.py',
-    'docs/local-security-response.md', 'docs/local-cloudflare-monitor.md', 'docs/local-host-network-monitor.md', 'docs/local-host-firewall-monitor.md', 'docs/local-host-login-monitor.md',
+    'docs/local-security-response.md', 'docs/local-database-health.md', 'docs/local-cloudflare-monitor.md', 'docs/local-host-network-monitor.md', 'docs/local-host-firewall-monitor.md', 'docs/local-host-login-monitor.md',
     'scripts/security-connect.sh',
     'scripts/security-doctor.sh', 'scripts/security-local.sh',
     'scripts/security-agent.js',

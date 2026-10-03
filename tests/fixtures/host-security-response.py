@@ -76,7 +76,7 @@ class ResponseTests(unittest.TestCase):
         patch.object(c, 'docker', self.docker).start()
         patch.object(a, 'scan', lambda: [a.check('program', 'ok', 'clean', check_id='integrity.program')]).start()
         for name in ('integrity_check', 'host_configuration_check', 'secret_permissions_check',
-                     'malware_scan', 'business_malware_scan', 'container_contract_check'):
+                     'malware_scan', 'business_malware_scan', 'sqlite_health_check', 'container_contract_check'):
             patch.object(a, name, lambda: {'state': 'ok'}).start()
 
     def docker(self, *args):
@@ -97,6 +97,12 @@ class ResponseTests(unittest.TestCase):
         if args[0] == 'start':
             self.container['State']['Running'] = True
         return ''
+
+    def test_database_unknown_or_corrupt_blocks_recovery(self):
+        for state in ('finding', 'unavailable'):
+            with patch.object(a, 'sqlite_health_check', lambda: {'state': state}):
+                with self.assertRaises(ValueError):
+                    c.recovery_checks()
 
     def test_image_approval_rejects_host_findings_unknown_and_preserves_pin(self):
         c.approve_image(IMAGE)

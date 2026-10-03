@@ -43,6 +43,7 @@ mapping = {
  'udp_posture_check':'network.udp-listeners', 'route_configuration_check':'network.routes',
  'kernel_security_check':'host.kernel-security', 'firewall_check':'network.firewall',
  'malware_scan':'malware.program', 'business_malware_scan':'malware.business',
+ 'sqlite_health_check':'database.sqlite',
  'process_posture_check':'host.process-executables', 'failed_services_check':'host.failed-units'}
 for name, identifier in mapping.items():
  setattr(a, name, lambda *args, identifier=identifier: a.check(identifier, 'unavailable', 'bounded fixture', check_id=identifier))

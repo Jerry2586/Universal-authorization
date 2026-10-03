@@ -55,7 +55,7 @@ MAX_LOGIN_BYTES = 1024 * 1024
 
 MAX_HISTORY = 64
 MAX_RESPONSE_BYTES = 32768
-MAX_CHECKS = 25
+MAX_CHECKS = 26
 MAX_RESPONSE_HISTORY = 8
 EVENTS = []
 PREVIOUS = {}
@@ -117,6 +117,7 @@ HOST_SCAN_IDS = frozenset((
     'network.firewall',
     'malware.program',
     'malware.business',
+    'database.sqlite',
     'host.process-executables',
     'host.failed-units',
     'cloudflare.dns',
@@ -835,7 +836,7 @@ def business_docker_json(*args):
         process.stdout.close()
 
 
-def business_volume_roots():
+def business_volume_roots(*, database_only=False):
     """Only owned Compose local volumes; never accept a caller-supplied scan path."""
     docker_json = business_docker_json
     ids = docker_json('ps', '-a', '--no-trunc', '--filter', 'label=com.docker.compose.project=appgog',
@@ -864,9 +865,12 @@ def business_volume_roots():
     if not compose.is_absolute() or compose.name not in {'compose.yaml', 'compose.license.yaml', 'compose.build.yaml'} or compose.resolve(strict=True).parent != working:
         raise ValueError('foreign deployment role')
     role = {'compose.yaml': 'all', 'compose.license.yaml': 'license', 'compose.build.yaml': 'build'}[compose.name]
-    expected = {'artifacts': '/app/var/artifacts'}
-    if role != 'build':
-        expected['uploads'] = '/app/var/uploads'
+    if database_only:
+        expected = {} if role == 'build' else {'db': '/app/var/data'}
+    else:
+        expected = {'artifacts': '/app/var/artifacts'}
+        if role != 'build':
+            expected['uploads'] = '/app/var/uploads'
     docker_root = docker_json('info', '--format', '{{json .DockerRootDir}}')
     if not isinstance(docker_root, str) or not Path(docker_root).is_absolute() or Path(docker_root) == Path('/') or '..' in Path(docker_root).parts or str(Path(docker_root)) != docker_root:
         raise ValueError('invalid Docker data root')
@@ -1013,6 +1017,137 @@ def business_malware_scan():
     except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
         return check(name, 'unavailable', '归属不明、链接/特殊文件、清单超限或变化、加密 ZIP、病毒库/扫描失败；结果未知',
                      check_id=identifier, category='malware', scope=scope)
+
+
+# Parse untrusted SQLite bytes in a bounded child against a private snapshot only.
+# No SQL supplied by callers and no live database connection, checkpoint or repair.
+SQLITE_PROBE = r'''
+import json, sqlite3, sys, time
+from pathlib import Path
+try:
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
+    except ImportError:
+        pass
+    deadline = time.monotonic() + 8
+    db = sqlite3.connect(Path(sys.argv[1]).as_uri() + '?mode=ro', uri=True, timeout=0.1)
+    db.enable_load_extension(False)
+    db.execute('PRAGMA trusted_schema=OFF')
+    db.execute('PRAGMA query_only=ON')
+    db.execute('PRAGMA cache_size=-8192')
+    db.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+    if Path(sys.argv[1]).stat().st_size < 512:
+        print(json.dumps({'state': 'finding'})); sys.exit(0)
+    rows = db.execute('PRAGMA integrity_check(100)').fetchmany(101)
+    print(json.dumps({'state': 'ok' if rows == [('ok',)] else 'finding'}))
+    db.close()
+except sqlite3.DatabaseError as error:
+    code = getattr(error, 'sqlite_errorcode', 0) & 255
+    print(json.dumps({'state': 'finding' if code in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB) else 'unavailable'}))
+except Exception:
+    print(json.dumps({'state': 'unavailable'}))
+'''
+SQLITE_NAMES = ('appgog.sqlite', 'appgog.sqlite-wal', 'appgog.sqlite-journal')
+MAX_SQLITE_BYTES = 128 * 1024 * 1024
+
+
+def sqlite_inventory(root):
+    """Pin the fixed database names. Never read or create the live -shm file."""
+    descriptor = business_directory(root)
+    rows, total = {}, 0
+    try:
+        for name in SQLITE_NAMES:
+            try:
+                metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False) if descriptor is not None else (root / name).lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise OSError('unsafe SQLite input')
+            total += metadata.st_size
+            if total > MAX_SQLITE_BYTES:
+                raise OSError('SQLite snapshot limit exceeded')
+            if name.endswith('-journal') and metadata.st_size:
+                raise OSError('pending rollback journal')
+            rows[name] = file_identity(metadata)
+        if 'appgog.sqlite' not in rows:
+            raise OSError('database absent')
+        return rows
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def sqlite_snapshot(root, target, inventory):
+    descriptor = business_directory(root)
+    try:
+        for name, identity in inventory.items():
+            if name.endswith('-journal'):
+                continue
+            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+            source = os.open(name, flags, dir_fd=descriptor) if descriptor is not None else os.open(root / name, flags)
+            try:
+                if file_identity(os.fstat(source)) != identity:
+                    raise OSError('database identity changed')
+                copied = 0
+                with (target / name).open('xb') as output:
+                    os.chmod(target / name, 0o600)
+                    while True:
+                        chunk = os.read(source, min(65536, MAX_SQLITE_BYTES + 1 - copied))
+                        if not chunk:
+                            break
+                        copied += len(chunk)
+                        if copied > MAX_SQLITE_BYTES:
+                            raise OSError('database copy limit exceeded')
+                        output.write(chunk)
+                if file_identity(os.fstat(source)) != identity:
+                    raise OSError('database changed during copy')
+            finally:
+                os.close(source)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def sqlite_health_check():
+    name, identifier = '业务数据库完整性', 'database.sqlite'
+    scope = 'owned SQLite database + WAL; structural integrity only; no business-data repair'
+    try:
+        owned = business_volume_roots(database_only=True)
+        if owned['role'] == 'build' and not owned['roots']:
+            return check(name, 'ok', '独立打包节点不持有授权数据库；此项不适用',
+                         check_id=identifier, category='container', scope=scope,
+                         evidence={'role': 'build', 'applicable': False})
+        if owned['role'] not in ('all', 'license') or set(owned['roots']) != {'db'}:
+            raise ValueError('invalid database volume')
+        root = owned['roots']['db']
+        inventory = sqlite_inventory(root)
+        with tempfile.TemporaryDirectory(prefix='appgog-sqlite-') as folder:
+            target = Path(folder)
+            os.chmod(target, 0o700)
+            sqlite_snapshot(root, target, inventory)
+            if sqlite_inventory(root) != inventory:
+                raise OSError('database changed during snapshot')
+            result = subprocess.run([sys.executable, '-I', '-c', SQLITE_PROBE, str(target / 'appgog.sqlite')],
+                                    capture_output=True, text=True, timeout=12, check=False)
+            if result.returncode != 0 or len(result.stdout) > 256:
+                raise OSError('database probe failed')
+            payload = json.loads(result.stdout)
+            state = payload.get('state') if isinstance(payload, dict) else None
+            if state not in {'ok', 'finding', 'unavailable'}:
+                raise ValueError('invalid database probe result')
+            # Moving source or a changed volume/container invalidates even a corruption result.
+            if sqlite_inventory(root) != inventory or business_volume_roots(database_only=True) != owned:
+                raise OSError('database ownership or bytes changed')
+        detail = {'ok': '只读副本完整性检查通过；不证明业务记录未被非法修改',
+                  'finding': '业务数据库结构损坏；保留原数据并告警，需核验备份后人工恢复',
+                  'unavailable': '数据库检查未取得可靠结论；未执行数据修复'}[state]
+        return check(name, state, detail, check_id=identifier, category='container', scope=scope,
+                     evidence={'role': owned['role'], 'wal': 'appgog.sqlite-wal' in inventory, 'state': state})
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        return check(name, 'unavailable', '数据库归属不明、文件变化/不安全、超限、待恢复日志或检查失败；结果未知',
+                     check_id=identifier, category='container', scope=scope)
 
 
 def expected_platform_image():
@@ -1829,6 +1964,7 @@ def scan():
     results.extend((udp_posture_check(), route_configuration_check(), kernel_security_check(), firewall_check()))
     results.append(malware_scan())
     results.append(business_malware_scan())
+    results.append(sqlite_health_check())
     results.append(process_posture_check())
     results.append(failed_services_check())
     results.extend(cloudflare_checks())

@@ -1,6 +1,6 @@
 import { request as unixRequest } from 'node:http';
 
-import { CHECK_CATEGORIES, CHECK_SEVERITIES, CHECK_STATES, safeTimestamp, completeHostScan, hostScanCoverage } from '../../../../../packages/core/src/host-scan-contract.js';
+import { HOST_SCAN_IDS, CHECK_CATEGORIES, CHECK_SEVERITIES, CHECK_STATES, safeTimestamp, completeHostScan, hostScanCoverage } from '../../../../../packages/core/src/host-scan-contract.js';
 
 function sanitizeCheck(item) {
   if (!item || typeof item.name !== 'string' || typeof item.detail !== 'string' || !CHECK_STATES.has(item.state)) return null;
@@ -50,7 +50,7 @@ export function localSecurityScan(action, env = process.env) {
           if (!validStatus || !['idle', 'running', 'finished', 'failed', 'unavailable'].includes(result?.state)) {
             resolve({ state: 'unavailable', reason: '本机检查代理返回异常' }); return;
           }
-          const checks = Array.isArray(result.checks) ? result.checks.slice(0, 25).map(sanitizeCheck).filter(Boolean) : [];
+          const checks = Array.isArray(result.checks) ? result.checks.slice(0, HOST_SCAN_IDS.length + 1).map(sanitizeCheck).filter(Boolean) : [];
           const history = Array.isArray(result.history) ? result.history.slice(-8).map(item => {
             const clean = sanitizeCheck(item);
             if (!clean || !clean.id || !clean.evidence_digest || !clean.checked_at) return null;

@@ -147,7 +147,7 @@ request_fresh_scan
 jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 checkpoint=host-network
 # Actual host proc reads must work under the hardened unit; no automatic route approval.
-if ! jq -e '(.checks | length <= 25) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null; then
+if ! jq -e '(.checks | length <= 26) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null; then
   jq '{state, check_count: (.checks | length), network: [.checks[] | select(.id == "network.udp-listeners" or .id == "network.routes" or .id == "host.kernel-security") | {id,state,detail}]}' "$TEST_ROOT/report.json" >&2
   exit 1
 fi

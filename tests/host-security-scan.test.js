@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { localSecurityScan } from '../apps/license-api/src/modules/operations/local-security-scan.js';
 import { fullHostReport } from './helpers/host-scan-report.js';
+import { HOST_SCAN_IDS } from '../packages/core/src/host-scan-contract.js';
 import { handleOperationsHttp } from '../apps/license-api/src/modules/operations/http-routes.js';
 
 function request(body) { return Object.assign(Readable.from([JSON.stringify(body)]), { headers: {} }); }
@@ -75,7 +76,7 @@ test('local scan exposes only bounded validated evidence fields', async () => {
     assert.equal(report.checked_at, valid.checked_at);
     const { ignored: _ignored, ...expectedValid } = valid;
     assert.deepEqual(report.checks.find(item => item.id === valid.id), expectedValid);
-    assert.equal(report.checks.length, 24);
+    assert.equal(report.checks.length, HOST_SCAN_IDS.length);
     assert.equal(report.coverage.complete, true);
   } finally {
     await new Promise(resolve => server.close(resolve));
@@ -101,14 +102,14 @@ function response(payload, code=200) { return (_req,res)=>{res.writeHead(code);r
 test('finished reports reject absent, malformed, over-limit or incomplete checks and timestamps',async()=>{
   for (const payload of [null, {}, {...finished, checks:undefined}, {...finished, checks:[]},
     {...finished, checks:[{name:'unsafe', state:'green',detail:'false'}]},
-    {...finished, checks:Array(26).fill(basicCheck)}, {...finished,checked_at:undefined},
+    {...finished, checks:Array(HOST_SCAN_IDS.length + 2).fill(basicCheck)}, {...finished,checked_at:undefined},
     {...finished,checked_at:'not-a-date'}, {...finished,checked_at:'2026'}, {...finished,checked_at:'2026-02-30T12:00:00Z'}]) {
     assert.equal((await withAgent(response(payload))).state,'unavailable');
   }
   assert.equal((await withAgent(response(finished))).state,'finished');
   const maximum = await withAgent(response({...finished, history_state:'unavailable', checks:[...finished.checks,{...basicCheck,id:'host.history',state:'unavailable'}]}));
   assert.equal(maximum.state,'finished');
-  assert.equal(maximum.checks.length,25);
+  assert.equal(maximum.checks.length,HOST_SCAN_IDS.length + 1);
 });
 test('fixed scan request is bodyless and status codes cannot launder completed reports',async()=>{
   for(const [code,state,expected] of [[202,'running','running'],[409,'running','running'],[429,'unavailable','unavailable'],[200,'finished','unavailable'],[202,'finished','unavailable'],[500,'running','unavailable']]) {

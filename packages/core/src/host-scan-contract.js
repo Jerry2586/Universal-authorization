@@ -18,6 +18,7 @@ export const HOST_SCAN_IDS = Object.freeze([
   'network.firewall',
   'malware.program',
   'malware.business',
+  'database.sqlite',
   'host.process-executables',
   'host.failed-units',
   'cloudflare.dns',

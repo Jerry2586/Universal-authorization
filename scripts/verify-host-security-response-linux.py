@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Isolated CI: real Docker containment and real Ed25519 offline source repair."""
+from contextlib import closing
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import time
@@ -72,7 +74,7 @@ owned = None
 created_volumes = []
 volume_roots = {}
 try:
-    for category in ('uploads', 'artifacts'):
+    for category in ('uploads', 'artifacts', 'db'):
         name = 'appgog_appgog-' + category
         run(['docker', 'volume', 'inspect', name], success=False)
         run(['docker', 'volume', 'create', '--label', 'com.docker.compose.project=appgog',
@@ -87,6 +89,7 @@ try:
         '--health-cmd', 'node -e "process.exit(0)"', '--health-interval', '1s', '--health-timeout', '2s',
         '--mount', 'type=volume,source=appgog_appgog-uploads,target=/app/var/uploads',
         '--mount', 'type=volume,source=appgog_appgog-artifacts,target=/app/var/artifacts',
+        '--mount', 'type=volume,source=appgog_appgog-db,target=/app/var/data',
         '--name', 'appgog-security-owned-ci', image, 'node', '-e', 'setInterval(()=>{},1000)']).stdout.strip()
     for attempt in range(30):
         if inspect(owned)['State'].get('Health', {}).get('Status') == 'healthy':
@@ -94,6 +97,37 @@ try:
         time.sleep(1)
     else:
         raise AssertionError('Test container did not become healthy')
+    # Actual Docker ownership and SQLite bytes, including a WAL-only committed table.
+    database = volume_roots['db'] / 'appgog.sqlite'
+    with closing(sqlite3.connect(database)) as db:
+        db.execute('CREATE TABLE ci_health(value TEXT)')
+        db.execute("INSERT INTO ci_health VALUES ('controlled-private-value')")
+        db.commit()
+    pristine_database = database.read_bytes()
+    def database_state(expected):
+        before = {p.name: (control.AGENT.file_identity(p.stat()), hashlib.sha256(p.read_bytes()).hexdigest())
+                  for p in volume_roots['db'].iterdir() if p.is_file()}
+        result = control.AGENT.sqlite_health_check()
+        assert result['state'] == expected, {'expected': expected, 'actual': result['state']}
+        after = {p.name: (control.AGENT.file_identity(p.stat()), hashlib.sha256(p.read_bytes()).hexdigest())
+                 for p in volume_roots['db'].iterdir() if p.is_file()}
+        assert before == after, 'Database scanner changed live database files'
+        assert 'controlled-private-value' not in json.dumps(result)
+    database_state('ok')
+    with closing(sqlite3.connect(database)) as db:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('PRAGMA wal_autocheckpoint=0')
+        db.execute('CREATE TABLE only_in_wal(value TEXT)')
+        db.execute("INSERT INTO only_in_wal VALUES ('controlled-private-value')")
+        db.commit()
+        assert Path(str(database) + '-wal').is_file()
+        database_state('ok')
+    for suffix in ('-wal', '-shm'):
+        Path(str(database) + suffix).unlink(missing_ok=True)
+    database.write_bytes(b'controlled-invalid-database' * 400)
+    database_state('finding')
+    database.write_bytes(pristine_database)
+    database_state('ok')
     if official_recovery:
         # Actual production check functions, fresh official databases and real clamscan.
         uploads = volume_roots['uploads']
