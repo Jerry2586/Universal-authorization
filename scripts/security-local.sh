@@ -25,6 +25,11 @@ trusted_root_file() {
 ROOT=$(CDPATH= cd -- "$ROOT" && pwd -P) || exit 1
 trusted_root_path "$ROOT" || { echo "安装目录或父目录不可信" >&2; exit 1; }
 case "${1:-}" in
+  firewall)
+    shift
+    collector=/usr/local/lib/appgog-security/host-security-firewall.py
+    trusted_root_file "$collector" && trusted_root_file "$AGENT" || { echo '防火墙采集器或依赖不可信' >&2; exit 1; }
+    exec /usr/bin/python3 -I "$collector" "$@" ;;
   cloudflare)
     shift
     collector=/usr/local/lib/appgog-security/host-security-cloudflare.py
@@ -85,7 +90,7 @@ case "${1:-}" in
       429) echo 'Host scan cooldown active (60 seconds)' >&2; exit 1 ;;
       *) echo "Host scan rejected: HTTP $code" >&2; exit 1 ;;
     esac ;;
-  *) echo 'Usage: appgog security-local status|scan|history|engine|approve-program VERSION|approve-host APPROVE-HOST|network-fingerprint|approve-network SHA256|cloudflare menu|response ACTION' >&2; exit 2 ;;
+  *) echo 'Usage: appgog security-local status|scan|history|engine|approve-program VERSION|approve-host APPROVE-HOST|network-fingerprint|approve-network SHA256|firewall menu|cloudflare menu|response ACTION' >&2; exit 2 ;;
 esac
 [ "$#" -eq 1 ] || exit 2
 result=$(curl --silent --show-error --fail --unix-socket "$SOCKET" --max-time 5 'http://localhost/status') || exit 1

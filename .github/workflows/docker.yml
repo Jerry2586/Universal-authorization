@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install real host inspection and antivirus runtimes
-        run: sudo apt-get update && sudo apt-get install -y python3 clamav clamav-freshclam curl jq
+        run: sudo apt-get update && sudo apt-get install -y python3 clamav clamav-freshclam curl jq nftables iptables
       - name: Isolated systemd lifecycle, rollback, socket grants and ClamAV acceptance
         run: sudo env GITHUB_ACTIONS=true sh scripts/verify-host-security-linux.sh
   local-security-recovery:
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install official antivirus updater and isolated inspection runtimes
-        run: sudo apt-get update && sudo apt-get install -y python3 clamav clamav-freshclam curl jq openssl
+        run: sudo apt-get update && sudo apt-get install -y python3 clamav clamav-freshclam curl jq nftables iptables openssl
       - name: Fresh official database, real Docker containment and strict recovery
         run: sudo env GITHUB_ACTIONS=true sh scripts/verify-host-security-recovery-linux.sh
   verify:

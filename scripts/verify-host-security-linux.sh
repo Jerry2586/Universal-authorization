@@ -99,6 +99,35 @@ sh "$RELEASE/scripts/security-local.sh" approve-network "$fingerprint"
 network_hash=$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)
 wait_report
 jq -e 'any(.checks[]; .id == "network.routes" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
+
+# Read-only actual host snapshot; never approve a snapshot implicitly.
+systemctl start appgog-firewall-monitor.service
+jq -e '.state == "finished" and .snapshot.sources.nftables and .snapshot.sources.iptables and .snapshot.sources.ip6tables' "$STATE/firewall-report.json" >/dev/null
+[ "$(stat -c '%u:%g:%a' "$STATE/firewall-report.json")" = '0:0:600' ]
+[ ! -e "$STATE/firewall-baseline.json" ]
+python3 -I - "$AGENT" <<'PY'
+import importlib.util,sys
+spec=importlib.util.spec_from_file_location('firewall_backend',sys.argv[1])
+a=importlib.util.module_from_spec(spec); spec.loader.exec_module(a)
+assert a.firewall_check()['state']=='warning'
+PY
+if sh "$RELEASE/scripts/security-local.sh" firewall approve invalid; then echo 'Invalid firewall approval accepted' >&2; exit 1; fi
+[ ! -e "$STATE/firewall-baseline.json" ]
+firewall_fingerprint=$(sh "$RELEASE/scripts/security-local.sh" firewall fingerprint)
+sh "$RELEASE/scripts/security-local.sh" firewall approve "$firewall_fingerprint"
+[ "$(stat -c '%u:%g:%a' "$STATE/firewall-baseline.json")" = '0:0:600' ]
+firewall_baseline_hash=$(sha256sum "$STATE/firewall-baseline.json" | cut -d' ' -f1)
+firewall_executable_hash=$(sha256sum /usr/local/lib/appgog-security/host-security-firewall.py | cut -d' ' -f1)
+systemctl is-enabled --quiet appgog-firewall-monitor.timer
+systemctl is-active --quiet appgog-firewall-monitor.timer
+grep -Fxq 'RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6' /etc/systemd/system/appgog-firewall-monitor.service
+[ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/host-security-firewall.py)" = '0:0:700' ]
+python3 -I "$SOURCE/scripts/verify-host-security-firewall-linux.py"
+python3 -I "$SOURCE/tests/fixtures/host-security-firewall.py"
+curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock -X POST http://localhost/scan >/dev/null
+wait_report
+jq -e 'any(.checks[]; .id == "network.firewall" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null
+
 gid=$(getent group appgog-security | cut -d: -f3)
 [ "$(stat -c '%u:%g:%a' /run/appgog-security)" = "0:$gid:750" ]
 [ "$(stat -c '%u:%g:%a' /run/appgog-security/scan.sock)" = "0:$gid:660" ]
@@ -130,6 +159,7 @@ lifecycle install
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
 [ "$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)" = "$network_hash" ]
+[ "$(sha256sum "$STATE/firewall-baseline.json" | cut -d' ' -f1)" = "$firewall_baseline_hash" ]
 wait_report
 if ! jq -e '.state == "finished" and any(.checks[]; .id == "integrity.program" and .state == "finding") and (.history | length > 0)' "$TEST_ROOT/report.json" >/dev/null; then
   jq '{state, checks: [.checks[] | {id,state}], history_count: (.history | length)}' "$TEST_ROOT/report.json" >&2
@@ -180,6 +210,19 @@ printf 'invalid key
 if lifecycle install; then echo 'Changed independent signing pin accepted' >&2; exit 1; fi
 [ "$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)" = "$key_hash" ]
 cp "$SOURCE/scripts/release-public.pem" "$RELEASE/scripts/release-public.pem"
+
+# Failed upgrade restores an enabled-but-inactive firewall timer exactly.
+systemctl stop appgog-firewall-monitor.timer appgog-firewall-monitor.service
+printf '\ninvalid python syntax (\n' >> "$RELEASE/scripts/host-security-firewall.py"
+if lifecycle install; then echo 'Broken firewall collector installed' >&2; exit 1; fi
+[ "$(sha256sum /usr/local/lib/appgog-security/host-security-firewall.py | cut -d' ' -f1)" = "$firewall_executable_hash" ]
+[ "$(sha256sum "$STATE/firewall-baseline.json" | cut -d' ' -f1)" = "$firewall_baseline_hash" ]
+systemctl is-enabled --quiet appgog-firewall-monitor.timer
+if systemctl is-active --quiet appgog-firewall-monitor.timer; then echo 'Inactive firewall timer was incorrectly started during rollback' >&2; exit 1; fi
+systemctl is-active --quiet appgog-host-security.service
+cp "$SOURCE/scripts/host-security-firewall.py" "$RELEASE/scripts/host-security-firewall.py"
+systemctl start appgog-firewall-monitor.timer
+
 # Verify real non-root containers can use only the explicitly granted socket.
 docker pull node:24-bookworm-slim
 client='const http=require("http"); const r=http.get({socketPath:"/scan/scan.sock",path:"/status"},s=>{let b="";s.on("data",c=>b+=c);s.on("end",()=>{if(s.statusCode!==200||!JSON.parse(b).state)process.exit(2)});});r.on("error",()=>process.exit(3));'
@@ -198,6 +241,11 @@ lifecycle uninstall
 [ ! -e /etc/systemd/system/appgog-cloudflare-monitor.timer ]
 [ ! -e /usr/local/lib/appgog-security/host-security-cloudflare.py ]
 [ -s "$STATE/cloudflare-report.json" ]
+[ ! -e /etc/systemd/system/appgog-firewall-monitor.service ]
+[ ! -e /etc/systemd/system/appgog-firewall-monitor.timer ]
+[ ! -e /usr/local/lib/appgog-security/host-security-firewall.py ]
+[ -s "$STATE/firewall-report.json" ]
+if systemctl is-active --quiet appgog-firewall-monitor.timer; then echo 'Firewall timer survived uninstall' >&2; exit 1; fi
 if systemctl is-active --quiet appgog-cloudflare-monitor.timer; then echo 'CF timer survived uninstall' >&2; exit 1; fi
 [ "$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)" = "$config_hash" ]
 [ "$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)" = "$key_hash" ]
@@ -205,6 +253,7 @@ if systemctl is-active --quiet appgog-local-response.timer; then echo 'Response 
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
 [ "$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)" = "$network_hash" ]
+[ "$(sha256sum "$STATE/firewall-baseline.json" | cut -d' ' -f1)" = "$firewall_baseline_hash" ]
 [ -s "$STATE/events.json" ] && getent group appgog-security >/dev/null
 # Released history survives repeated uninstall and must not block a safe reinstall.
 incident_hash=$(sha256sum "$STATE/incident.json" | cut -d' ' -f1)
@@ -247,4 +296,5 @@ systemctl is-active --quiet appgog-local-response.timer
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
 [ "$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)" = "$network_hash" ]
+[ "$(sha256sum "$STATE/firewall-baseline.json" | cut -d' ' -f1)" = "$firewall_baseline_hash" ]
 echo 'Isolated Linux agent: install, upgrade, rollback, socket grants, engine and preserving uninstall passed'

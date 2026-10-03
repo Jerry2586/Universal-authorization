@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -43,7 +43,7 @@ HOST_DIRS = ('/etc/ssh/sshd_config.d', '/etc/sudoers.d', '/etc/cron.d',
              '/etc/systemd/system', '/var/spool/cron')
 MAX_HISTORY = 64
 MAX_RESPONSE_BYTES = 32768
-MAX_CHECKS = 24
+MAX_CHECKS = 25
 MAX_RESPONSE_HISTORY = 8
 EVENTS = []
 PREVIOUS = {}
@@ -1430,12 +1430,58 @@ def containment_check():
 
 
 
+FIREWALL_SOURCES = frozenset(('nftables', 'iptables', 'ip6tables', 'iptables-legacy', 'ip6tables-legacy'))
+
+
+def valid_firewall_snapshot(item):
+    if not isinstance(item, dict) or set(item) != {'digest', 'sources', 'rules'} or not isinstance(item.get('digest'), str) or not re.fullmatch(r'[a-f0-9]{64}', item['digest']):
+        return False
+    sources = item['sources']
+    if not isinstance(sources, dict) or not {'nftables', 'iptables', 'ip6tables'} <= sources.keys() <= FIREWALL_SOURCES:
+        return False
+    for value in sources.values():
+        if not isinstance(value, dict) or set(value) != {'digest', 'rules'} or not isinstance(value.get('digest'), str) or not re.fullmatch(r'[a-f0-9]{64}', value['digest']) or type(value['rules']) is not int or not 0 <= value['rules'] <= 8192:
+            return False
+    canonical = json.dumps(sources, sort_keys=True, ensure_ascii=True, separators=(',', ':'), allow_nan=False).encode('ascii')
+    return type(item['rules']) is int and item['rules'] == sum(value['rules'] for value in sources.values()) and item['digest'] == hashlib.sha256(canonical).hexdigest()
+
+
+def firewall_check():
+    name, scope = '运行时防火墙规则', 'host netns nftables + IPv4/IPv6 iptables; read-only'
+    unavailable = lambda: check(name, 'unavailable', '规则采集未配置、工具缺失、过期或快照不完整；请在 Linux 安全菜单核对', check_id='network.firewall', category='network', scope=scope)
+    try:
+        report = json.loads(read_state(STATE_DIR / 'firewall-report.json', 32768))
+        if not isinstance(report, dict) or set(report) != {'schema', 'root', 'checked_at', 'state', 'snapshot'} or type(report['schema']) is not int or report['schema'] != 1 or report['root'] != str(ROOT) or report['state'] != 'finished' or not valid_firewall_snapshot(report['snapshot']):
+            raise ValueError('invalid firewall report')
+        timestamp = datetime.fromisoformat(report['checked_at'].replace('Z', '+00:00'))
+        age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+        if timestamp.utcoffset().total_seconds() != 0 or not -120 <= age <= 900:
+            raise ValueError('stale firewall report')
+        current = report['snapshot']
+        evidence = {'digest': current['digest'], 'rules': current['rules'], 'sources': sorted(current['sources'])}
+        target = STATE_DIR / 'firewall-baseline.json'
+        if not target.exists() and not target.is_symlink():
+            return check(name, 'warning', '尚未批准实际规则基线；请独立检查规则后输入完整指纹，不自动学习', check_id='network.firewall', category='network', scope=scope, evidence=evidence)
+        baseline = json.loads(read_state(target, 32768))
+        if not isinstance(baseline, dict) or set(baseline) != {'schema', 'root', 'approved_at', 'snapshot'} or type(baseline['schema']) is not int or baseline['schema'] != 1 or baseline['root'] != str(ROOT) or not valid_firewall_snapshot(baseline['snapshot']):
+            raise ValueError('invalid firewall baseline')
+        approved = datetime.fromisoformat(baseline['approved_at'].replace('Z', '+00:00'))
+        if approved.utcoffset().total_seconds() != 0 or approved > datetime.now(timezone.utc) + timedelta(seconds=120):
+            raise ValueError('invalid firewall approval date')
+        changed = current != baseline['snapshot']
+        state = 'finding' if changed else ('warning' if current['rules'] == 0 else 'ok')
+        detail = '实际防火墙规则或后端来源变化；保留证据并核验合法变更，不自动改规则' if changed else ('未检测到规则；匹配空基线不代表已建立防火墙防护' if current['rules'] == 0 else '当前有界规则快照与明确批准的基线一致；不等于公网可达性或所有命名空间验收')
+        return check(name, state, detail, check_id='network.firewall', category='network', scope=scope, evidence=evidence, checked_at=report['checked_at'])
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError):
+        return unavailable()
+
+
 def cloudflare_checks():
     """Read a root-private report from the separate network collector; never read its token."""
     identifiers = ('dns', 'workers', 'rules', 'settings')
     labels = ('Cloudflare DNS', 'Cloudflare Workers 路由', 'Cloudflare 重定向与安全规则', 'Cloudflare HTTPS 与站点设置')
     try:
-        payload = read_state(STATE_DIR / 'cloudflare-report.json', limit=8192)
+        payload = json.loads(read_state(STATE_DIR / 'cloudflare-report.json', limit=8192))
         if not isinstance(payload, dict) or set(payload) != {'schema', 'checked_at', 'checks'} or payload['schema'] != 1:
             raise ValueError('invalid collector report')
         timestamp = datetime.fromisoformat(payload['checked_at'].replace('Z', '+00:00'))
@@ -1577,7 +1623,7 @@ def scan():
         except OSError:
             results.append(check(label, 'unavailable', '无法读取路径或权限'))
     results.append(listener_posture_check())
-    results.extend((udp_posture_check(), route_configuration_check(), kernel_security_check()))
+    results.extend((udp_posture_check(), route_configuration_check(), kernel_security_check(), firewall_check()))
     results.append(malware_scan())
     results.append(business_malware_scan())
     results.append(process_posture_check())

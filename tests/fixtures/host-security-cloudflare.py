@@ -197,17 +197,31 @@ class CloudflareTests(unittest.TestCase):
         snapshots = self.snapshots()
         rows = c.result_rows(snapshots, self.baseline(snapshots))
         report = {'schema': 1, 'checked_at': c.now(), 'checks': rows}
-        with patch.object(a, 'read_state', return_value=report):
+        with patch.object(a, 'read_state', return_value=json.dumps(report).encode()):
             results = a.cloudflare_checks()
             self.assertEqual(len(results), 4)
             self.assertTrue(all(row['state'] == 'ok' for row in results))
             self.assertTrue(all(a.history_item(row)['category'] == 'network' for row in results))
         for delta in [-901, 121]:
             bad = dict(report, checked_at=(datetime.now(timezone.utc) + timedelta(seconds=delta)).isoformat())
-            with patch.object(a, 'read_state', return_value=bad):
+            with patch.object(a, 'read_state', return_value=json.dumps(bad).encode()):
                 self.assertTrue(all(row['state'] == 'unavailable' for row in a.cloudflare_checks()))
         for bad in [dict(report, checks=rows[:3]), dict(report, checks=[dict(rows[0], evidence=None), *rows[1:]]), dict(report, checks=[rows[1], rows[0], *rows[2:]])]:
-            with patch.object(a, 'read_state', return_value=bad):
+            with patch.object(a, 'read_state', return_value=json.dumps(bad).encode()):
+                self.assertTrue(all(row['state'] == 'unavailable' for row in a.cloudflare_checks()))
+
+    def test_actual_private_report_bytes_and_malformed_json(self):
+        rows = c.result_rows(self.snapshots(), self.baseline(self.snapshots()))
+        with tempfile.TemporaryDirectory() as tmp, patch.object(a, 'STATE_DIR', Path(tmp)):
+            target = Path(tmp) / 'cloudflare-report.json'
+            a.atomic_json(target, {'schema': 1, 'checked_at': c.now(), 'checks': rows})
+            self.assertIsInstance(a.read_state(target), bytes)
+            self.assertTrue(all(row['state'] == 'ok' for row in a.cloudflare_checks()))
+            target.write_bytes(b'{incomplete')
+            self.assertTrue(all(row['state'] == 'unavailable' for row in a.cloudflare_checks()))
+            if os.name == 'posix':
+                a.atomic_json(target, {'schema': 1, 'checked_at': c.now(), 'checks': rows})
+                target.chmod(0o644)
                 self.assertTrue(all(row['state'] == 'unavailable' for row in a.cloudflare_checks()))
 
     def test_failed_service_state_not_description_is_used(self):
