@@ -1,3 +1,4 @@
+import { fullHostReport } from './helpers/host-scan-report.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSecurityPoller } from '../apps/web/public/assets/portal/security-poller.js';
@@ -78,7 +79,7 @@ function localPageFixture() {
   const start = source.indexOf('  const localStateLabels =');
   const end = source.indexOf('  const localSecurityPoller =', start);
   assert.ok(start > 0 && end > start);
-  const render = new Function('$', 'document', source.slice(start, end) + '\nreturn renderLocalReport;')(id => nodes.get(id) ?? null, { createElement: node });
+  const render = new Function('$', 'document', source.slice(source.indexOf('// Keep this fixed browser'),source.indexOf('export function createSecurityUi')) + source.slice(start, end) + '\nreturn renderLocalReport;')(id => nodes.get(id) ?? null, { createElement: node });
   return { render, nodes };
 }
 test('actual admin page IDs render findings and history as plain text', () => {
@@ -122,4 +123,31 @@ test('actual admin page distinguishes unreadable history from a valid empty hist
   const { render, nodes } = localPageFixture();
   render({ state: 'finished', checked_at: new Date().toISOString(), checks: [], history: [], history_state: 'ok' });
   assert.match(nodes.get('security-local-history-state').textContent, /暂无状态变化记录/);
+});
+
+
+test('real page only shows green for complete fresh checks and usable history', () => {
+  const report=fullHostReport();
+  const valid=localPageFixture();valid.render(report);
+  assert.equal(valid.nodes.get('security-local-state').dataset.state,'ok');
+  assert.match(valid.nodes.get('security-local-state').textContent,/未发现异常/);
+  const variants=[
+    {...report,checks:[report.checks[0]]},
+    {...report,checks:Array(24).fill(report.checks[0])},
+    {...report,checks:[{...report.checks[0],id:'foreign.id'},...report.checks.slice(1)]},
+    {...report,checks:[{...report.checks[0],evidence_digest:undefined},...report.checks.slice(1)]},
+    {...report,checks:[{...report.checks[0],checked_at:'2020-01-01T00:00:00Z'},...report.checks.slice(1)]},
+    {...report,checks:[{...report.checks[0],checked_at:new Date(Date.now()+180000).toISOString()},...report.checks.slice(1)]},
+    {...report,history_state:'unavailable'}, {...report,history:undefined},
+    {...report,coverage:undefined}, {...report,coverage:{...report.coverage,expected:1}},
+    {...report,coverage:{...report.coverage,complete:false}},
+  ];
+  for (const patch of [{category:'foreign'}, {severity:'panic'}, {scope:''}, {scope:'x'.repeat(121)},
+    {name:''}, {detail:undefined}, {checked_at:'2026-02-30T00:00:00Z'}, {checked_at:report.checked_at.slice(0,19)},
+    {checked_at:report.checked_at.replace('Z','+08:00')}]) {
+    variants.push({...report, checks:[{...report.checks[0],...patch},...report.checks.slice(1)]});
+  }
+  for(const invalid of variants){const f=localPageFixture();f.render(invalid);assert.equal(f.nodes.get('security-local-state').dataset.state,'warning');}
+  const finding=fullHostReport({overrides:{'malware.business':{state:'finding'}}});
+  const f=localPageFixture();f.render(finding);assert.equal(f.nodes.get('security-local-state').dataset.state,'finding');
 });

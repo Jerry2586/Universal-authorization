@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { localSecurityScan } from '../apps/license-api/src/modules/operations/local-security-scan.js';
+import { fullHostReport } from './helpers/host-scan-report.js';
 import { handleOperationsHttp } from '../apps/license-api/src/modules/operations/http-routes.js';
 
 function request(body) { return Object.assign(Readable.from([JSON.stringify(body)]), { headers: {} }); }
@@ -64,24 +65,18 @@ test('local scan exposes only bounded validated evidence fields', async () => {
     category: 'container', severity: 'high', checked_at: '2026-10-02T12:00:00.000Z',
     scope: 'compose project appgog', evidence_digest: 'a'.repeat(64), ignored: 'secret',
   };
-  const invalid = {
-    name: '无效扩展字段', state: 'warning', detail: '仍保留兼容字段', id: '../bad',
-    category: 'arbitrary', severity: 'panic', checked_at: 'not-a-date',
-    scope: 'x'.repeat(121), evidence_digest: 'BAD', command: 'rm -rf /',
-  };
   const server = createServer((_req, response) => {
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ state: 'finished', checked_at: valid.checked_at, checks: [valid, invalid] }));
+    response.end(JSON.stringify(fullHostReport({checked_at:valid.checked_at, overrides: {'container.contract':valid}})));
   });
   await new Promise((resolve, reject) => server.listen(socketPath, resolve).once('error', reject));
   try {
     const report = await localSecurityScan('status', { APPGOG_HOST_SCAN_SOCKET: socketPath });
     assert.equal(report.checked_at, valid.checked_at);
     const { ignored: _ignored, ...expectedValid } = valid;
-    assert.deepEqual(report.checks[0], expectedValid);
-    assert.deepEqual(report.checks[1], {
-      name: invalid.name, state: invalid.state, detail: invalid.detail,
-    });
+    assert.deepEqual(report.checks.find(item => item.id === valid.id), expectedValid);
+    assert.equal(report.checks.length, 24);
+    assert.equal(report.coverage.complete, true);
   } finally {
     await new Promise(resolve => server.close(resolve));
     if (process.platform !== 'win32') await rm(socketPath, { force: true });
@@ -99,8 +94,8 @@ async function withAgent(handler, action = 'status') {
   finally { await new Promise(resolve => server.close(resolve)); if (process.platform !== 'win32') await rm(socketPath, { force: true }); }
 }
 const checkedAt = '2026-10-02T12:00:00.000Z';
-const basicCheck = { name: '文件', state: 'ok', detail: '本次无变化', id: 'integrity.program', checked_at: checkedAt, evidence_digest: 'a'.repeat(64) };
-const finished = { state: 'finished', checked_at: checkedAt, checks: [basicCheck], history: [], history_state: 'ok' };
+const finished = fullHostReport({ checked_at: checkedAt });
+const basicCheck = finished.checks[0];
 function response(payload, code=200) { return (_req,res)=>{res.writeHead(code);res.end(JSON.stringify(payload));}; }
 
 test('finished reports reject absent, malformed, over-limit or incomplete checks and timestamps',async()=>{
@@ -111,7 +106,7 @@ test('finished reports reject absent, malformed, over-limit or incomplete checks
     assert.equal((await withAgent(response(payload))).state,'unavailable');
   }
   assert.equal((await withAgent(response(finished))).state,'finished');
-  const maximum = await withAgent(response({...finished, checks:Array(25).fill(basicCheck)}));
+  const maximum = await withAgent(response({...finished, history_state:'unavailable', checks:[...finished.checks,{...basicCheck,id:'host.history',state:'unavailable'}]}));
   assert.equal(maximum.state,'finished');
   assert.equal(maximum.checks.length,25);
 });
@@ -142,10 +137,40 @@ test('history filters secret fields, bounds output and reports corrupted evidenc
 
 test('business malware category survives the fixed local API in checks and transition history', async()=>{
   const item={...basicCheck, id:'malware.business', category:'malware', state:'finding', severity:'high'};
-  const report=await withAgent(response({...finished, checks:[item], history:[{...item,previous_state:'ok'}]}));
+  const report=await withAgent(response({...fullHostReport({checked_at:checkedAt,overrides:{'malware.business':item}}), history:[{...item,previous_state:'ok'}]}));
   assert.equal(report.state,'finished');
-  assert.equal(report.checks[0].category,'malware');
+  assert.equal(report.checks.find(row=>row.id==='malware.business').category,'malware');
   assert.equal(report.history_state,'ok');
   assert.equal(report.history[0].category,'malware');
   assert.equal(report.history[0].previous_state,'ok');
+});
+
+
+test('fixed coverage rejects missing, repeated, foreign IDs and missing evidence at the actual socket', async()=>{
+  const invalid = [
+    {...finished,checks:[basicCheck]},
+    {...finished,checks:finished.checks.slice(1)},
+    {...finished,checks:[...finished.checks.slice(1),finished.checks[1]]},
+    {...finished,checks:[...finished.checks.slice(1),{...basicCheck,id:'unknown.check'}]},
+    {...finished,checks:[...finished.checks,{...basicCheck,id:'host.history',state:'ok'}]},
+  ];
+  for(const key of ['id','category','severity','checked_at','scope','evidence_digest']) {
+    const row={...basicCheck};delete row[key];
+    invalid.push({...finished,checks:[row,...finished.checks.slice(1)]});
+  }
+  for(const patch of [{id:'../bad'}, {category:'arbitrary'}, {severity:'panic'}, {scope:'x'.repeat(121)},
+    {checked_at:'2026-02-30T00:00:00Z'}, {checked_at:'2026-10-02T12:03:00Z'}, {evidence_digest:'BAD'}])
+    invalid.push({...finished,checks:[{...basicCheck,...patch},...finished.checks.slice(1)]});
+  for(const payload of invalid) {
+    const report=await withAgent(response(payload));
+    assert.equal(report.state,'unavailable');assert.equal(report.coverage,undefined);
+  }
+  const finding=fullHostReport({checked_at:checkedAt,overrides:{'integrity.program':{state:'finding',severity:'high'}}});
+  const report=await withAgent(response(finding));
+  assert.equal(report.state,'finished');assert.equal(report.checks[0].state,'finding');assert.equal(report.coverage.complete,true);
+});
+
+test('explicit unreadable history remains unavailable when history is truncated', async()=>{
+  const report=await withAgent(response({...finished,history:Array(12).fill(basicCheck),history_state:'unavailable'}));
+  assert.equal(report.state,'finished');assert.equal(report.history.length,8);assert.equal(report.history_state,'unavailable');
 });

@@ -33,7 +33,17 @@ wait_report() {
   attempt=0
   while [ "$attempt" -lt 90 ]; do
     if curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock http://localhost/status > "$TEST_ROOT/report.json" &&
-       jq -e --arg previous "$previous_checked_at" '.state == "finished" and (.checked_at | type == "string") and ($previous == "" or .checked_at != $previous)' "$TEST_ROOT/report.json" >/dev/null; then return; fi
+       jq -e --arg previous "$previous_checked_at" '.state == "finished" and (.checked_at | type == "string") and ($previous == "" or .checked_at != $previous)' "$TEST_ROOT/report.json" >/dev/null; then
+      python3 - "$AGENT" "$TEST_ROOT/report.json" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('accepted_agent', sys.argv[1])
+a = importlib.util.module_from_spec(spec); spec.loader.exec_module(a)
+with open(sys.argv[2], encoding='utf-8') as stream:
+    report = json.load(stream)
+assert a.complete_scan_checks(report.get('checks'), report.get('checked_at')), 'Incomplete live Linux scan report'
+PY
+      return
+    fi
     attempt=$((attempt + 1)); sleep 2
   done
   echo 'Initial/upgrade inspection did not finish' >&2

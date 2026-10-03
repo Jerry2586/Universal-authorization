@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { request as httpsRequest } from 'node:https';
+import { completeHostScan, freshHostScan } from '../packages/core/src/host-scan-contract.js';
 import { localSecurityScan } from '../apps/license-api/src/modules/operations/local-security-scan.js';
 
 const EXCLUDED = new Set(['.git', 'node_modules', 'var', '.codex', '.codex-tmp']);
@@ -28,12 +29,14 @@ export function inventory(root, paths = ['apps', 'packages', 'scripts', 'Dockerf
   for (const path of paths) walk(path);
   return files;
 }
-export function summarizeHostScan(report) {
+export function summarizeHostScan(report, now = Date.now()) {
+  if (!report) return { state: 'unavailable', checked_at: null };
   if (report.state !== 'finished') return { state: report.state === 'running' || report.state === 'idle' ? report.state : 'unavailable', checked_at: null };
-  const checkedAt = typeof report.checked_at === 'string' && Number.isFinite(Date.parse(report.checked_at)) ? report.checked_at : null;
-  if (!checkedAt || !Array.isArray(report.checks) || !report.checks.length) return { state: 'unavailable', checked_at: null };
+  if (!completeHostScan(report)) return { state: 'unavailable', checked_at: null };
+  const checkedAt = report.checked_at;
   const states = report.checks.map(item => item.state);
-  const state = states.includes('finding') ? 'finding' : states.includes('unavailable') ? 'unavailable'
+  const state = states.includes('finding') ? 'finding' : !freshHostScan(report, now) ||
+    !Array.isArray(report.history) || !['ok', 'truncated'].includes(report.history_state) || states.includes('unavailable') ? 'unavailable'
     : states.includes('warning') ? 'warning' : 'ok';
   return { state, checked_at: checkedAt, counts: Object.fromEntries(['ok', 'warning', 'finding', 'unavailable']
     .map(kind => [kind, states.filter(value => value === kind).length])) };

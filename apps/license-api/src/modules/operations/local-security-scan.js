@@ -1,16 +1,6 @@
 import { request as unixRequest } from 'node:http';
 
-const CHECK_CATEGORIES = new Set(['host', 'container', 'permissions', 'ssh', 'network', 'malware']);
-const CHECK_SEVERITIES = new Set(['info', 'low', 'medium', 'high', 'critical', 'unknown']);
-const CHECK_STATES = new Set(['ok', 'warning', 'finding', 'unavailable']);
-
-function safeTimestamp(value) {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value !== 'string' || value.length > 40 ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value) ||
-      !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)) return null;
-  return value;
-}
+import { CHECK_CATEGORIES, CHECK_SEVERITIES, CHECK_STATES, safeTimestamp, completeHostScan, hostScanCoverage } from '../../../../../packages/core/src/host-scan-contract.js';
 
 function sanitizeCheck(item) {
   if (!item || typeof item.name !== 'string' || typeof item.detail !== 'string' || !CHECK_STATES.has(item.state)) return null;
@@ -66,14 +56,14 @@ export function localSecurityScan(action, env = process.env) {
             if (!clean || !clean.id || !clean.evidence_digest || !clean.checked_at) return null;
             return { ...clean, previous_state: CHECK_STATES.has(item.previous_state) ? item.previous_state : null };
           }).filter(Boolean) : [];
-          if (result.state === 'finished' && (!Array.isArray(result.checks) || result.checks.length > 25 ||
-              checks.length !== result.checks.length || checks.length === 0 || !safeTimestamp(result.checked_at))) {
+          if (result.state === 'finished' && (!completeHostScan(result) || checks.length !== result.checks.length)) {
             resolve({ state: 'unavailable', reason: '本机检查报告缺失或不完整' }); return;
           }
           const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
-          const historyState = invalidHistory ? 'unavailable' : result.history.length > 8 ? 'truncated'
+          const historyState = invalidHistory || result.history_state === 'unavailable' ? 'unavailable' : result.history.length > 8 ? 'truncated'
             : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
           resolve({ state: result.state, history,
+            coverage: result.state === 'finished' ? hostScanCoverage(result) : undefined,
             history_state: historyState, checked_at: safeTimestamp(result.checked_at),
             reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });
         } catch {

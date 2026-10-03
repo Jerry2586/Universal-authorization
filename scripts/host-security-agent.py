@@ -98,6 +98,69 @@ def bounded_evidence(value, depth=0):
     return bounded_text(value, 160)
 
 
+HOST_SCAN_IDS = frozenset((
+    'integrity.program',
+    'host.configuration',
+    'container.contract',
+    'container.approved-image',
+    'response.containment',
+    'host.os-release',
+    'host.systemd-state',
+    'ssh.effective',
+    'permissions.secret-inventory',
+    'permissions.installation',
+    'permissions.cron',
+    'network.listeners',
+    'network.udp-listeners',
+    'network.routes',
+    'host.kernel-security',
+    'network.firewall',
+    'malware.program',
+    'malware.business',
+    'host.process-executables',
+    'host.failed-units',
+    'cloudflare.dns',
+    'cloudflare.workers',
+    'cloudflare.rules',
+    'cloudflare.settings'
+))
+
+
+def complete_scan_checks(checks, checked_at):
+    if not isinstance(checks, list) or not len(HOST_SCAN_IDS) <= len(checks) <= len(HOST_SCAN_IDS) + 1:
+        return False
+    seen = set()
+    try:
+        if not isinstance(checked_at, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)', checked_at):
+            return False
+        report_time = datetime.fromisoformat(checked_at.replace('Z', '+00:00'))
+        for item in checks:
+            if not isinstance(item, dict):
+                return False
+            identifier = item.get('id')
+            if not isinstance(identifier, str) or identifier in seen or identifier not in HOST_SCAN_IDS | {'host.history'}:
+                return False
+            if (item.get('state') not in CHECK_STATES or item.get('severity') not in SEVERITIES or
+                    item.get('category') not in {'host', 'container', 'permissions', 'ssh', 'network', 'malware'} or
+                    not isinstance(item.get('name'), str) or not item['name'] or
+                    not isinstance(item.get('detail'), str) or not isinstance(item.get('scope'), str) or
+                    not 1 <= len(item['scope']) <= 120 or not isinstance(item.get('evidence_digest'), str) or
+                    not re.fullmatch(r'[a-f0-9]{64}', item['evidence_digest'])):
+                return False
+            stamp = item.get('checked_at')
+            if not isinstance(stamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)', stamp):
+                return False
+            timestamp = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+            if timestamp > report_time + timedelta(seconds=120):
+                return False
+            if identifier == 'host.history' and item['state'] != 'unavailable':
+                return False
+            seen.add(identifier)
+    except (ValueError, TypeError, OverflowError):
+        return False
+    return HOST_SCAN_IDS.issubset(seen)
+
+
 def check(name, state, detail, *, check_id=None, category='host', severity=None,
           scope='fixed', evidence=None, checked_at=None):
     safe_state = state if state in CHECK_STATES else 'unavailable'
@@ -1745,23 +1808,23 @@ def scan():
     try:
         info = Path('/etc/os-release').read_text(encoding='utf-8')
         distro = next((line[8:].strip('"') for line in info.splitlines() if line.startswith('PRETTY_NAME=')), 'Linux')
-        results.append(check('Linux 系统', 'ok', distro[:80] + ' · ' + os.uname().release[:70]))
+        results.append(check('Linux 系统', 'ok', distro[:80] + ' · ' + os.uname().release[:70], check_id='host.os-release'))
     except OSError:
-        results.append(check('Linux 系统', 'unavailable', '无法读取系统版本'))
+        results.append(check('Linux 系统', 'unavailable', '无法读取系统版本', check_id='host.os-release'))
     try:
         output = subprocess.run(['systemctl', 'is-system-running'], capture_output=True, text=True, timeout=4, check=False)
         value = output.stdout.strip()
-        results.append(check('systemd 状态', 'ok' if value == 'running' else 'warning', value or 'systemd 状态不可用'))
+        results.append(check('systemd 状态', 'ok' if value == 'running' else 'warning', value or 'systemd 状态不可用', check_id='host.systemd-state'))
     except (OSError, subprocess.TimeoutExpired):
-        results.append(check('systemd 状态', 'unavailable', '无法核对服务管理器'))
+        results.append(check('systemd 状态', 'unavailable', '无法核对服务管理器', check_id='host.systemd-state'))
     results.append(sshd_effective_check())
     results.append(secret_permissions_check())
-    for label, path in [('安装目录权限', ROOT), ('定时任务权限', Path('/etc/cron.d'))]:
+    for label, path, identifier in [('安装目录权限', ROOT, 'permissions.installation'), ('定时任务权限', Path('/etc/cron.d'), 'permissions.cron')]:
         try:
             mode = path.stat().st_mode
-            results.append(check(label, 'finding' if mode & stat.S_IWOTH else 'ok', '目录允许所有用户写入' if mode & stat.S_IWOTH else '目录未开放全员写权限'))
+            results.append(check(label, 'finding' if mode & stat.S_IWOTH else 'ok', '目录允许所有用户写入' if mode & stat.S_IWOTH else '目录未开放全员写权限', check_id=identifier, category='permissions'))
         except OSError:
-            results.append(check(label, 'unavailable', '无法读取路径或权限'))
+            results.append(check(label, 'unavailable', '无法读取路径或权限', check_id=identifier, category='permissions'))
     results.append(listener_posture_check())
     results.extend((udp_posture_check(), route_configuration_check(), kernel_security_check(), firewall_check()))
     results.append(malware_scan())
@@ -1776,14 +1839,19 @@ def run_scan():
     global STATE
     try:
         checks = scan()
+        if not complete_scan_checks(checks, datetime.now(timezone.utc).isoformat()):
+            raise ValueError('Incomplete fixed scan report')
         history_state = 'ok'
         try:
             history = save_history(checks)
         except (OSError, ValueError, TypeError):
             history, history_state = [], 'unavailable'
             checks.append(check('本地告警历史', 'unavailable', '历史读取或保存失败；请由 root 检查状态目录，原有证据保留', check_id='host.history'))
+        checked_at = datetime.now(timezone.utc).isoformat()
+        if not complete_scan_checks(checks, checked_at):
+            raise ValueError('Incomplete fixed scan report')
         with LOCK:
-            STATE = {'state': 'finished', 'checked_at': datetime.now(timezone.utc).isoformat(),
+            STATE = {'state': 'finished', 'checked_at': checked_at,
                      'checks': checks, 'history': history, 'history_state': history_state}
     except Exception:
         with LOCK:

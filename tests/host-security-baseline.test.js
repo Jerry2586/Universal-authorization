@@ -40,7 +40,7 @@ test('Linux agent Unix socket allows one bounded scan, reports status and enforc
     ` original=a.scan\n` +
     ` def fixed_scan():\n` +
     `  time.sleep(0.25)\n` +
-    `  return [a.check('fixed', 'ok', 'passed')]\n` +
+    `  return [a.check('fixed', 'ok', 'passed',check_id=key) for key in sorted(a.HOST_SCAN_IDS)]\n` +
     ` a.scan=fixed_scan\n` +
     ` class LocalConnection(http.client.HTTPConnection):\n` +
     `  def connect(self):\n` +
@@ -67,7 +67,7 @@ test('Linux agent Unix socket allows one bounded scan, reports status and enforc
 test('first scan is allowed when host monotonic uptime is below cooldown', linuxOnly, () => {
   runPython(importAgent() + `from unittest.mock import patch
 ` +
-    `a.scan=lambda: [a.check('fixed','ok','done')]
+    `a.scan=lambda: [a.check('fixed','ok','done',check_id=key) for key in sorted(a.HOST_SCAN_IDS)]
 ` +
     `with patch.object(a.time, 'monotonic', return_value=10.0):
 ` +
@@ -94,7 +94,7 @@ test('periodic scan starts at boot and respects manual scan lock', linuxOnly, ()
 ` +
     ` assert release.wait(2)
 ` +
-    ` return [a.check('fixed','ok','done')]
+    ` return [a.check('fixed','ok','done',check_id=key) for key in sorted(a.HOST_SCAN_IDS)]
 ` +
     `a.scan=fixed
 ` +

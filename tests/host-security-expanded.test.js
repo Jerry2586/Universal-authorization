@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory() as tmp:
  for i in range(90): a.save_history([a.check('program','finding','changed '+str(i),check_id='integrity.program')])
  assert len(a.EVENTS)==64 and len(a.save_history([item]))==8
  a.HISTORY_FILE.write_text('corrupt'); a.HISTORY_VALID=a.load_history(); assert not a.HISTORY_VALID
- a.scan=lambda:[item]; a.run_scan(); assert a.STATE['history_state']=='unavailable'
+ a.scan=lambda:[item if key==item['id'] else a.check(key,'ok','clean',check_id=key) for key in sorted(a.HOST_SCAN_IDS)]; a.run_scan(); assert a.STATE['history_state']=='unavailable'
  assert a.STATE['checks'][-1]['id']=='host.history'; assert a.HISTORY_FILE.read_text()=='corrupt'
 `));
 
@@ -148,7 +148,7 @@ with tempfile.TemporaryDirectory() as tmp:
  p=fixture(tmp)
  for state in ['unavailable', 'finding', 'ok']:
   item=a.check('business scan', state, 'bounded result', check_id='malware.business', category='malware')
-  a.scan=lambda:[item]; a.run_scan()
+  a.scan=lambda:[item if key==item['id'] else a.check(key,'ok','clean',check_id=key) for key in sorted(a.HOST_SCAN_IDS)]; a.run_scan()
   assert a.STATE['state']=='finished' and a.STATE['history_state']=='ok', a.STATE
   assert a.STATE['history'][-1]['state']==state and a.STATE['history'][-1]['category']=='malware'
   a.EVENTS=[]; a.PREVIOUS={}; assert a.load_history()

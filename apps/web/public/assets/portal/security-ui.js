@@ -1,6 +1,63 @@
 import { createSecurityPoller } from './security-poller.js';
 import { $ } from './core.js';
 
+// Keep this fixed browser view in sync with the core/agent contract (verified in tests).
+const HOST_SCAN_IDS = Object.freeze([
+  'integrity.program',
+  'host.configuration',
+  'container.contract',
+  'container.approved-image',
+  'response.containment',
+  'host.os-release',
+  'host.systemd-state',
+  'ssh.effective',
+  'permissions.secret-inventory',
+  'permissions.installation',
+  'permissions.cron',
+  'network.listeners',
+  'network.udp-listeners',
+  'network.routes',
+  'host.kernel-security',
+  'network.firewall',
+  'malware.program',
+  'malware.business',
+  'host.process-executables',
+  'host.failed-units',
+  'cloudflare.dns',
+  'cloudflare.workers',
+  'cloudflare.rules',
+  'cloudflare.settings'
+]);
+const CHECK_STATES = new Set(['ok', 'warning', 'finding', 'unavailable']);
+const CHECK_CATEGORIES = new Set(['host', 'container', 'permissions', 'ssh', 'network', 'malware']);
+const CHECK_SEVERITIES = new Set(['info', 'low', 'medium', 'high', 'critical', 'unknown']);
+function safeTimestamp(value) {
+  return typeof value === 'string' && value.length <= 40 &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value) &&
+    Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 19) === value.slice(0, 19);
+}
+
+function completeReport(report, checks) {
+  const coverage = report.coverage;
+  const seen = new Set();
+  if (!safeTimestamp(report.checked_at) || !coverage || coverage.schema !== 'appgog-host-scan/v1' || coverage.expected !== HOST_SCAN_IDS.length ||
+      coverage.checked !== HOST_SCAN_IDS.length || coverage.complete !== true ||
+      checks.length < HOST_SCAN_IDS.length || checks.length > HOST_SCAN_IDS.length + 1) return false;
+  for (const item of checks) {
+    if (!item || seen.has(item.id) || !CHECK_STATES.has(item.state) ||
+        (!HOST_SCAN_IDS.includes(item.id) && item.id !== 'host.history') ||
+        typeof item.evidence_digest !== 'string' || !/^[a-f0-9]{64}$/.test(item.evidence_digest) ||
+        !CHECK_CATEGORIES.has(item.category) || !CHECK_SEVERITIES.has(item.severity) ||
+        typeof item.name !== 'string' || !item.name || typeof item.detail !== 'string' ||
+        typeof item.scope !== 'string' || !item.scope || item.scope.length > 120 ||
+        !safeTimestamp(item.checked_at) ||
+        Date.parse(item.checked_at) > Date.parse(report.checked_at) + 120000) return false;
+    if (item.id === 'host.history' && (item.state !== 'unavailable' || report.history_state !== 'unavailable')) return false;
+    seen.add(item.id);
+  }
+  return HOST_SCAN_IDS.every(id => seen.has(id));
+}
+
 export function createSecurityUi({ state, can, request, notify }) {
   const localStateLabels = { ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' };
   function renderLocalReport(report) {
@@ -10,13 +67,17 @@ export function createSecurityUi({ state, can, request, notify }) {
     const history = $('security-local-history');
     const historyState = $('security-local-history-state');
     if (!status || !timestamp || !list) return;
-    const checks = report.checks ?? [];
+    const checks = Array.isArray(report.checks) ? report.checks : [];
     const findings = checks.filter(item => item.state === 'finding').length;
     const incomplete = checks.length ? checks.filter(item => item.state !== 'ok').length : 1;
-    const checkedEpoch = Date.parse(report.checked_at);
-    const stale = !Number.isFinite(checkedEpoch) || checkedEpoch < Date.now() - 900000 || checkedEpoch > Date.now() + 120000;
-    status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: findings ? '警报：发现 ' + findings + ' 项问题' : stale ? '检查结果过期或时间异常' : incomplete ? '检查完成，有 ' + incomplete + ' 项需要复核或不可用' : '固定检查范围内未发现异常', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '状态未知';
-    status.dataset.state = findings ? 'finding' : (report.state !== 'finished' || stale || incomplete ? 'warning' : 'ok');
+    const now = Date.now();
+    const stale = [report.checked_at, ...checks.map(item => item.checked_at)].some(value => {
+      const epoch = Date.parse(value); return !Number.isFinite(epoch) || epoch < now - 900000 || epoch > now + 120000;
+    });
+    const coverageIncomplete = !completeReport(report, checks);
+    const historyUnavailable = !['ok', 'truncated'].includes(report.history_state) || !Array.isArray(report.history);
+    status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: findings ? '警报：发现 ' + findings + ' 项问题' : coverageIncomplete ? '检查报告覆盖不完整，请重新扫描' : stale ? '检查结果过期或时间异常' : historyUnavailable ? '检查完成，告警历史不可用' : incomplete ? '检查完成，有 ' + incomplete + ' 项需要复核或不可用' : '固定检查范围内未发现异常', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '状态未知';
+    status.dataset.state = findings ? 'finding' : (report.state !== 'finished' || stale || incomplete || coverageIncomplete || historyUnavailable ? 'warning' : 'ok');
     timestamp.textContent = report.checked_at ? '检查时间：' + report.checked_at : (report.reason || '尚无检查时间');
     list.replaceChildren();
     for (const item of checks) {
@@ -31,7 +92,6 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.textContent = item.checked_at + ' · ' + item.name + ' · ' + (localStateLabels[item.previous_state] || '首次记录') + ' → ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
       history?.append(row);
     }
-    const historyUnavailable = !['ok', 'truncated'].includes(report.history_state) || !Array.isArray(report.history);
     if (historyState) historyState.textContent = historyUnavailable ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留六十四条' : '暂无状态变化记录';
   }
   const localSecurityPoller = createSecurityPoller({
