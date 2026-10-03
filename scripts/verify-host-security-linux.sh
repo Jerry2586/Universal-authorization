@@ -23,6 +23,7 @@ BUILD_DOMAIN=build.appgog.test
 ' > "$TEST_ROOT/shared/.env"
 chmod 600 "$TEST_ROOT/shared/.env"
 export APPGOG_INSTALL_ROOT=$TEST_ROOT APPGOG_HOST_ENV_FILE=$TEST_ROOT/shared/.env PYTHONDONTWRITEBYTECODE=1
+checkpoint=setup
 lifecycle() { sh "$RELEASE/scripts/install-host-security.sh" "$1"; }
 wait_report() {
   attempt=0
@@ -37,7 +38,11 @@ wait_report() {
 cleanup() {
   result=$?
   trap - 0 INT TERM
-  if [ "$result" -ne 0 ]; then journalctl -u appgog-host-security.service --no-pager -n 35 || true; fi
+  if [ "$result" -ne 0 ]; then
+    echo "Local acceptance failed at: $checkpoint" >&2
+    journalctl -u appgog-host-security.service -u appgog-firewall-monitor.service --no-pager -n 35 || true
+    if [ -s "$STATE/firewall-report.json" ]; then cat "$STATE/firewall-report.json"; fi
+  fi
   lifecycle uninstall || true
   # The baseline/history/group remain as required by the uninstall contract.
   exit "$result"
@@ -67,8 +72,9 @@ wait_report
 jq -e 'any(.checks[]; .id == "integrity.program" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 # Enabling an installer-owned timer must not invalidate the fresh host baseline.
 jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
+checkpoint=host-network
 # Actual host proc reads must work under the hardened unit; no automatic route approval.
-if ! jq -e '(.checks | length <= 24) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null; then
+if ! jq -e '(.checks | length <= 25) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null; then
   jq '{state, check_count: (.checks | length), network: [.checks[] | select(.id == "network.udp-listeners" or .id == "network.routes" or .id == "host.kernel-security") | {id,state,detail}]}' "$TEST_ROOT/report.json" >&2
   exit 1
 fi
@@ -91,6 +97,7 @@ for attempt in range(4):
     if attempt < 3:
         time.sleep(0.55)
 PY
+checkpoint=route-approval
 fingerprint=$(sh "$RELEASE/scripts/security-local.sh" network-fingerprint)
 if sh "$RELEASE/scripts/security-local.sh" approve-network invalid > "$TEST_ROOT/network-refusal.log" 2>&1; then echo 'Invalid network fingerprint accepted' >&2; exit 1; fi
 [ ! -e "$STATE/network-baseline.json" ]
@@ -100,9 +107,18 @@ network_hash=$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)
 wait_report
 jq -e 'any(.checks[]; .id == "network.routes" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 
+checkpoint=firewall-host-snapshot
 # Read-only actual host snapshot; never approve a snapshot implicitly.
 systemctl start appgog-firewall-monitor.service
-jq -e '.state == "finished" and .snapshot.sources.nftables and .snapshot.sources.iptables and .snapshot.sources.ip6tables' "$STATE/firewall-report.json" >/dev/null
+if ! jq -e '.state == "finished" and .snapshot.sources.nftables and .snapshot.sources.iptables and .snapshot.sources.ip6tables' "$STATE/firewall-report.json" >/dev/null; then
+  python3 -I - /usr/local/lib/appgog-security/host-security-firewall.py <<'PY'
+import importlib.util,sys
+s=importlib.util.spec_from_file_location('diagnostic_firewall',sys.argv[1])
+f=importlib.util.module_from_spec(s); s.loader.exec_module(f)
+f.snapshot()
+PY
+  exit 1
+fi
 [ "$(stat -c '%u:%g:%a' "$STATE/firewall-report.json")" = '0:0:600' ]
 [ ! -e "$STATE/firewall-baseline.json" ]
 python3 -I - "$AGENT" <<'PY'
@@ -113,6 +129,7 @@ assert a.firewall_check()['state']=='warning'
 PY
 if sh "$RELEASE/scripts/security-local.sh" firewall approve invalid; then echo 'Invalid firewall approval accepted' >&2; exit 1; fi
 [ ! -e "$STATE/firewall-baseline.json" ]
+checkpoint=firewall-approval
 firewall_fingerprint=$(sh "$RELEASE/scripts/security-local.sh" firewall fingerprint)
 sh "$RELEASE/scripts/security-local.sh" firewall approve "$firewall_fingerprint"
 [ "$(stat -c '%u:%g:%a' "$STATE/firewall-baseline.json")" = '0:0:600' ]
@@ -122,7 +139,9 @@ systemctl is-enabled --quiet appgog-firewall-monitor.timer
 systemctl is-active --quiet appgog-firewall-monitor.timer
 grep -Fxq 'RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6' /etc/systemd/system/appgog-firewall-monitor.service
 [ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/host-security-firewall.py)" = '0:0:700' ]
+checkpoint=firewall-isolated-namespace
 python3 -I "$SOURCE/scripts/verify-host-security-firewall-linux.py"
+checkpoint=firewall-parser-regressions
 python3 -I "$SOURCE/tests/fixtures/host-security-firewall.py"
 curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock -X POST http://localhost/scan >/dev/null
 wait_report
