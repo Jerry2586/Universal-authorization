@@ -68,7 +68,10 @@ jq -e 'any(.checks[]; .id == "integrity.program" and .state == "ok")' "$TEST_ROO
 # Enabling an installer-owned timer must not invalidate the fresh host baseline.
 jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 # Actual host proc reads must work under the hardened unit; no automatic route approval.
-jq -e '(.checks | length <= 24) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null
+if ! jq -e '(.checks | length <= 24) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null; then
+  jq '{state, check_count: (.checks | length), network: [.checks[] | select(.id == "network.udp-listeners" or .id == "network.routes" or .id == "host.kernel-security") | {id,state,detail}]}' "$TEST_ROOT/report.json" >&2
+  exit 1
+fi
 [ "$(wc -c < "$TEST_ROOT/report.json")" -le 32768 ]
 [ ! -e "$STATE/network-baseline.json" ]
 fingerprint=$(sh "$RELEASE/scripts/security-local.sh" network-fingerprint)

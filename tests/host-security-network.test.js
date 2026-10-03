@@ -16,6 +16,7 @@ test('UDP checks distinguish connected clients, loopback, IPv4-mapped binds and 
  'client=header+"0: 00000000:2328 08080808:0035 01 0 0 0 0 0 0\\n"\n'+
  'mapped=header+"0: 0000000000000000FFFF00000100007F:0035 00000000000000000000000000000000:0000 07 0 0 0 0 0 0\\n"\n'+
  'assert a.udp_posture_from_text(loop,header)["state"]=="ok"\n'+
+ 'assert a.udp_posture_from_text(loop,header.replace("rem_address","remote_address"))["state"]=="ok"\n'+
  'assert a.udp_posture_from_text(bound,header)["state"]=="warning"\n'+
  'assert a.udp_posture_from_text(client,header)["state"]=="ok"\n'+
  'assert a.udp_posture_from_text(bound.replace(" 07 "," ZZ "),header)["state"]=="unavailable"\n'+

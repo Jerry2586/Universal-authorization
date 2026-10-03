@@ -1271,7 +1271,7 @@ def udp_posture_from_text(ipv4_text, ipv6_text):
     total, ports, loopback, malformed = 0, set(), set(), 0
     for family, text in ((4, ipv4_text), (6, ipv6_text)):
         lines = text.splitlines()
-        if not lines or lines[0].split()[:4] != ['sl', 'local_address', 'rem_address', 'st']:
+        if not lines or lines[0].split()[:4] not in (['sl', 'local_address', 'rem_address', 'st'], ['sl', 'local_address', 'remote_address', 'st']):
             raise ValueError('missing UDP header')
         for line in lines[1:]:
             cells = line.split()
