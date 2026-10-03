@@ -26,13 +26,31 @@ export APPGOG_INSTALL_ROOT=$TEST_ROOT APPGOG_HOST_ENV_FILE=$TEST_ROOT/shared/.en
 checkpoint=setup
 lifecycle() { sh "$RELEASE/scripts/install-host-security.sh" "$1"; }
 wait_report() {
+  previous_checked_at=${1:-}
   attempt=0
   while [ "$attempt" -lt 90 ]; do
     if curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock http://localhost/status > "$TEST_ROOT/report.json" &&
-       jq -e '.state == "finished"' "$TEST_ROOT/report.json" >/dev/null; then return; fi
+       jq -e --arg previous "$previous_checked_at" '.state == "finished" and (.checked_at | type == "string") and ($previous == "" or .checked_at != $previous)' "$TEST_ROOT/report.json" >/dev/null; then return; fi
     attempt=$((attempt + 1)); sleep 2
   done
   echo 'Initial/upgrade inspection did not finish' >&2
+  return 1
+}
+request_fresh_scan() {
+  wait_report
+  prior_checked_at=$(jq -er '.checked_at' "$TEST_ROOT/report.json")
+  attempt=0
+  while [ "$attempt" -lt 90 ]; do
+    # Respect the production cooldown and active scan lock; never weaken either.
+    code=$(curl -sS --max-time 5 --unix-socket /run/appgog-security/scan.sock \
+      -o "$TEST_ROOT/scan-trigger.json" -w '%{http_code}' -X POST http://localhost/scan) || return 1
+    case "$code" in
+      202) wait_report "$prior_checked_at"; return $? ;;
+      409|429) attempt=$((attempt + 1)); sleep 2 ;;
+      *) echo "Scan trigger failed: HTTP $code" >&2; return 1 ;;
+    esac
+  done
+  echo 'Scan trigger did not become available within the bounded retry window' >&2
   return 1
 }
 cleanup() {
@@ -174,8 +192,8 @@ checkpoint=firewall-isolated-namespace
 python3 -I "$SOURCE/scripts/verify-host-security-firewall-linux.py"
 checkpoint=firewall-parser-regressions
 python3 -I "$SOURCE/tests/fixtures/host-security-firewall.py"
-curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock -X POST http://localhost/scan >/dev/null
-wait_report
+checkpoint=firewall-backend-scan
+request_fresh_scan
 jq -e 'any(.checks[]; .id == "network.firewall" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null
 
 gid=$(getent group appgog-security | cut -d: -f3)
