@@ -41,6 +41,7 @@ function buildReleaseFixture() {
     'compose.build.yaml',
     'scripts/install-linux.sh',
     'scripts/backup-integrity.py', 'docs/local-backup-integrity.md',
+    'packages/core/src/host-scan-contract.js', 'docs/local-scan-report-contract.md',
     'scripts/install-host-security.sh',
     'scripts/host-security-agent.py',
     'scripts/host-security-response.py',

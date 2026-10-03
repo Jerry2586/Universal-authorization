@@ -14,7 +14,7 @@ test('admin and customer portals use separate entrypoints, state and page contro
   const adminEntry = read('apps/web/public/assets/admin-portal.js');
   const customerEntry = read('apps/web/public/assets/customer-portal.js');
   const compatibilityEntry = read('apps/web/public/assets/portal.js');
-  assert.match(adminHtml, /<script src="\/assets\/admin-portal\.js" type="module"><\/script>/);
+  assert.match(adminHtml, /<script src="\/assets\/admin-portal\.js\?v=host-report-2" type="module"><\/script>/);
   assert.match(customerHtml, /<script src="\/assets\/customer-portal\.js" type="module"><\/script>/);
   assert.match(adminEntry, /createPortalShell\('admin'\)/);
   assert.match(adminEntry, /createAdminPage/);
