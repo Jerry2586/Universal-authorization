@@ -107,3 +107,19 @@ test('actual admin page never shows stale or unavailable scans as healthy', () =
     if (report.history_state === 'unavailable') assert.match(nodes.get('security-local-history-state').textContent, /不可用/);
   }
 });
+
+test('actual admin page distinguishes unreadable history from a valid empty history', () => {
+  for (const report of [
+    { state: 'unavailable', reason: 'agent missing' },
+    { state: 'failed', checked_at: new Date().toISOString() },
+    { state: 'running', checks: [], history: [] },
+    { state: 'finished', checked_at: new Date().toISOString(), checks: [], history_state: 'ok' },
+  ]) {
+    const { render, nodes } = localPageFixture(); render(report);
+    assert.match(nodes.get('security-local-history-state').textContent, /不可用/);
+    assert.doesNotMatch(nodes.get('security-local-history-state').textContent, /暂无/);
+  }
+  const { render, nodes } = localPageFixture();
+  render({ state: 'finished', checked_at: new Date().toISOString(), checks: [], history: [], history_state: 'ok' });
+  assert.match(nodes.get('security-local-history-state').textContent, /暂无状态变化记录/);
+});

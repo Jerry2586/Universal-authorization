@@ -46,7 +46,7 @@ function buildReleaseFixture() {
     'scripts/host-security-repair.py', 'scripts/host-security-cloudflare.py',
     'scripts/verify-host-security-linux.sh',
     'scripts/verify-host-security-response-linux.py',
-    'docs/local-security-response.md', 'docs/local-cloudflare-monitor.md',
+    'docs/local-security-response.md', 'docs/local-cloudflare-monitor.md', 'docs/local-host-network-monitor.md',
     'scripts/security-connect.sh',
     'scripts/security-doctor.sh', 'scripts/security-local.sh',
     'scripts/security-agent.js',

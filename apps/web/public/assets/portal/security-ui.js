@@ -31,7 +31,8 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.textContent = item.checked_at + ' · ' + item.name + ' · ' + (localStateLabels[item.previous_state] || '首次记录') + ' → ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
       history?.append(row);
     }
-    if (historyState) historyState.textContent = report.history_state === 'unavailable' ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留六十四条' : '暂无状态变化记录';
+    const historyUnavailable = !['ok', 'truncated'].includes(report.history_state) || !Array.isArray(report.history);
+    if (historyState) historyState.textContent = historyUnavailable ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留六十四条' : '暂无状态变化记录';
   }
   const localSecurityPoller = createSecurityPoller({
     request: () => request('/web/admin/security/local-scan'),
