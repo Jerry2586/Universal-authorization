@@ -48,3 +48,7 @@ test('route observation and kernel checks fail closed for races and partial outp
 test('fixed proc readers reject arbitrary paths and bypass only known kernel net aliases',{skip:!available},()=>run(
  'with mock.patch.object(a,"read_regular",return_value=b"safe") as reader:\n assert a.fixed_proc_text("/proc/net/udp")=="safe"\n assert reader.call_args.args[0]==pathlib.Path("/proc")/str(os.getpid())/"net"/"udp"\n assert a.fixed_proc_text("/proc/sys/kernel/kptr_restrict")=="safe"\n assert reader.call_args.args[0]==pathlib.Path("/proc/sys/kernel/kptr_restrict")\n for path in ["/etc/shadow","/proc/net/tcp","/proc/self/net/udp"]:\n  try: a.fixed_proc_text(path); raise AssertionError("arbitrary proc path accepted")\n  except ValueError: pass\n'
 ));
+
+test('all network and runtime check markers survive restart within the unchanged 24-check contract',{skip:!available},()=>run(
+ 'with tempfile.TemporaryDirectory() as tmp:\n a.HISTORY_FILE=pathlib.Path(tmp)/"events.json"\n a.EVENTS=[]; a.PREVIOUS={}; a.HISTORY_VALID=True\n checks=[a.check("item", "unavailable", "bounded",check_id="host.item-"+str(i)) for i in range(23)]\n a.save_history(checks)\n a.EVENTS=[]; a.PREVIOUS={}\n assert a.load_history() is True\n assert len(a.PREVIOUS)==23\n payload=json.loads(a.HISTORY_FILE.read_bytes())\n for i in range(23,25): payload["previous"]["host.item-"+str(i)]={"state":"ok","digest":"0"*64}\n a.atomic_json(a.HISTORY_FILE,payload)\n original=a.HISTORY_FILE.read_bytes()\n assert a.load_history() is False\n assert a.HISTORY_FILE.read_bytes()==original\n'
+));

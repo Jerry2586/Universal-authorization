@@ -27,8 +27,8 @@ lifecycle() { sh "$RELEASE/scripts/install-host-security.sh" "$1"; }
 wait_report() {
   attempt=0
   while [ "$attempt" -lt 90 ]; do
-    curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock http://localhost/status > "$TEST_ROOT/report.json"
-    if jq -e '.state == "finished"' "$TEST_ROOT/report.json" >/dev/null; then return; fi
+    if curl -fsS --max-time 5 --unix-socket /run/appgog-security/scan.sock http://localhost/status > "$TEST_ROOT/report.json" &&
+       jq -e '.state == "finished"' "$TEST_ROOT/report.json" >/dev/null; then return; fi
     attempt=$((attempt + 1)); sleep 2
   done
   echo 'Initial/upgrade inspection did not finish' >&2

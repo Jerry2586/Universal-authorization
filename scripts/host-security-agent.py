@@ -43,6 +43,7 @@ HOST_DIRS = ('/etc/ssh/sshd_config.d', '/etc/sudoers.d', '/etc/cron.d',
              '/etc/systemd/system', '/var/spool/cron')
 MAX_HISTORY = 64
 MAX_RESPONSE_BYTES = 32768
+MAX_CHECKS = 24
 MAX_RESPONSE_HISTORY = 8
 EVENTS = []
 PREVIOUS = {}
@@ -454,7 +455,7 @@ def load_history():
             raise ValueError('history count limit')
         events = [history_item(item) for item in state['events']]
         previous = state['previous']
-        if len(previous) > 20:
+        if len(previous) > MAX_CHECKS:
             raise ValueError('previous count limit')
         for key, value in previous.items():
             if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,79}', key) or not isinstance(value, dict) or value.get('state') not in CHECK_STATES:
