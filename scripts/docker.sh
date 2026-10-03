@@ -132,6 +132,7 @@ backup() (
   umask 077
   leave_stopped=${APPGOG_BACKUP_LEAVE_STOPPED:-false}
   command -v openssl >/dev/null 2>&1 || fail '创建加密备份需要 OpenSSL。'
+  command -v python3 >/dev/null 2>&1 || fail '创建认证备份需要 Python3，请执行一键安装器补齐环境。'
   mkdir -p backups
   if [ ! -f "$BACKUP_KEY_FILE" ]; then
     openssl rand -base64 48 > "$BACKUP_KEY_FILE"
@@ -140,17 +141,24 @@ backup() (
   fi
   [ -r "$BACKUP_KEY_FILE" ] || fail "无法读取备份恢复密钥：$BACKUP_KEY_FILE"
   target="backups/appgog-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz.enc"
-  plain="$target.partial.tar.gz"
-  encrypted="$target.partial"
+  work=$(mktemp -d "$ROOT_DIR/backups/.appgog-backup.XXXXXX") || fail '无法创建备份工作目录'
+  plain="$work/backup.tar.gz"
+  authenticated="$work/backup.auth"
   # Stop writers before archiving SQLite (including WAL), files and secrets together.
   running=$(project_containers)
-  trap 'rm -f "$plain" "$encrypted"; if [ -n "$running" ]; then docker start $running >/dev/null || true; fi' 0
+  trap 'rm -f "$plain" "$authenticated"; rmdir "$work" || true; if [ -n "$running" ]; then docker start $running >/dev/null || true; fi' 0
+  trap 'exit 129' 1
+  trap 'exit 130' 2
+  trap 'exit 143' 15
   [ -z "$running" ] || docker stop $running >/dev/null
   compose run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --entrypoint tar appgog -C /app -czf - \
     $(appgog_backup_paths) > "$plain"
-  openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 -pass "file:$BACKUP_KEY_FILE" -in "$plain" -out "$encrypted"
+  python3 -I "$ROOT_DIR/scripts/backup-integrity.py" encrypt --key "$BACKUP_KEY_FILE" --input "$plain" --output "$authenticated"
   rm -f "$plain"
-  mv "$encrypted" "$target"
+  [ ! -e "$target" ] && [ ! -L "$target" ] || fail '备份目标已存在，拒绝覆盖'
+  # Atomic no-clobber publication on the same filesystem; never replace a backup.
+  ln -T "$authenticated" "$target" || fail '备份目标已存在或落盘失败，拒绝覆盖'
+  rm -f "$authenticated"
   if [ "$leave_stopped" = true ]; then running=''; fi
   echo "加密完整备份：$ROOT_DIR/$target"
   echo "恢复密钥：$BACKUP_KEY_FILE（请单独离线保存，不要和备份放在同一位置）"
@@ -405,7 +413,8 @@ usage() {
   stop                    停止业务服务
   restart                 重建并重启已有服务
   update                  构建、完整备份并更新
-  backup                  创建完整备份
+  backup                  创建认证加密完整备份
+  backup-verify <路径>     只读校验备份认证（不启动业务或写数据）
   restore <备份路径>      向空部署恢复备份（.enc 需要独立恢复密钥）
   credentials             查看初始管理员凭证
   status                  查看容器状态
@@ -453,6 +462,11 @@ case "${1:-help}" in
     ;;
 
   backup) require_docker; require_config; backup ;;
+  backup-verify)
+    [ -n "${2:-}" ] || fail '用法：sh scripts/docker.sh backup-verify /绝对路径/备份.tar.gz.enc'
+    command -v python3 >/dev/null 2>&1 || fail '校验备份认证需要 Python3。'
+    python3 -I "$ROOT_DIR/scripts/backup-integrity.py" verify --key "$BACKUP_KEY_FILE" --input "$2"
+    ;;
   restore)
     incident_guard
     require_docker
@@ -460,26 +474,35 @@ case "${1:-help}" in
     [ -n "${2:-}" ] && [ -f "$2" ] || { echo '用法：sh scripts/docker.sh restore /绝对路径/备份.tar.gz.enc' >&2; exit 1; }
     archive=$(CDPATH= cd -- "$(dirname -- "$2")" && pwd)/$(basename -- "$2")
     [ -z "$(compose ps --status running -q)" ] || { echo '恢复只能在未启动服务的新部署执行；现有数据不会被覆盖。' >&2; exit 1; }
-    build_with_retry
-    prepare_update_control
     case "$archive" in
       *.enc)
         command -v openssl >/dev/null 2>&1 || fail '恢复加密备份需要 OpenSSL。'
         [ -r "$BACKUP_KEY_FILE" ] || fail "缺少备份恢复密钥：$BACKUP_KEY_FILE。请从独立安全位置复制后重试。"
+        command -v python3 >/dev/null 2>&1 || fail '恢复认证备份需要 Python3。'
         umask 077
-        decrypted=$(mktemp "${TMPDIR:-/tmp}/appgog-restore.XXXXXX.tar.gz") || fail '无法创建恢复临时文件。'
-        trap 'rm -f "$decrypted"' 0 1 2 15
-        if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "file:$BACKUP_KEY_FILE" -in "$archive" -out "$decrypted"; then
-          fail '备份解密失败；请检查备份文件与独立恢复密钥是否匹配。'
-        fi
+        restore_work=$(mktemp -d "${TMPDIR:-/tmp}/appgog-restore.XXXXXX") || fail '无法创建恢复临时目录。'
+        decrypted="$restore_work/backup.tar.gz"
+        trap 'rm -f "$decrypted"; rmdir "$restore_work" || true' 0
+        trap 'exit 129' 1
+        trap 'exit 130' 2
+        trap 'exit 143' 15
+        legacy_option=''
+        [ "${APPGOG_ALLOW_LEGACY_BACKUP:-false}" != true ] || legacy_option=--allow-legacy
+        python3 -I "$ROOT_DIR/scripts/backup-integrity.py" decrypt --key "$BACKUP_KEY_FILE" --input "$archive" --output "$decrypted" $legacy_option || fail '备份认证或解密失败；未执行构建或数据恢复。'
+        build_with_retry
+        prepare_update_control
         if ! compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$decrypted"; then
           fail '备份内容校验或恢复失败；目标部署必须为空，且备份必须完整。'
         fi
         rm -f "$decrypted"
+        rmdir "$restore_work"
         trap - 0 1 2 15
         ;;
       *)
+        [ "${APPGOG_ALLOW_LEGACY_BACKUP:-false}" = true ] || fail '未认证旧备份需显式设置 APPGOG_ALLOW_LEGACY_BACKUP=true。'
         echo '警告：正在恢复旧版未加密备份；恢复后请立即创建新的 .enc 加密备份。' >&2
+        build_with_retry
+        prepare_update_control
         compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$archive"
         ;;
     esac

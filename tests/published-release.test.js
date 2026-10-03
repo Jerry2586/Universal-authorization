@@ -40,6 +40,7 @@ function buildReleaseFixture() {
     'compose.license.yaml',
     'compose.build.yaml',
     'scripts/install-linux.sh',
+    'scripts/backup-integrity.py', 'docs/local-backup-integrity.md',
     'scripts/install-host-security.sh',
     'scripts/host-security-agent.py',
     'scripts/host-security-response.py',

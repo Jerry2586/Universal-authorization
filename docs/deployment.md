@@ -107,17 +107,18 @@ sudo sh ./APPGOG-Packaging-Licensing-System-<版本>.run
 sh scripts/docker.sh backup
 ```
 
-备份包含 SQLite 数据库及 WAL、Ed25519 签名密钥、内部凭证、主题源码、构建成品、上传文件和 Caddy 证书状态。当前版本使用 OpenSSL AES-256-CBC + PBKDF2（200,000 次迭代）输出 `.tar.gz.enc`，首次备份会生成权限为 600 的 `/opt/appgog/.backup-key`。备份文件与恢复密钥必须分别离线保存；只持有其中一项无法恢复。
+备份包含 SQLite 数据库及 WAL、Ed25519 签名密钥、内部凭证、主题源码、构建成品、上传文件和 Caddy 证书状态。当前版本使用 OpenSSL AES-256-CBC + PBKDF2（200,000 次迭代）加密，再以独立派生的 HMAC-SHA256 子密钥认证版本头、认证盐及全部密文，输出 `.tar.gz.enc`。首次备份会生成权限为 600 的独立密钥；签名发布布局保存在 `/opt/appgog/shared/.backup-key`，手动 Docker 布局保存在项目目录下 `.backup-key`。备份文件与恢复密钥必须分别离线保存；只持有其中一项无法恢复。
 
 在新空服务器上准备同版本代码和 `.env` 后，先恢复、不要先安装：
 
 ```sh
 cd /opt/appgog
-# 先把独立保存的恢复密钥放回 /opt/appgog/.backup-key 并 chmod 600
+# 先把独立保存的恢复密钥放回上述部署布局的密钥路径，并 chmod 600
+sh scripts/docker.sh backup-verify /绝对路径/appgog-备份.tar.gz.enc
 sh scripts/docker.sh restore /绝对路径/appgog-备份.tar.gz.enc
 ```
 
-恢复器先解密到权限为 600 的临时文件，再拒绝路径穿越、符号链接、不完整备份、非空目标卷和运行中的业务服务；解密失败和恢复失败分别返回非零状态。旧版明文 `.tar.gz` 仅作为兼容输入，恢复后应立即创建新的加密备份。恢复完成后再切换 DNS；优先保留原授权域名，以免已发出的安装包无法连接授权中心。
+恢复器先在私有临时目录认证完整密文，认证成功后才解密到权限为 600 的临时文件，再拒绝路径穿越、符号链接、不完整备份、非空目标卷和运行中的业务服务；认证、解密或恢复失败均返回非零状态。旧版 CBC 加密备份及明文 `.tar.gz` 默认拒绝；确认可信来源后可从 Linux 高级菜单第 10 项受控恢复，或显式设置 `APPGOG_ALLOW_LEGACY_BACKUP=true`。恢复后应立即创建新的认证备份。认证通过只证明密文字节与密钥一致，业务可恢复仍须实际演练；参见 [本地备份认证与受控恢复](local-backup-integrity.md)。恢复完成后再切换 DNS；优先保留原授权域名，以免已发出的安装包无法连接授权中心。
 
 整个容器使用只读根文件系统、移除 capabilities、no-new-privileges、2 GiB 内存、2 CPU、512 PID 和受限临时目录。四个进程共享 UID 和数据卷，角色环境变量分离不是文件系统安全隔离；Worker 不执行上传源码。维护时短暂创建同镜像辅助容器进行备份/权限修复，完成即移除，常驻只有一个容器。
 

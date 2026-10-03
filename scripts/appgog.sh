@@ -528,7 +528,14 @@ logs_menu() {
   run_docker logs "$service" 150
 }
 
+backup_verify_menu() {
+  tty_read '请输入要校验的备份绝对路径（留空取消）：'
+  [ -n "$REPLY_VALUE" ] || return 0
+  run_docker backup-verify "$REPLY_VALUE"
+}
+
 restore_menu() {
+  allow_legacy=${1:-false}
   printf '可用备份：\n'
   find "$ROOT_DIR/backups" -maxdepth 1 -type f \( -name 'appgog-*.tar.gz.enc' -o -name 'appgog-*.tar.gz' \) -print 2>/dev/null | sort -r | head -n 10 || true
   tty_read '请输入要恢复的备份绝对路径（留空取消）：'
@@ -537,13 +544,19 @@ restore_menu() {
   [ -f "$archive" ] || { say_error '备份文件不存在。'; return 1; }
   printf '%b%s%b\n' "$RED" '恢复只允许在未启动的新空部署中执行，不能覆盖现有数据。' "$RESET"
   confirm '确认继续恢复？' || return 0
-  run_docker restore "$archive"
+  if [ "$allow_legacy" = true ]; then
+    printf '%s\n' '旧备份没有认证证明，请先确认其来源和离线副本。'
+    confirm '确认显式允许恢复未认证旧备份？' || return 0
+    APPGOG_ALLOW_LEGACY_BACKUP=true run_docker restore "$archive"
+  else
+    run_docker restore "$archive"
+  fi
 }
 
 advanced_menu() {
   while :; do
     header
-    printf '%s\n' '高级工具' '  1. 系统诊断' '  2. 导出脱敏诊断报告' '  3. 修复配置与密钥权限' '  4. 清理悬空 Docker 镜像' '  5. Docker 磁盘占用' '  6. 检查 Compose 配置' '  7. 显示安装目录' '  8. 查看帮助' '  0. 返回主菜单'
+    printf '%s\n' '高级工具' '  1. 系统诊断' '  2. 导出脱敏诊断报告' '  3. 修复配置与密钥权限' '  4. 清理悬空 Docker 镜像' '  5. Docker 磁盘占用' '  6. 检查 Compose 配置' '  7. 显示安装目录' '  8. 查看帮助' '  9. 只读校验完整备份认证' ' 10. 旧版未认证备份受控恢复' '  0. 返回主菜单'
     tty_read '请选择：'
     case "$REPLY_VALUE" in
       1) run_docker doctor; pause_menu ;;
@@ -554,6 +567,8 @@ advanced_menu() {
       6) (cd "$ROOT_DIR" && compose config --quiet) && say_ok 'Compose 配置有效'; pause_menu ;;
       7) printf '%s\n' "$ROOT_DIR"; pause_menu ;;
       8) usage; pause_menu ;;
+      9) backup_verify_menu; pause_menu ;;
+      10) restore_menu true; pause_menu ;;
       0|'') return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -632,7 +647,8 @@ APPGOG 管理命令
   appgog update          下载签名 Release、完整备份并安全更新最新版本
   appgog repair-source   重新下载当前版本并深度修复源码
   appgog uninstall       卸载程序并保留业务数据与备份
-  appgog backup          创建 AES-256 加密完整备份
+  appgog backup          创建加密且认证的完整备份
+  appgog backup-verify <文件>  只读校验备份认证，不启动 Docker
   appgog restore <文件>  从备份恢复到空部署
   appgog migration-rollback-export <迁移ID>
                            在当前 Active 目标停止写入并导出最终加密快照
@@ -676,6 +692,7 @@ case "${1:-menu}" in
   logs) shift; run_docker logs "${1:-all}" "${2:-100}" ;;
   config) configure_domains ;;
   services) configure_services ;;
+  backup-verify) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; run_docker backup-verify "$2" ;;
   restore) [ -n "${2:-}" ] || { usage >&2; exit 1; }; run_docker restore "$2" ;;
   migration-rollback-export) migration_rollback_export "${2:-}" ;;
   migration-rollback-import) migration_rollback_import "${2:-}" "${3:-}" "${4:-}" "${5:-}" ;;

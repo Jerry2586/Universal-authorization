@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,8 @@ import { openDatabase } from '../apps/license-api/src/database.js';
 import { createRepository } from '../apps/license-api/src/repository.js';
 import { createMigrationControl } from '../apps/license-api/src/migration-control.js';
 import { createControlMigrationRepository } from '../apps/license-api/src/modules/migration/repository.js';
+
+import { realBackup, decryptBackup, checked, python, helper } from './helpers/authenticated-backup.js';
 
 const migrationStateScript = join(import.meta.dirname, '..', 'scripts', 'docker', 'migration-state.js');
 
@@ -274,4 +276,36 @@ test('非 Fenced 目标快照不能激活旧源', (t) => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /没有 Fenced/);
   assert.equal(readMigrationState(fixture).identity.deployment_id, fixture.targetDeploymentId);
+});
+
+
+test('整包及分块迁移保持真实认证备份与独立密钥，错误整包摘要不排队恢复', async t => {
+  for (const chunked of [false, true]) {
+    const target = fixture(t, chunked ? 'authenticated-chunks' : 'authenticated-bundle');
+    const real = realBackup(target.root, Buffer.from('real encrypted migration payload\n'));
+    const opened = target.control.openReceiver('owner-target');
+    const handshake = target.control.handshake({ pairingCode: opened.pairing_code,
+      migrationId: 'mig_1234567890abcdef1234567890abcdef', sourceDeploymentId: 'dep_1234567890abcdef1234567890abcdef', sourceVersion: '1.2.10', ownershipGeneration: 2 });
+    const session = { id: handshake.session_id, token: handshake.upload_token };
+    if (chunked) {
+      const middle = Math.floor(real.bytes.length / 2);
+      for (const [index, chunk] of [real.bytes.subarray(0, middle), real.bytes.subarray(middle)].entries()) {
+        await target.control.receiveChunk({ ...session, request: uploadStream(chunk), index, totalChunks: 2, expectedSha256: sha256(chunk) });
+      }
+      assert.throws(() => target.control.completeChunks({ ...session, totalChunks: 2, totalSha256: 'f'.repeat(64), backupKey: real.keyValue }), e => e.code === 'MIGRATION_BUNDLE_DIGEST_MISMATCH');
+      assert.equal(readdirSync(join(target.root, 'requests')).length, 0);
+      assert.equal(target.control.completeChunks({ ...session, totalChunks: 2, totalSha256: sha256(real.bytes), backupKey: real.keyValue }).accepted, true);
+    } else {
+      assert.equal((await target.control.receiveBundle({ ...session, request: uploadStream(real.bytes), backupKey: real.keyValue })).accepted, true);
+    }
+    const request = readdirSync(join(target.root, 'requests')).map(name => JSON.parse(readFileSync(join(target.root, 'requests', name), 'utf8'))).find(item => item.action === 'import-target');
+    assert.ok(request); assert.deepEqual(readFileSync(request.bundle_path), real.bytes);
+    assert.equal(readFileSync(request.backup_key_path, 'utf8').trim(), real.keyValue);
+    const cipher = join(target.root, 'received.cipher');
+    checked(python, ['-X', 'utf8', '-I', helper, 'open', '--key', request.backup_key_path, '--input', request.bundle_path, '--output', cipher]);
+    assert.deepEqual(decryptBackup(request.backup_key_path, cipher), real.payload);
+    const changed = Buffer.from(real.bytes); changed[45] ^= 1; writeFileSync(request.bundle_path, changed);
+    const rejected = spawnSync(python, ['-X', 'utf8', '-I', helper, 'verify', '--key', request.backup_key_path, '--input', request.bundle_path], { encoding: 'utf8' });
+    assert.notEqual(rejected.status, 0);
+  }
 });

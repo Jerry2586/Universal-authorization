@@ -79,6 +79,8 @@ export function verifySourceContract() {
   for (const library of ['common', 'platform', 'docker-install', 'release-download', 'release-install', 'dns', 'backup', 'diagnostics', 'lifecycle', 'manager-migration', 'deployment-role']) {
     requireCondition(existsSync(join(root, `scripts/lib/${library}.sh`)), `缺少运维模块 scripts/lib/${library}.sh`);
   }
+  requireCondition(existsSync(join(root, 'scripts/backup-integrity.py')), '缺少备份认证器');
+  requireCondition(read('scripts/docker.sh').includes('backup-integrity.py'), '备份恢复未接入认证器');
   const migrationScript = read('scripts/migration.sh');
   requireCondition(migrationScript.includes('source-fenced.json'), '缺少控制中心迁移 Fenced 执行器');
   requireCondition(migrationScript.includes('split -b 64m'), '控制中心迁移没有使用 64 MiB 分块');
@@ -170,7 +172,7 @@ export function verifyPackagedArtifacts({
 
   const files = readZip(readFileSync(zipPath), { maxEntries: 1000, maxSingleFileBytes: 32 * 1024 * 1024, maxUncompressedBytes: 256 * 1024 * 1024 });
   const packaged = (path) => files.get(`${releaseName}/${path}`);
-  for (const path of ['AGENTS.md', 'release-contract.json', 'docs/release-policy.md', 'docs/refactor-blueprint.md', 'docs/server-migration-standard.md', 'package.json', 'pnpm-lock.yaml', 'Dockerfile', 'Caddyfile', 'Caddyfile.license', 'Caddyfile.build', 'compose.yaml', 'compose.license.yaml', 'compose.build.yaml', 'scripts/install-linux.sh', 'scripts/lib/deployment-role.sh', 'scripts/security-connect.sh', 'scripts/security-doctor.sh', 'scripts/security-local.sh', 'scripts/install-host-security.sh', 'scripts/host-security-agent.py', 'scripts/host-security-response.py', 'scripts/host-security-repair.py', 'scripts/host-security-cloudflare.py', 'scripts/host-security-firewall.py', 'scripts/verify-host-security-linux.sh', 'scripts/verify-host-security-response-linux.py', 'scripts/verify-host-security-firewall-linux.py', 'docs/local-security-response.md', 'docs/local-cloudflare-monitor.md', 'docs/local-host-network-monitor.md', 'docs/local-host-firewall-monitor.md', 'docs/local-host-login-monitor.md', 'scripts/security-agent.js']) {
+  for (const path of ['AGENTS.md', 'release-contract.json', 'docs/release-policy.md', 'docs/refactor-blueprint.md', 'docs/server-migration-standard.md', 'package.json', 'pnpm-lock.yaml', 'Dockerfile', 'Caddyfile', 'Caddyfile.license', 'Caddyfile.build', 'compose.yaml', 'compose.license.yaml', 'compose.build.yaml', 'scripts/install-linux.sh', 'scripts/backup-integrity.py', 'docs/local-backup-integrity.md', 'scripts/lib/deployment-role.sh', 'scripts/security-connect.sh', 'scripts/security-doctor.sh', 'scripts/security-local.sh', 'scripts/install-host-security.sh', 'scripts/host-security-agent.py', 'scripts/host-security-response.py', 'scripts/host-security-repair.py', 'scripts/host-security-cloudflare.py', 'scripts/host-security-firewall.py', 'scripts/verify-host-security-linux.sh', 'scripts/verify-host-security-response-linux.py', 'scripts/verify-host-security-firewall-linux.py', 'docs/local-security-response.md', 'docs/local-cloudflare-monitor.md', 'docs/local-host-network-monitor.md', 'docs/local-host-firewall-monitor.md', 'docs/local-host-login-monitor.md', 'scripts/security-agent.js']) {
     requireCondition(packaged(path), `正式 ZIP 缺少 ${path}`);
   }
   requireCondition(JSON.parse(packaged('package.json').toString('utf8')).version === version, '正式 ZIP 内 package.json 版本不匹配');

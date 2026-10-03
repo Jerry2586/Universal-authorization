@@ -126,7 +126,7 @@ compose_supported() {
 }
 install_packages() {
   missing=false
-  for tool in curl git tar gzip unzip openssl getent ss jq sha256sum; do
+  for tool in curl git tar gzip unzip openssl python3 getent ss jq sha256sum; do
     command -v "$tool" >/dev/null 2>&1 || missing=true
   done
   [ -s /etc/ssl/certs/ca-certificates.crt ] || [ -s /etc/pki/tls/certs/ca-bundle.crt ] || missing=true
@@ -135,11 +135,11 @@ install_packages() {
   case "$DISTRO" in
     ubuntu|debian)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar gzip unzip openssl iproute2 jq coreutils
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar gzip unzip openssl python3 iproute2 jq coreutils
       ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
-      "$manager" install -y ca-certificates curl git tar gzip unzip openssl iproute jq coreutils
+      "$manager" install -y ca-certificates curl git tar gzip unzip openssl python3 iproute jq coreutils
       ;;
     *) fail "不支持自动安装依赖的发行版：$DISTRO" ;;
   esac
@@ -411,6 +411,7 @@ validate_project_contract() {
     compose.license.yaml \
     compose.build.yaml \
     scripts/docker.sh \
+    scripts/backup-integrity.py \
     scripts/appgog.sh \
     scripts/lib/deployment-role.sh
   do
