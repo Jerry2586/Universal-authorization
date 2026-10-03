@@ -336,14 +336,14 @@ test('Docker operations keep destructive volume removal out of the supported wor
   assert.match(docker, /chmod 770 \/app\/var\/update-control \/app\/var\/update-control\/requests/);
   assert.match(docker, /docker image prune -f/);
   assert.match(docker, /compose stop appgog/);
-  assert.match(docker, /aes-256-cbc/);
-  assert.match(docker, /pbkdf2/);
+  assert.match(docker, /backup-integrity\.py" encrypt/);
+  assert.match(docker, /--producer docker compose/);
   assert.match(docker, /\.backup-key/);
   assert.match(docker, /DNS A 记录可解析/);
   assert.match(docker, /TLS 证书到期/);
   assert.match(docker, /Ed25519 签名密钥完整/);
-  assert.match(docker, /mktemp .*appgog-restore/);
-  assert.match(docker, /备份解密失败/);
+  assert.match(docker, /--consumer env APPGOG_RESTORE_STREAM_INTERNAL=true/);
+  assert.match(docker, /备份认证、解密或恢复失败/);
   assert.ok(!docker.includes('openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass "$BACKUP_KEY_FILE" -in "$archive" \\\n          | compose'));
   assert.ok(!docker.includes('down -v'));
   assert.ok(!docker.includes('volume rm'));

@@ -134,27 +134,19 @@ backup() (
   command -v openssl >/dev/null 2>&1 || fail '创建加密备份需要 OpenSSL。'
   command -v python3 >/dev/null 2>&1 || fail '创建认证备份需要 Python3，请执行一键安装器补齐环境。'
   mkdir -p backups
-  if [ ! -f "$BACKUP_KEY_FILE" ]; then
-    openssl rand -base64 48 > "$BACKUP_KEY_FILE"
-    chmod 600 "$BACKUP_KEY_FILE" 2>/dev/null || true
-    echo "已生成独立备份恢复密钥：$BACKUP_KEY_FILE（必须与备份分开保存）"
-  fi
-  [ -r "$BACKUP_KEY_FILE" ] || fail "无法读取备份恢复密钥：$BACKUP_KEY_FILE"
+  python3 -I "$ROOT_DIR/scripts/backup-integrity.py" key-init --key "$BACKUP_KEY_FILE" || fail '备份恢复密钥创建或安全校验失败。'
   target="backups/appgog-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz.enc"
   work=$(mktemp -d "$ROOT_DIR/backups/.appgog-backup.XXXXXX") || fail '无法创建备份工作目录'
-  plain="$work/backup.tar.gz"
   authenticated="$work/backup.auth"
   # Stop writers before archiving SQLite (including WAL), files and secrets together.
   running=$(project_containers)
-  trap 'rm -f "$plain" "$authenticated"; rmdir "$work" || true; if [ -n "$running" ]; then docker start $running >/dev/null || true; fi' 0
+  trap 'rm -f "$authenticated"; rmdir "$work" || true; if [ -n "$running" ]; then docker start $running >/dev/null || true; fi' 0
   trap 'exit 129' 1
   trap 'exit 130' 2
   trap 'exit 143' 15
   [ -z "$running" ] || docker stop $running >/dev/null
-  compose run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --entrypoint tar appgog -C /app -czf - \
-    $(appgog_backup_paths) > "$plain"
-  python3 -I "$ROOT_DIR/scripts/backup-integrity.py" encrypt --key "$BACKUP_KEY_FILE" --input "$plain" --output "$authenticated"
-  rm -f "$plain"
+  python3 -I "$ROOT_DIR/scripts/backup-integrity.py" encrypt --key "$BACKUP_KEY_FILE" --output "$authenticated" \
+    --producer docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$COMPOSE_FILE" run --rm --no-deps -T --user 0 --cap-add DAC_OVERRIDE --entrypoint tar appgog -C /app -czf - $(appgog_backup_paths)
   [ ! -e "$target" ] && [ ! -L "$target" ] || fail '备份目标已存在，拒绝覆盖'
   # Atomic no-clobber publication on the same filesystem; never replace a backup.
   ln -T "$authenticated" "$target" || fail '备份目标已存在或落盘失败，拒绝覆盖'
@@ -479,36 +471,35 @@ case "${1:-help}" in
         command -v openssl >/dev/null 2>&1 || fail '恢复加密备份需要 OpenSSL。'
         [ -r "$BACKUP_KEY_FILE" ] || fail "缺少备份恢复密钥：$BACKUP_KEY_FILE。请从独立安全位置复制后重试。"
         command -v python3 >/dev/null 2>&1 || fail '恢复认证备份需要 Python3。'
-        umask 077
-        restore_work=$(mktemp -d "${TMPDIR:-/tmp}/appgog-restore.XXXXXX") || fail '无法创建恢复临时目录。'
-        decrypted="$restore_work/backup.tar.gz"
-        trap 'rm -f "$decrypted"; rmdir "$restore_work" || true' 0
-        trap 'exit 129' 1
-        trap 'exit 130' 2
-        trap 'exit 143' 15
         legacy_option=''
         [ "${APPGOG_ALLOW_LEGACY_BACKUP:-false}" != true ] || legacy_option=--allow-legacy
-        python3 -I "$ROOT_DIR/scripts/backup-integrity.py" decrypt --key "$BACKUP_KEY_FILE" --input "$archive" --output "$decrypted" $legacy_option || fail '备份认证或解密失败；未执行构建或数据恢复。'
-        build_with_retry
-        prepare_update_control
-        if ! compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$decrypted"; then
-          fail '备份内容校验或恢复失败；目标部署必须为空，且备份必须完整。'
-        fi
-        rm -f "$decrypted"
-        rmdir "$restore_work"
-        trap - 0 1 2 15
+        python3 -I "$ROOT_DIR/scripts/backup-integrity.py" decrypt --key "$BACKUP_KEY_FILE" --input "$archive" $legacy_option \
+          --consumer env APPGOG_RESTORE_STREAM_INTERNAL=true sh "$ROOT_DIR/scripts/docker.sh" restore-stream || fail '备份认证、解密或恢复失败；未自动启动业务，请检查目标状态。'
         ;;
       *)
         [ "${APPGOG_ALLOW_LEGACY_BACKUP:-false}" = true ] || fail '未认证旧备份需显式设置 APPGOG_ALLOW_LEGACY_BACKUP=true。'
         echo '警告：正在恢复旧版未加密备份；恢复后请立即创建新的 .enc 加密备份。' >&2
-        build_with_retry
-        prepare_update_control
-        compose run --rm --no-deps -T appgog node scripts/docker/restore.js - < "$archive"
+        command -v python3 >/dev/null 2>&1 || fail '旧备份安全读取需要 Python3。'
+        python3 -I "$ROOT_DIR/scripts/backup-integrity.py" snapshot --input "$archive" --allow-legacy \
+          --consumer env APPGOG_RESTORE_STREAM_INTERNAL=true sh "$ROOT_DIR/scripts/docker.sh" restore-stream || fail '旧备份安全读取或恢复失败；未自动启动业务。'
         ;;
     esac
     if [ "${APPGOG_RESTORE_NO_START:-false}" != true ]; then
       compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
     fi
+    ;;
+  restore-stream)
+    # Only the authenticated helper's local consumer enters this path. The flag
+    # is an invocation guard, not a security boundary against a host root user.
+    [ "${APPGOG_RESTORE_STREAM_INTERNAL:-false}" = true ] || fail '内部恢复入口不能直接调用。'
+    incident_guard < /dev/null
+    require_docker < /dev/null
+    require_config < /dev/null
+    [ -z "$(compose ps --status running -q < /dev/null)" ] || fail '恢复目标正在运行，拒绝覆盖。'
+    # Preparatory Docker clients must not consume the authenticated stdin stream.
+    build_with_retry < /dev/null
+    prepare_update_control < /dev/null
+    compose run --rm --no-deps -T appgog node scripts/docker/restore.js - || fail '归档内容或空目标校验失败，拒绝恢复。'
     ;;
   credentials)
     require_config

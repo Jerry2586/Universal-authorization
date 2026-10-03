@@ -132,7 +132,10 @@ test('Linux shell rejects tampered and legacy backups before decryption, build o
   writeFileSync(join(bin, 'openssl'), '#!/bin/sh\necho decrypt >> "$APPGOG_TEST_DECRYPT_LOG"\nexit 99\n', { mode: 0o700 });
   const corrupt = join(f.root, 'tampered.tar.gz.enc'); const bytes = Buffer.from(real.bytes); bytes[45] ^= 1; writeFileSync(corrupt, bytes);
   const legacy = join(f.root, 'legacy.tar.gz.enc'); cpSync(real.cipher, legacy);
-  for (const [archive, optIn] of [[corrupt, false], [corrupt, true], [legacy, false]]) {
+  const plaintext = join(f.root, 'unsafe-legacy.tar.gz'); writeFileSync(plaintext, 'legacy payload');
+  const plaintextLink = join(f.root, 'legacy-link.tar.gz'); symlinkSync(plaintext, plaintextLink);
+  const plaintextHardlink = join(f.root, 'legacy-hardlink.tar.gz'); linkSync(plaintext, plaintextHardlink);
+  for (const [archive, optIn] of [[corrupt, false], [corrupt, true], [legacy, false], [plaintextLink, true], [plaintextHardlink, true], [plaintext, true]]) {
     writeFileSync(log, '');
     const result = spawnSync('sh', [join(root, 'scripts/docker.sh'), 'restore', archive], { encoding: 'utf8', env: { ...process.env, PATH: bin + ':' + process.env.PATH, TMPDIR: temporary, APPGOG_BACKUP_KEY_FILE: real.key, APPGOG_TEST_DOCKER_LOG: log, APPGOG_TEST_DECRYPT_LOG: decryptLog, APPGOG_ALLOW_LEGACY_BACKUP: String(optIn) } });
     assert.notEqual(result.status, 0); assert.match(result.stderr, /备份认证失败/);
@@ -190,4 +193,99 @@ test('Linux production encrypt and decrypt share normalized key snapshot', { ski
   const raced = checked(python, ['-I', driver]); assert.equal(raced.status, 0);
   writeFileSync(f.key, 'A'.repeat(64)); assert.equal(run(f, 'verify').status, 0);
   assert.equal(run(f, 'decrypt').status, 0); assert.deepEqual(readFileSync(f.output), payload);
+});
+
+
+test('key-init creates a private independent secret and never replaces an existing key', t => {
+  const f = fixture(t); const fresh = join(f.root, 'fresh-key');
+  checked(python, ['-X', 'utf8', '-I', helper, 'key-init', '--key', fresh]);
+  const bytes = readFileSync(fresh); assert.match(bytes.toString(), /^[A-Za-z0-9+/]{64}\n$/);
+  checked(python, ['-X', 'utf8', '-I', helper, 'key-init', '--key', fresh]);
+  assert.deepEqual(readFileSync(fresh), bytes);
+  writeFileSync(fresh, 'invalid');
+  const result = spawnSync(python, ['-X', 'utf8', '-I', helper, 'key-init', '--key', fresh], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0); assert.equal(readFileSync(fresh, 'utf8'), 'invalid');
+});
+
+test('Linux key paths reject unsafe directories and owners while preserving fixed release aliases', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); const shared = join(f.root, 'shared'); const release = join(f.root, 'release');
+  mkdirSync(shared, { mode: 0o700 }); mkdirSync(release, { mode: 0o700 });
+  const target = join(shared, '.backup-key'); const alias = join(release, '.backup-key');
+  symlinkSync(target, alias);
+  checked(python, ['-I', helper, 'key-init', '--key', alias]);
+  const original = readFileSync(target);
+  checked(python, ['-I', helper, 'key-init', '--key', alias]); assert.deepEqual(readFileSync(target), original);
+  const permissions = checked(python, ['-I', '-c', 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))', target]);
+  assert.equal(permissions.stdout.trim(), '0o600');
+  for (const dir of [shared, release]) {
+    chmodSync(dir, 0o777);
+    const result = spawnSync(python, ['-I', helper, 'key-init', '--key', alias], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0); assert.deepEqual(readFileSync(target), original); chmodSync(dir, 0o700);
+  }
+  const linked = join(shared, 'hardlink'); linkSync(target, linked);
+  assert.notEqual(spawnSync(python, ['-I', helper, 'key-init', '--key', alias]).status, 0); rmSync(linked);
+  chmodSync(target, 0o644);
+  assert.notEqual(spawnSync(python, ['-I', helper, 'key-init', '--key', alias]).status, 0); chmodSync(target, 0o600);
+  checked(python, ['-I', '-c',
+    'import importlib.util,sys,types\ns=importlib.util.spec_from_file_location("m",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\noriginal=m.os.fstat\ndef wrong(fd):\n x=original(fd); fields={k:getattr(x,k) for k in dir(x) if k.startswith("st_")};fields["st_uid"]=424242;return types.SimpleNamespace(**fields)\nm.os.fstat=wrong\ntry: m.secret(sys.argv[2])\nexcept ValueError: pass\nelse: raise AssertionError("foreign owner accepted")\n', helper, target]);
+});
+
+test('Linux producer and consumer use anonymous plaintext and propagate failures before publication', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); const captured = join(f.root, 'captured'); const producerMark = join(f.root, 'producer');
+  const payload = Buffer.alloc(1024 * 1024 + 27, 71); const input = join(f.root, 'input'); writeFileSync(input, payload);
+  const producer = 'import os,sys,pathlib; assert os.fstat(1).st_nlink==0; pathlib.Path(sys.argv[2]).write_text("ran"); sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())';
+  checked(python, ['-I', helper, 'encrypt', '--key', f.key, '--output', f.archive, '--producer', python, '-I', '-c', producer, input, producerMark]);
+  assert.equal(readFileSync(producerMark, 'utf8'), 'ran');
+  const consumer = 'import os,sys,pathlib; assert os.fstat(0).st_nlink==0; pathlib.Path(sys.argv[1]).write_bytes(sys.stdin.buffer.read())';
+  const consumeArgs = [python, '-I', '-c', consumer, captured];
+  checked(python, ['-I', helper, 'decrypt', '--key', f.key, '--input', f.archive, '--consumer', ...consumeArgs]);
+  assert.deepEqual(readFileSync(captured), payload); rmSync(captured);
+  const corrupt = readFileSync(f.archive); corrupt[45] ^= 1; writeFileSync(f.archive, corrupt);
+  assert.notEqual(spawnSync(python, ['-I', helper, 'decrypt', '--key', f.key, '--input', f.archive, '--consumer', ...consumeArgs]).status, 0);
+  assert.equal(existsSync(captured), false); rmSync(f.archive);
+  seal(f); // Authentic envelope with an invalid CBC block length must not start the consumer.
+  assert.notEqual(spawnSync(python, ['-I', helper, 'decrypt', '--key', f.key, '--input', f.archive, '--consumer', ...consumeArgs]).status, 0);
+  assert.equal(existsSync(captured), false); rmSync(f.archive);
+  const failedProducer = spawnSync(python, ['-I', helper, 'encrypt', '--key', f.key, '--output', f.archive, '--producer', python, '-I', '-c', 'import sys;sys.stdout.buffer.write(b"partial");sys.exit(7)']);
+  assert.notEqual(failedProducer.status, 0); assert.equal(existsSync(f.archive), false);
+  checked(python, ['-I', helper, 'encrypt', '--key', f.key, '--output', f.archive, '--producer', python, '-I', '-c', producer, input, producerMark]);
+  assert.notEqual(spawnSync(python, ['-I', helper, 'decrypt', '--key', f.key, '--input', f.archive, '--consumer', python, '-I', '-c', 'import sys; sys.exit(9)']).status, 0);
+  const legacy = join(f.root, 'legacy.tar.gz'); writeFileSync(legacy, payload);
+  checked(python, ['-I', helper, 'snapshot', '--input', legacy, '--allow-legacy', '--consumer', ...consumeArgs]);
+  assert.deepEqual(readFileSync(captured), payload); rmSync(captured);
+  const symlink = join(f.root, 'legacy-link'); symlinkSync(legacy, symlink);
+  const hardlink = join(f.root, 'legacy-hard'); linkSync(legacy, hardlink);
+  for (const file of [symlink, legacy, hardlink]) {
+    assert.notEqual(spawnSync(python, ['-I', helper, 'snapshot', '--input', file, '--allow-legacy', '--consumer', ...consumeArgs]).status, 0);
+    assert.equal(existsSync(captured), false);
+  }
+});
+
+test('legacy snapshot refuses same-inode mutation before invoking restore consumer', t => {
+  const f = fixture(t); const invoked = join(f.root, 'consumer-marker');
+  const script = 'import importlib.util,sys,pathlib\ns=importlib.util.spec_from_file_location("m",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\noriginal=m.copy_bytes\ndef race(source,target,count,mac=None):\n original(source,target,count,mac)\n with open(sys.argv[2],"r+b") as f: f.seek(5);f.write(b"X")\nm.copy_bytes=race\nm.envelope("snapshot",None,sys.argv[2],allow_legacy=True,consumer=[sys.executable,"-I","-c","import pathlib,sys;pathlib.Path(sys.argv[1]).touch()",sys.argv[3]])\n';
+  const result = spawnSync(python, ['-X', 'utf8', '-I', '-c', script, helper, f.cipher, invoked], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /读取期间文件发生变化/); assert.equal(existsSync(invoked), false);
+});
+
+
+test('Linux shell restores the complete authenticated stream after stdin-draining Docker preparation', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t); const real = realBackup(f.root, Buffer.alloc(1024 * 1024 + 19, 92));
+  const root = join(f.root, 'project'); const bin = join(f.root, 'bin'); mkdirSync(join(root, 'scripts'), { recursive: true }); mkdirSync(bin);
+  for (const name of ['docker.sh', 'backup-integrity.py']) cpSync(resolve('scripts', name), join(root, 'scripts', name));
+  cpSync(resolve('scripts/lib'), join(root, 'scripts/lib'), { recursive: true });
+  writeFileSync(join(root, '.env'), 'AUTH_DOMAIN=sq.example.test\nBUILD_DOMAIN=db.example.test\nAPPGOG_DEPLOYMENT_ROLE=license\n');
+  writeFileSync(join(root, 'compose.license.yaml'), 'services: {}\n');
+  const captured = join(f.root, 'restored'); const log = join(f.root, 'docker.log');
+  writeFileSync(join(bin, 'docker'), '#!/bin/sh\nprintf "%s\n" "$*" >> "$APPGOG_TEST_DOCKER_LOG"\ncase "$*" in\n "compose version"*) echo v2.24.6 ;;\n *"node scripts/docker/restore.js -"*) cat > "$APPGOG_TEST_RESTORE_OUTPUT"; exit "${APPGOG_TEST_RESTORE_STATUS:-0}" ;;\n *"build"*|*"--entrypoint sh"*) cat >/dev/null ;;\nesac\n', { mode: 0o700 });
+  const env = { ...process.env, PATH: bin + ':' + process.env.PATH, APPGOG_PROJECT: 'restore-fixture', APPGOG_BACKUP_KEY_FILE: real.key, APPGOG_TEST_DOCKER_LOG: log, APPGOG_TEST_RESTORE_OUTPUT: captured };
+  checked('sh', [join(root, 'scripts/docker.sh'), 'restore', real.archive], { env });
+  assert.deepEqual(readFileSync(captured), real.payload);
+  assert.match(readFileSync(log, 'utf8'), /compose -p restore-fixture -f .*compose\.license\.yaml run .*restore\.js/);
+  assert.match(readFileSync(log, 'utf8'), / up /);
+  writeFileSync(log, ''); rmSync(captured);
+  const failure = spawnSync('sh', [join(root, 'scripts/docker.sh'), 'restore', real.archive], { encoding: 'utf8', env: { ...env, APPGOG_TEST_RESTORE_STATUS: '9' } });
+  assert.notEqual(failure.status, 0); assert.doesNotMatch(readFileSync(log, 'utf8'), / up /);
+  const internal = spawnSync('sh', [join(root, 'scripts/docker.sh'), 'restore-stream'], { encoding: 'utf8', env });
+  assert.notEqual(internal.status, 0); assert.match(internal.stderr, /内部恢复入口不能直接调用/);
 });
