@@ -2,7 +2,7 @@
 
 日期：2026-10-02。
 
-APPGOG打包授权系统 v1.2.68 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
+APPGOG打包授权系统 v1.2.69 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
 
 ## 1. 前置条件
 
@@ -32,7 +32,7 @@ APPGOG打包授权系统 v1.2.68 的正式生产路线使用授权与打包同�
 配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.68 sh ./install.sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.69 sh ./install.sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。

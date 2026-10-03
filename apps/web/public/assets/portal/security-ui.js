@@ -1,5 +1,6 @@
 import { createSecurityPoller } from './security-poller.js';
 import { $ } from './core.js';
+import { createSecurityConsole } from './security-console.js?v=security-console-1.2.69';
 
 // Keep this fixed browser view in sync with the core/agent contract (verified in tests).
 const HOST_SCAN_IDS = Object.freeze([
@@ -60,6 +61,11 @@ function completeReport(report, checks) {
 }
 
 export function createSecurityUi({ state, can, request, notify }) {
+  const consoleView = createSecurityConsole();
+  let localRunning = false;
+  let scanRequested = false;
+  let scanGeneration = 0;
+  let bound = false;
   const localStateLabels = { ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' };
   function renderLocalReport(report) {
     const status = $('security-local-state');
@@ -68,6 +74,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     const history = $('security-local-history');
     const historyState = $('security-local-history-state');
     if (!status || !timestamp || !list) return;
+    localRunning = report.state === 'running';
     const checks = Array.isArray(report.checks) ? report.checks : [];
     const findings = checks.filter(item => item.state === 'finding').length;
     const incomplete = checks.length ? checks.filter(item => item.state !== 'ok').length : 1;
@@ -77,8 +84,8 @@ export function createSecurityUi({ state, can, request, notify }) {
     });
     const coverageIncomplete = !completeReport(report, checks);
     const historyUnavailable = !['ok', 'truncated'].includes(report.history_state) || !Array.isArray(report.history);
-    status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: findings ? '警报：发现 ' + findings + ' 项问题' : coverageIncomplete ? '检查报告覆盖不完整，请重新扫描' : stale ? '检查结果过期或时间异常' : historyUnavailable ? '检查完成，告警历史不可用' : incomplete ? '检查完成，有 ' + incomplete + ' 项需要复核或不可用' : '固定检查范围内未发现异常', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '状态未知';
-    status.dataset.state = findings ? 'finding' : (report.state !== 'finished' || stale || incomplete || coverageIncomplete || historyUnavailable ? 'warning' : 'ok');
+    status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: coverageIncomplete ? '检查报告覆盖不完整，请重新扫描' : stale ? '检查结果过期或时间异常' : historyUnavailable ? '检查完成，告警历史不可用' : findings ? '警报：发现 ' + findings + ' 项问题' : incomplete ? '检查完成，有 ' + incomplete + ' 项需要复核或不可用' : '固定检查范围内未发现异常', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '状态未知';
+    status.dataset.state = report.state === 'finished' && !coverageIncomplete && !stale && !historyUnavailable && findings ? 'finding' : (report.state !== 'finished' || stale || incomplete || coverageIncomplete || historyUnavailable ? 'warning' : 'ok');
     timestamp.textContent = report.checked_at ? '检查时间：' + report.checked_at : (report.reason || '尚无检查时间');
     list.replaceChildren();
     for (const item of checks) {
@@ -93,6 +100,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.textContent = item.checked_at + ' · ' + item.name + ' · ' + (localStateLabels[item.previous_state] || '首次记录') + ' → ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
       history?.append(row);
     }
+    consoleView.update(report, { busy: scanRequested, trusted: report.state === 'finished' && !coverageIncomplete && !stale && !historyUnavailable, issue: report.state === 'running' ? '本机检查中' : report.state === 'idle' ? '等待首次检查' : coverageIncomplete ? '等待完整有效报告' : stale ? '报告过期或时间异常' : historyUnavailable ? '告警历史不可用' : '本机检查不可用' });
     if (historyState) historyState.textContent = historyUnavailable ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留六十四条' : '暂无状态变化记录';
   }
   const localSecurityPoller = createSecurityPoller({
@@ -101,6 +109,8 @@ export function createSecurityUi({ state, can, request, notify }) {
     allowed: () => Boolean(state.csrf) && can('system.manage') && !document.hidden && Boolean($('security-local-state')),
     render: renderLocalReport,
     onError: error => {
+      localRunning = false;
+      consoleView.update(null, { busy: scanRequested, issue: '本机代理不可用' });
       const status = $('security-local-state');
       if (status) { status.textContent = '本机代理不可用'; status.dataset.state = 'warning'; }
       if ($('security-local-time')) $('security-local-time').textContent = error.message;
@@ -112,6 +122,10 @@ export function createSecurityUi({ state, can, request, notify }) {
   const renderLocalSecurity = () => localSecurityPoller.run();
   document.addEventListener('appgog-session-cleared', () => {
     localSecurityPoller.stop();
+    localRunning = false;
+    scanRequested = false;
+    scanGeneration++;
+    consoleView.clear('请登录后查看');
     securityRenderGeneration++;
     for (const id of ['security-cloud-state', 'security-cloud-reason', 'security-identity', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan', 'security-event-title', 'security-event-message']) {
       const node = $(id); if (node) node.textContent = '请登录后查看';
@@ -165,31 +179,22 @@ export function createSecurityUi({ state, can, request, notify }) {
     }
   }
   function bind() {
+    if (bound) return;
+    bound = true;
+    consoleView.bind();
     void renderSecurity(); void renderLocalSecurity();
-    $('security-local-run')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
+    document.querySelectorAll('[data-security-scan]').forEach(button => button.addEventListener('click', async () => {
+      if (scanRequested || !state.csrf || !can('system.manage')) return;
+      const session = state.csrf;
+      const generation = ++scanGeneration;
+      const current = () => generation === scanGeneration && state.csrf === session && can('system.manage');
+      scanRequested = true;
+      consoleView.setBusy(true);
       try {
         await request('/web/admin/security/local-scan', { method: 'POST', body: {} });
-        await localSecurityPoller.refresh();
-      } catch (error) { notify(error.message, true); }
-      finally { button.disabled = false; }
-    });
-    document.querySelectorAll('[data-security-mode]').forEach((button) => button.addEventListener('click', () => {
-      const mode = button.dataset.securityMode;
-      document.querySelector('[data-security-topology]')?.setAttribute('data-security-topology', mode);
-      document.querySelectorAll('[data-security-mode]').forEach((item) => {
-        const active = item === button;
-        item.classList.toggle('active', active);
-        item.setAttribute('aria-pressed', String(active));
-      });
-      for (const item of document.querySelectorAll('.security-node:not(.security-node-cloud) .security-node-footer span')) {
-        item.textContent = mode === 'combined' ? '同一台业务服务器' : '独立业务服务器';
-      }
-      const note = $('security-topology-note');
-      if (note) note.textContent = mode === 'combined'
-        ? '当前展示：打包中心与授权中心部署在同一台干净的 Linux 服务器；安全中心单独部署。'
-        : '当前展示：打包、授权、安全中心分别部署在三台服务器。';
+        if (current()) await localSecurityPoller.refresh();
+      } catch (error) { if (current()) notify(error.message, true); }
+      finally { if (current()) { scanRequested = false; consoleView.setBusy(localRunning); } }
     }));
   }
   return Object.freeze({ bind, render() { void renderSecurity(); void renderLocalSecurity(); } });

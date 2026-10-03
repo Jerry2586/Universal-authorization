@@ -14,7 +14,7 @@ test('admin and customer portals use separate entrypoints, state and page contro
   const adminEntry = read('apps/web/public/assets/admin-portal.js');
   const customerEntry = read('apps/web/public/assets/customer-portal.js');
   const compatibilityEntry = read('apps/web/public/assets/portal.js');
-  assert.match(adminHtml, /<script src="\/assets\/admin-portal\.js\?v=host-report-3" type="module"><\/script>/);
+  assert.match(adminHtml, /<script src="\/assets\/admin-portal\.js\?v=security-console-1.2.69" type="module"><\/script>/);
   assert.match(customerHtml, /<script src="\/assets\/customer-portal\.js" type="module"><\/script>/);
   assert.match(adminEntry, /createPortalShell\('admin'\)/);
   assert.match(adminEntry, /createAdminPage/);
@@ -71,6 +71,7 @@ test('page controllers stay actor-bounded and all portal modules remain small', 
     'apps/web/public/assets/portal/operations.js',
     'apps/web/public/assets/portal/security-ui.js',
     'apps/web/public/assets/portal/security-poller.js',
+    'apps/web/public/assets/portal/security-console.js',
   ];
   for (const module of modules) assert.ok(lines(module) <= 300, `${module} 超过 300 行，应继续按职责拆分`);
 });

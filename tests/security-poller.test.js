@@ -79,7 +79,7 @@ function localPageFixture() {
   const start = source.indexOf('  const localStateLabels =');
   const end = source.indexOf('  const localSecurityPoller =', start);
   assert.ok(start > 0 && end > start);
-  const render = new Function('$', 'document', source.slice(source.indexOf('// Keep this fixed browser'),source.indexOf('export function createSecurityUi')) + source.slice(start, end) + '\nreturn renderLocalReport;')(id => nodes.get(id) ?? null, { createElement: node });
+  const render = new Function('$', 'document', 'consoleView', 'let localRunning = false; let scanRequested = false;\n' + source.slice(source.indexOf('// Keep this fixed browser'),source.indexOf('export function createSecurityUi')) + source.slice(start, end) + '\nreturn renderLocalReport;')(id => nodes.get(id) ?? null, { createElement: node }, { update() {} });
   return { render, nodes };
 }
 test('actual admin page IDs render findings and history as plain text', () => {
@@ -88,8 +88,8 @@ test('actual admin page IDs render findings and history as plain text', () => {
   render({ state: 'finished', checked_at: new Date().toISOString(), history_state: 'ok',
     checks: [{ name: '程序完整性', state: 'finding', detail: payload }],
     history: [{ checked_at: '2026-10-03T00:00:00Z', name: '程序完整性', previous_state: 'ok', state: 'finding', detail: payload }] });
-  assert.equal(nodes.get('security-local-state').dataset.state, 'finding');
-  assert.match(nodes.get('security-local-state').textContent, /警报/);
+  assert.equal(nodes.get('security-local-state').dataset.state, 'warning');
+  assert.match(nodes.get('security-local-state').textContent, /覆盖不完整/);
   assert.equal(nodes.get('security-local-checks').children.length, 1);
   assert.ok(nodes.get('security-local-checks').children[0].textContent.includes(payload));
   assert.equal(nodes.get('security-local-history').children.length, 1);

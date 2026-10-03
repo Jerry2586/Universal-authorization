@@ -1,4 +1,4 @@
-import { createSecurityUi } from './security-ui.js?v=host-report-3';
+import { createSecurityUi } from './security-ui.js?v=security-console-1.2.69';
 import { createProductUi } from './products.js';
 import { $ } from './core.js';
 import { createPlanUi } from './plans.js';

@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { summarizeHostScan } from '../scripts/security-agent.js';
 import { fullHostReport } from './helpers/host-scan-report.js';
+import { HOST_SCAN_IDS } from '../packages/core/src/host-scan-contract.js';
 
 test('host report summary discards paths and details and retains findings in a complete report', () => {
   const checked_at = new Date().toISOString();
   const report = fullHostReport({ checked_at, overrides: { 'malware.business': { state:'finding', detail:'/private/path', severity:'high' } } });
-  assert.deepEqual(summarizeHostScan(report), { state:'finding', checked_at, counts:{ok:23, warning:0, finding:1, unavailable:0} });
+  assert.deepEqual(summarizeHostScan(report), { state:'finding', checked_at, counts:{ok:HOST_SCAN_IDS.length - 1, warning:0, finding:1, unavailable:0} });
   for(const invalid of [null, {state:'failed', reason:'private path'}, {state:'finished',checked_at:'bad',checks:[]},
-    {...report,checks:[report.checks[0]]}, {...report,checks:Array(24).fill(report.checks[0])}])
+    {...report,checks:[report.checks[0]]}, {...report,checks:Array(HOST_SCAN_IDS.length).fill(report.checks[0])}])
     assert.deepEqual(summarizeHostScan(invalid), {state:'unavailable',checked_at:null});
 });
 test('summary only reports ok for a complete fresh report with usable history', () => {
