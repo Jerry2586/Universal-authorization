@@ -171,6 +171,29 @@ class Firewall(unittest.TestCase):
                 with self.assertRaises(ValueError): f.approve(current['digest'])
             self.assertEqual(f.BASELINE.read_bytes(), old)
 
+    def test_approval_followup_must_finish_before_baseline_changes(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(f, 'BASELINE', Path(tmp)/'base.json'), patch.object(f, 'REPORT', Path(tmp)/'report.json'), patch.object(f, 'installation_root', return_value=str(a.ROOT)):
+            previous, current = snapshot(0), snapshot()
+            with patch.object(f, 'snapshot', return_value=previous):
+                f.approve(previous['digest'])
+            old = f.BASELINE.read_bytes()
+            for following in [ValueError('partial'), snapshot(0)]:
+                with patch.object(f, 'snapshot', side_effect=[current, following]):
+                    with self.assertRaises(ValueError): f.approve(current['digest'])
+                self.assertEqual(f.BASELINE.read_bytes(), old)
+            write = a.atomic_json
+            def failed_report(path, value):
+                if path == f.REPORT:
+                    raise OSError('report write failed')
+                return write(path, value)
+            with patch.object(f, 'snapshot', return_value=current), patch.object(a, 'atomic_json', side_effect=failed_report):
+                with self.assertRaises(OSError): f.approve(current['digest'])
+            self.assertEqual(f.BASELINE.read_bytes(), old)
+            with patch.object(f, 'snapshot', return_value=current):
+                f.approve(current['digest'])
+            self.assertEqual(json.loads(f.BASELINE.read_bytes())['snapshot'], current)
+            self.assertEqual(json.loads(f.REPORT.read_bytes())['snapshot'], current)
+
     def test_report_real_private_bytes_states_and_baseline_preservation(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(a, 'STATE_DIR', Path(tmp)):
             target, baseline = Path(tmp)/'firewall-report.json', Path(tmp)/'firewall-baseline.json'

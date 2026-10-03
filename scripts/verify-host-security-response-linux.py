@@ -31,6 +31,27 @@ control = load('linux_response_ci', Path('/usr/local/lib/appgog-security/host-se
 repair = load('linux_repair_ci', Path('/usr/local/lib/appgog-security/host-security-repair.py'))
 control.initialize()
 
+
+def business_state(expected):
+    # Observe real production execution only; redact command args, output and error text.
+    # A failed official-feed gate must explain which bounded check refused coverage.
+    diagnostic = []
+    def trace(frame, event, value):
+        if event == 'exception' and frame.f_code.co_filename == control.AGENT.__file__:
+            diagnostic.append({'function': frame.f_code.co_name, 'line': frame.f_lineno, 'error': value[0].__name__})
+        elif event == 'return' and frame.f_code.co_filename == subprocess.__file__ and frame.f_code.co_name == 'run' and isinstance(value, subprocess.CompletedProcess):
+            diagnostic.append({'program': Path(value.args[0]).name, 'exit': value.returncode})
+        if len(diagnostic) > 16:
+            del diagnostic[:-16]
+        return trace
+    previous = sys.gettrace()
+    try:
+        sys.settrace(trace)
+        result = control.AGENT.business_malware_scan()
+    finally:
+        sys.settrace(previous)
+    assert result['state'] == expected, {'expected': expected, 'actual': result['state'], 'diagnostic': diagnostic}
+
 def run(args, *, success=True):
     result = subprocess.run(args, capture_output=True, text=True, timeout=120, check=False)
     if success:
@@ -80,16 +101,16 @@ try:
         with zipfile.ZipFile(uploads / 'benign.zip', 'w') as package:
             package.writestr('hello.txt', 'APPGOG harmless controlled upload')
         (artifacts / 'benign.txt').write_text('APPGOG harmless controlled artifact')
-        assert control.AGENT.business_malware_scan()['state'] == 'ok'
+        business_state('ok')
         eicar = b''.join((b'X5O!P%@AP[4', b'\\PZX54(P^)7CC)7}', b'$EICAR-STANDARD-', b'ANTIVIRUS-TEST-FILE!$H+H*'))
         testfile = uploads / 'controlled-eicar.txt'
         testfile.write_bytes(eicar)
-        assert control.AGENT.business_malware_scan()['state'] == 'finding'
+        business_state('finding')
         assert testfile.read_bytes() == eicar  # scanner never deletes uploads
         testfile.unlink()  # remove only this fixture-created test file
         controlled_link = uploads / 'controlled-link'
         controlled_link.symlink_to(artifacts / 'benign.txt')
-        assert control.AGENT.business_malware_scan()['state'] == 'unavailable'
+        business_state('unavailable')
         controlled_link.unlink()
         encrypted = uploads / 'controlled-encrypted.zip'
         encrypted.write_bytes((uploads / 'benign.zip').read_bytes())
@@ -97,12 +118,12 @@ try:
         for marker, offset in [(b'PK\x03\x04', 6), (b'PK\x01\x02', 8)]:
             payload[payload.index(marker) + offset] |= 1
         encrypted.write_bytes(payload)
-        assert control.AGENT.business_malware_scan()['state'] == 'unavailable'
+        business_state('unavailable')
         encrypted.unlink()
         oversized = artifacts / 'controlled-oversized'
         with oversized.open('wb') as stream:
             stream.truncate(64 * 1024 * 1024)
-        assert control.AGENT.business_malware_scan()['state'] == 'unavailable'
+        business_state('unavailable')
         oversized.unlink()
         control.recovery_checks()
         image_id = inspect(owned)['Image']

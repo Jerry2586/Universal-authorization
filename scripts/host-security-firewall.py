@@ -301,9 +301,12 @@ def approve(expected):
     root, current = installation_root(), snapshot()
     if not valid_snapshot(current) or current['digest'] != expected:
         raise ValueError('firewall changed or approval does not match')
+    # Persist a fresh independent observation before advancing trust. Failed writes,
+    # unavailable collection or intervening rule changes leave the old baseline intact.
+    observed = collect()
+    if observed.get('state') != 'finished' or observed.get('root') != root or observed.get('snapshot') != current:
+        raise ValueError('firewall changed or follow-up collection unavailable')
     agent.atomic_json(BASELINE, {'schema': 1, 'root': root, 'approved_at': datetime.now(timezone.utc).isoformat(), 'snapshot': current})
-    # A new collection is still required; old report is never rewritten as clean.
-    collect()
 
 
 def main(arguments):
