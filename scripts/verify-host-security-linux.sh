@@ -164,6 +164,8 @@ firewall_executable_hash=$(sha256sum /usr/local/lib/appgog-security/host-securit
 systemctl is-enabled --quiet appgog-firewall-monitor.timer
 systemctl is-active --quiet appgog-firewall-monitor.timer
 grep -Fxq 'RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6' /etc/systemd/system/appgog-firewall-monitor.service
+grep -Fxq 'BindReadOnlyPaths=/proc/1/ns/net:/run/appgog-security/firewall-host-netns' /etc/systemd/system/appgog-firewall-monitor.service
+grep -Fxq 'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW' /etc/systemd/system/appgog-firewall-monitor.service
 [ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/host-security-firewall.py)" = '0:0:700' ]
 checkpoint=firewall-isolated-namespace
 python3 -I "$SOURCE/scripts/verify-host-security-firewall-linux.py"

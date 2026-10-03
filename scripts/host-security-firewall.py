@@ -88,9 +88,19 @@ def trusted_executable(path):
 
 
 def host_namespace():
-    # PID 1 equality alone also holds inside a PID-isolated container.
-    # Require the managed host systemd deployment and reject detected containers.
-    if os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net'):
+    # systemd binds PID 1's nsfs file before reducing service capabilities.
+    # Accessing /proc/1/ns/net directly can require ptrace capabilities; do not
+    # grant them just to prove namespace identity. Compare the kernel nsfs inode.
+    current = os.stat('/proc/self/ns/net')
+    try:
+        host = os.stat('/run/appgog-security/firewall-host-netns', follow_symlinks=False)
+        if not stat.S_ISREG(host.st_mode) or host.st_uid != 0 or host.st_mode & 0o022:
+            raise ValueError('untrusted namespace anchor')
+    except FileNotFoundError:
+        # Root CLI outside the service has no bind mount. A denied direct lookup
+        # must fail, never assume it is the host namespace.
+        host = os.stat('/proc/1/ns/net')
+    if (current.st_dev, current.st_ino) != (host.st_dev, host.st_ino):
         return False
     binary = trusted_executable('/usr/bin/systemd-detect-virt')
     result = subprocess.run([binary, '--container', '--quiet'], stdin=subprocess.DEVNULL,

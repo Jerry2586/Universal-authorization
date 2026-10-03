@@ -488,6 +488,7 @@ User=root
 TimeoutStartSec=40
 NoNewPrivileges=true
 PrivateTmp=true
+BindReadOnlyPaths=/proc/1/ns/net:$RUNTIME_DIR/firewall-host-netns
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=$STATE_DIR

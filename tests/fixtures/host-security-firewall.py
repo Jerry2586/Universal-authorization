@@ -97,7 +97,8 @@ class Firewall(unittest.TestCase):
                 with self.assertRaises(ValueError): f.snapshot_once()
 
     def test_container_detector_failure_never_claims_host(self):
-        with patch.object(f.os, 'readlink', return_value='net:[1]'), patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'):
+        metadata = SimpleNamespace(st_dev=7, st_ino=9, st_uid=0, st_mode=0o100444)
+        with patch.object(f.os, 'stat', return_value=metadata), patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'):
             for code, expected in [(0, False), (1, True)]:
                 with patch.object(f.subprocess, 'run', return_value=SimpleNamespace(returncode=code)) as run:
                     self.assertEqual(f.host_namespace(), expected)
@@ -106,6 +107,31 @@ class Firewall(unittest.TestCase):
                 with self.assertRaises(ValueError): f.host_namespace()
             with patch.object(f.subprocess, 'run', side_effect=subprocess.TimeoutExpired('fixed', 2)):
                 with self.assertRaises(subprocess.TimeoutExpired): f.host_namespace()
+
+    def test_bound_namespace_works_without_init_proc_access_and_rejects_bad_anchors(self):
+        own = SimpleNamespace(st_dev=7, st_ino=9, st_uid=0, st_mode=0o100444)
+        def bound(path, **options):
+            if path == '/proc/1/ns/net':
+                raise PermissionError(13, 'permission denied')
+            if path == '/run/appgog-security/firewall-host-netns':
+                self.assertEqual(options, {'follow_symlinks': False})
+            return own
+        with patch.object(f.os, 'stat', side_effect=bound) as probe, patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'), patch.object(f.subprocess, 'run', return_value=SimpleNamespace(returncode=1)):
+            self.assertTrue(f.host_namespace())
+            self.assertNotIn('/proc/1/ns/net', [call.args[0] for call in probe.call_args_list])
+        for change in ({'st_dev':8}, {'st_ino':10}, {'st_uid':1000}, {'st_mode':0o120777}, {'st_mode':0o100666}):
+            changed = SimpleNamespace(**(vars(own) | change))
+            with patch.object(f.os, 'stat', side_effect=[own, changed]), patch.object(f.subprocess, 'run') as command:
+                try:
+                    self.assertFalse(f.host_namespace())
+                except ValueError:
+                    self.assertTrue('st_uid' in change or 'st_mode' in change)
+                command.assert_not_called()
+        with patch.object(f.os, 'stat', side_effect=[own, FileNotFoundError(), PermissionError(13, 'permission denied')]), patch.object(f.subprocess, 'run') as command:
+            with self.assertRaises(PermissionError): f.host_namespace()
+            command.assert_not_called()
+        with patch.object(f.os, 'stat', side_effect=[own, FileNotFoundError(), own]), patch.object(f, 'trusted_executable', return_value='/usr/bin/systemd-detect-virt'), patch.object(f.subprocess, 'run', return_value=SimpleNamespace(returncode=1)):
+            self.assertTrue(f.host_namespace())
 
     def test_capture_races_and_deadlines_are_rejected(self):
         with patch.object(f, 'snapshot_once', side_effect=[snapshot(), snapshot(0)]):
