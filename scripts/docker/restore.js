@@ -19,8 +19,12 @@ export function validateEntries(names, listing, role = 'all') {
   for (const required of requiredFiles) {
     if (!names.includes(required)) throw new Error(`备份缺少 ${required}`);
   }
-  if (role === 'build' && names.some(name => ['runtime/license/identity.json', 'var/data/appgog.sqlite'].includes(name)
-    || name.startsWith('var/keys/'))) throw new Error('打包分机备份混入授权中心身份或密钥');
+  // Standard tar includes the empty directory entries left by the common image.
+  // Permit those roots, but reject every child in authorization-only storage.
+  if (role === 'build' && names.some(name => {
+    const clean = name.replace(/\/$/, '');
+    return ['runtime/license', 'var/data', 'var/keys', 'var/uploads'].some(root => clean.startsWith(`${root}/`));
+  })) throw new Error('打包分机备份混入授权中心身份或密钥');
 }
 export function restore(archive, root = '/app', role = process.env.APPGOG_DEPLOYMENT_ROLE || 'all') {
   const names = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim().split('\n');

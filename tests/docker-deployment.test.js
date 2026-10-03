@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { initialize, secretNames } from '../scripts/docker/initialize.js';
-import { validateEntries } from '../scripts/docker/restore.js';
+import { validateEntries, restore, backupRoots } from '../scripts/docker/restore.js';
+import { execFileSync } from 'node:child_process';
 import { roleHealthUrls, healthUrls } from '../scripts/docker/health.js';
 import { standbyServer } from '../scripts/docker/unpaired.js';
 import { PACKAGE_VERSION } from '../packages/core/src/version.js';
@@ -110,11 +111,44 @@ test('Restore rejects traversal, foreign paths, links and incomplete backups', (
 test('Split build backups restore without license secrets and reject cross-role archives', () => {
   const buildFiles = ['runtime/build/runtime.env', 'runtime/worker/runtime.env', 'var/artifacts/build.zip'];
   validateEntries(buildFiles, buildFiles.map(() => '-rw-------'), 'build');
+  const directoryEntries = ['var/keys/', 'var/data/', 'var/uploads/', 'runtime/license/'];
+  validateEntries([...buildFiles, ...directoryEntries], [...buildFiles.map(() => '-rw-------'), ...directoryEntries.map(() => 'drwx------')], 'build');
+  for (const file of ['var/keys/unknown.key', 'var/data/other.db', 'runtime/license/runtime.env', 'var/uploads/source.zip']) {
+    assert.throws(() => validateEntries([...buildFiles, file], [], 'build'), /混入授权中心/);
+  }
   assert.throws(() => validateEntries(buildFiles, [], 'license'), /备份缺少/);
   assert.throws(() => validateEntries(['runtime/build/runtime.env'], [], 'build'), /备份缺少/);
   assert.throws(() => validateEntries([...buildFiles, 'var/keys/ed25519-private.pem'], [], 'build'), /混入授权中心/);
   assert.throws(() => validateEntries([...buildFiles, 'runtime/license/identity.json'], [], 'build'), /混入授权中心/);
   assert.throws(() => validateEntries(buildFiles, [], 'unexpected'), /无效部署角色/);
+});
+
+test('Split build restore accepts actual tar empty roots and rejects authorization storage contents', { skip: process.platform === 'win32' }, t => {
+  const source = fixture(t);
+  const target = fixture(t);
+  const archives = fixture(t);
+  initialize({ root: source, env: { ...env, APPGOG_DEPLOYMENT_ROLE: 'build',
+    BUILD_CENTER_NODE_TOKEN: 'b'.repeat(48), WORKER_NODE_TOKEN: 'w'.repeat(48) } });
+  for (const name of backupRoots) mkdirSync(join(target, name), { recursive: true });
+  const payload = Buffer.from('standalone build persistent artifact');
+  writeFileSync(join(source, 'var/artifacts/payload.bin'), payload);
+  const archive = join(archives, 'build.tar.gz');
+  execFileSync('tar', ['-C', source, '-czf', archive, ...backupRoots]);
+  restore(archive, target, 'build');
+  assert.deepEqual(readFileSync(join(target, 'var/artifacts/payload.bin')), payload);
+  for (const file of ['runtime/build/runtime.env', 'runtime/worker/runtime.env']) {
+    assert.deepEqual(readFileSync(join(target, file)), readFileSync(join(source, file)));
+  }
+  assert.equal(existsSync(join(target, 'var/keys/ed25519-private.pem')), false);
+  const rejectedTarget = fixture(t);
+  for (const name of backupRoots) mkdirSync(join(rejectedTarget, name), { recursive: true });
+  for (const file of ['var/keys/unknown.key', 'var/data/other.db', 'runtime/license/runtime.env', 'var/uploads/source.zip']) {
+    writeFileSync(join(source, file), 'forbidden fixture');
+    execFileSync('tar', ['-C', source, '-czf', archive, ...backupRoots]);
+    assert.throws(() => restore(archive, rejectedTarget, 'build'), /混入授权中心/);
+    assert.equal(existsSync(join(rejectedTarget, 'var/artifacts/payload.bin')), false);
+    rmSync(join(source, file));
+  }
 });
 
 test('Docker preserves custom policy settings and rejects invalid replacements', t => {
