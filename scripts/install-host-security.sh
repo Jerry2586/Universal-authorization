@@ -9,6 +9,9 @@ INSTALL_ROOT=${APPGOG_INSTALL_ROOT:-$SOURCE_DIR}
 ENV_FILE=${APPGOG_HOST_ENV_FILE:-$SOURCE_DIR/.env}
 AGENT_DIR=/usr/local/lib/appgog-security
 AGENT_FILE=$AGENT_DIR/host-security-agent.py
+CLOUDFLARE_FILE=$AGENT_DIR/host-security-cloudflare.py
+CLOUDFLARE_UNIT=/etc/systemd/system/appgog-cloudflare-monitor.service
+CLOUDFLARE_TIMER=/etc/systemd/system/appgog-cloudflare-monitor.timer
 RESPONSE_FILE=$AGENT_DIR/host-security-response.py
 REPAIR_FILE=$AGENT_DIR/host-security-repair.py
 RESPONSE_CONFIG=$AGENT_DIR/response-config.json
@@ -80,6 +83,22 @@ for file in "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
   fi
 done
 validate_unit
+for file in "$CLOUDFLARE_UNIT" "$CLOUDFLARE_TIMER"; do
+  safe_parents "$file"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    safe_file "$file"
+    grep -Fxq "# APPGOG-CLOUDFLARE-MONITOR-MANAGED $INSTALL_ROOT" "$file" || fail 'CF 检测服务归属不符'
+  fi
+done
+stop_cloudflare() {
+  for service in appgog-cloudflare-monitor.timer appgog-cloudflare-monitor.service; do
+    if [ "$(systemctl show -p LoadState --value "$service" 2>/dev/null)" = loaded ]; then
+      systemctl stop "$service" || fail 'CF 检测服务无法停止'
+      systemctl is-active --quiet "$service" && fail 'CF 检测服务仍在运行'
+    fi
+  done
+  return 0
+}
 incident_guard() {
   [ -e "$STATE_DIR/incident.json" ] || [ -L "$STATE_DIR/incident.json" ] || return 0
   if [ -e "$RESPONSE_CLI" ] || [ -L "$RESPONSE_CLI" ]; then
@@ -130,11 +149,13 @@ if [ "$ACTION" = uninstall ]; then
     [ ! -L "$AGENT_DIR" ] && [ -d "$AGENT_DIR" ] && [ "$(stat -c %u "$AGENT_DIR")" = 0 ] || fail '代理目录归属异常'
     [ ! -e "$AGENT_FILE" ] || safe_file "$AGENT_FILE"
   fi
-  for file in "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI"; do
+  for file in "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$CLOUDFLARE_FILE"; do
     if [ -e "$file" ] || [ -L "$file" ]; then safe_parents "$file"; safe_file "$file"; fi
   done
   incident_guard || fail '事故未解除或历史无效，禁止卸载隔离保护'
   stop_response
+  stop_cloudflare
+  if [ -e "$CLOUDFLARE_TIMER" ]; then systemctl disable appgog-cloudflare-monitor.timer >/dev/null || fail 'CF 定时器无法禁用'; fi
   if [ -e "$RESPONSE_TIMER" ]; then
     systemctl disable appgog-local-response.timer >/dev/null || fail '事故控制定时器无法禁用'
     systemctl is-enabled --quiet appgog-local-response.timer && fail '事故控制定时器仍启用'
@@ -145,7 +166,7 @@ if [ "$ACTION" = uninstall ]; then
     systemctl is-active --quiet appgog-host-security.service && fail '代理仍在运行，停止卸载'
     systemctl disable appgog-host-security.service || true
   fi
-  rm -f "$UNIT" "$TMPFILES" "$AGENT_FILE" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"
+  rm -f "$UNIT" "$TMPFILES" "$AGENT_FILE" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER" "$CLOUDFLARE_FILE" "$CLOUDFLARE_UNIT" "$CLOUDFLARE_TIMER"
   # Independent contract, public key, incident and evidence survive uninstall.
   if [ -S "$RUNTIME_DIR/scan.sock" ]; then rm -f "$RUNTIME_DIR/scan.sock"; fi
   systemctl daemon-reload
@@ -222,16 +243,18 @@ safe_directory "$STATE_DIR" 0700 root
 safe_parents "$SOURCE_DIR/scripts/host-security-agent.py"
 safe_file "$SOURCE_DIR/scripts/host-security-agent.py"
 # Restore the previous executable/unit/updater definition if activation fails.
-for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
+for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER" "$CLOUDFLARE_FILE" "$CLOUDFLARE_UNIT" "$CLOUDFLARE_TIMER"; do
   if [ -e "$file" ] || [ -L "$file" ]; then safe_file "$file"; fi
 done
 transaction=$(mktemp -d "$AGENT_DIR/.install.XXXXXX")
-old_active=false; old_enabled=false; old_response_enabled=false; old_response_active=false; committed=false
+old_active=false; old_enabled=false; old_response_enabled=false; old_response_active=false; old_cf_enabled=false; old_cf_active=false; committed=false
+systemctl is-enabled --quiet appgog-cloudflare-monitor.timer && old_cf_enabled=true
+systemctl is-active --quiet appgog-cloudflare-monitor.timer && old_cf_active=true
 systemctl is-enabled --quiet appgog-local-response.timer && old_response_enabled=true
 systemctl is-active --quiet appgog-local-response.timer && old_response_active=true
 systemctl is-active --quiet appgog-host-security.service && old_active=true
 systemctl is-enabled --quiet appgog-host-security.service && old_enabled=true
-for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
+for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER" "$CLOUDFLARE_FILE" "$CLOUDFLARE_UNIT" "$CLOUDFLARE_TIMER"; do
   if [ -e "$file" ] || [ -L "$file" ]; then
     cp -p "$file" "$transaction/$(basename "$file").old" || { rm -f "$transaction/"*.old; rmdir "$transaction"; fail '原代理备份失败'; }
   fi
@@ -241,7 +264,7 @@ cleanup() {
   trap - 0 INT TERM
   if [ "$committed" != true ]; then
     rollback_stopped=true
-    for service in appgog-local-response.timer appgog-local-response.service appgog-host-security.service; do
+    for service in appgog-cloudflare-monitor.timer appgog-cloudflare-monitor.service appgog-local-response.timer appgog-local-response.service appgog-host-security.service; do
       if [ "$(systemctl show -p LoadState --value "$service" 2>/dev/null)" = loaded ]; then
         systemctl stop "$service" || rollback_stopped=false
         systemctl is-active --quiet "$service" && rollback_stopped=false
@@ -252,7 +275,13 @@ cleanup() {
       exit 1
     fi
     rollback_ok=true
-    for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER"; do
+    # Remove newly-created enablement links before restoring old unit definitions.
+    for timer in appgog-cloudflare-monitor.timer appgog-local-response.timer; do
+      if [ "$(systemctl show -p LoadState --value "$timer" 2>/dev/null)" = loaded ]; then
+        systemctl disable "$timer" >/dev/null 2>&1 || rollback_ok=false
+      fi
+    done
+    for file in "$AGENT_FILE" "$UNIT" "$TMPFILES" "$RESPONSE_FILE" "$REPAIR_FILE" "$RESPONSE_CONFIG" "$PUBLIC_KEY" "$RESPONSE_CLI" "$RESPONSE_UNIT" "$RESPONSE_TIMER" "$CLOUDFLARE_FILE" "$CLOUDFLARE_UNIT" "$CLOUDFLARE_TIMER"; do
       backup="$transaction/$(basename "$file").old"
       if [ -f "$backup" ]; then
         cp -p "$backup" "$file" || { echo "原文件恢复失败：$file" >&2; rollback_ok=false; }
@@ -268,6 +297,10 @@ cleanup() {
       if [ "$old_response_enabled" = true ]; then systemctl enable appgog-local-response.timer >/dev/null || rollback_ok=false
       else systemctl disable appgog-local-response.timer >/dev/null 2>&1 || rollback_ok=false; fi
     fi
+    if [ -f "$CLOUDFLARE_TIMER" ]; then
+      if [ "$old_cf_enabled" = true ]; then systemctl enable appgog-cloudflare-monitor.timer >/dev/null || rollback_ok=false
+      else systemctl disable appgog-cloudflare-monitor.timer >/dev/null 2>&1 || rollback_ok=false; fi
+    fi
     if [ -f "$UNIT" ]; then
       if [ "$old_enabled" = true ]; then systemctl enable appgog-host-security.service >/dev/null || rollback_ok=false
       else systemctl disable appgog-host-security.service >/dev/null 2>&1 || rollback_ok=false; fi
@@ -275,6 +308,9 @@ cleanup() {
     if [ "$rollback_ok" = true ]; then
       if [ "$old_active" = true ]; then
         systemctl reset-failed appgog-host-security.service && systemctl restart appgog-host-security.service && systemctl is-active --quiet appgog-host-security.service || rollback_ok=false
+      fi
+      if [ "$old_cf_active" = true ]; then
+        systemctl reset-failed appgog-cloudflare-monitor.timer && systemctl start appgog-cloudflare-monitor.timer && systemctl is-active --quiet appgog-cloudflare-monitor.timer || rollback_ok=false
       fi
       if [ "$old_response_active" = true ]; then
         systemctl reset-failed appgog-local-response.timer && systemctl start appgog-local-response.timer && systemctl is-active --quiet appgog-local-response.timer || rollback_ok=false
@@ -286,7 +322,7 @@ cleanup() {
     fi
     echo '本地安全代理激活失败，已尝试恢复原服务；保留环境补齐、安全组、GID 配置与基线' >&2
   fi
-  rm -f "$transaction/host-security-agent.py.old" "$transaction/appgog-host-security.service.old" "$transaction/appgog-host-security.conf.old" "$transaction/agent.new" "$transaction/unit.new" "$transaction/host-security-response.py.old" "$transaction/host-security-repair.py.old" "$transaction/response-config.json.old" "$transaction/release-public.pem.old" "$transaction/appgog-security-response.old" "$transaction/appgog-local-response.service.old" "$transaction/appgog-local-response.timer.old"
+  rm -f "$transaction/host-security-agent.py.old" "$transaction/appgog-host-security.service.old" "$transaction/appgog-host-security.conf.old" "$transaction/agent.new" "$transaction/unit.new" "$transaction/host-security-response.py.old" "$transaction/host-security-repair.py.old" "$transaction/response-config.json.old" "$transaction/release-public.pem.old" "$transaction/appgog-security-response.old" "$transaction/appgog-local-response.service.old" "$transaction/appgog-local-response.timer.old" "$transaction/host-security-cloudflare.py.old" "$transaction/appgog-cloudflare-monitor.service.old" "$transaction/appgog-cloudflare-monitor.timer.old"
   rmdir "$transaction" || true
   exit "$result"
 }
@@ -294,6 +330,7 @@ trap cleanup 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 stop_response
+stop_cloudflare
 agent_temp=$transaction/agent.new
 install -o root -g root -m 0700 "$SOURCE_DIR/scripts/host-security-agent.py" "$agent_temp"
 python_bin=/usr/bin/python3
@@ -304,7 +341,7 @@ safe_file "$(readlink -f "$python_bin")"
 mv -f "$agent_temp" "$AGENT_FILE"
 
 # Install the response channel independently of the mutable business release.
-for name in host-security-response.py host-security-repair.py; do
+for name in host-security-response.py host-security-repair.py host-security-cloudflare.py; do
   safe_parents "$SOURCE_DIR/scripts/$name"
   safe_file "$SOURCE_DIR/scripts/$name"
   "$python_bin" -I -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$SOURCE_DIR/scripts/$name"
@@ -370,6 +407,44 @@ WantedBy=timers.target
 EOF
 chmod 644 "$RESPONSE_UNIT" "$RESPONSE_TIMER"
 
+
+cat > "$CLOUDFLARE_UNIT" <<EOF
+# APPGOG-CLOUDFLARE-MONITOR-MANAGED $INSTALL_ROOT
+[Unit]
+Description=APPGOG Cloudflare GET-only configuration monitor
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=$python_bin -I $CLOUDFLARE_FILE collect
+User=root
+TimeoutStartSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$STATE_DIR
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CPUQuota=20%
+MemoryMax=128M
+TasksMax=8
+StandardOutput=null
+EOF
+cat > "$CLOUDFLARE_TIMER" <<EOF
+# APPGOG-CLOUDFLARE-MONITOR-MANAGED $INSTALL_ROOT
+[Unit]
+Description=APPGOG Cloudflare configuration check every five minutes
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=300
+Unit=appgog-cloudflare-monitor.service
+[Install]
+WantedBy=timers.target
+EOF
+chmod 644 "$CLOUDFLARE_UNIT" "$CLOUDFLARE_TIMER"
+
 unit_temp=$transaction/unit.new
 cat > "$unit_temp" <<EOF
 # APPGOG-HOST-SECURITY-MANAGED
@@ -426,6 +501,8 @@ while [ "$attempt" -lt 10 ]; do
      "$python_bin" -I -c 'import http.client,socket,sys; c=http.client.HTTPConnection("localhost",timeout=2); c.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); c.sock.settimeout(2); c.sock.connect(sys.argv[1]); c.request("GET","/status"); r=c.getresponse(); assert r.status==200; c.close()' "$RUNTIME_DIR/scan.sock" 2>/dev/null; then
     systemctl enable --now appgog-local-response.timer >/dev/null || fail '事故评估定时器无法启动'
     systemctl is-active --quiet appgog-local-response.timer || fail '事故评估定时器未运行'
+    systemctl enable --now appgog-cloudflare-monitor.timer >/dev/null || fail 'CF 检测定时器无法启动'
+    systemctl is-active --quiet appgog-cloudflare-monitor.timer || fail 'CF 检测定时器未运行'
     committed=true
     echo '本地代理已启动；扫描结论请查看后台或 appgog security-local status'
     exit 0

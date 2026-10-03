@@ -281,6 +281,7 @@ security_menu() {
       '  8. 核验后批准当前主机配置基线（仅 root）' \
       '  9. 备份并使用可信签名发布包修复源码' \
       ' 10. 独立本地事故中心（隔离 / 离线验签修复 / 解除 / 策略）' \
+      ' 11. Cloudflare 只读监测（配置身份 / 检查 / 核验基线）' \
       '  0. 返回主菜单'
     tty_read '请选择：'
     case "$REPLY_VALUE" in
@@ -307,6 +308,7 @@ security_menu() {
         pause_menu ;;
       9) confirm '确认创建备份并重新下载当前签名版本修复源码？' && repair_source; pause_menu ;;
       10) security_local response menu; pause_menu ;;
+      11) security_local cloudflare menu; pause_menu ;;
       0|'') return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac
@@ -633,6 +635,7 @@ APPGOG 管理命令
   appgog security-local approve-program <版本>  核验后批准程序基线
   appgog security-local approve-host APPROVE-HOST  核验后批准主机配置
   appgog security-local response menu  独立事故隔离、可信源码修复和人工恢复
+  appgog security-local cloudflare menu  CF 只读身份、配置变化和可信基线
   appgog security-doctor             验证云端身份和节点状态
   appgog security-connect URL BUNDLE_DIR CA_SHA256  用独立身份包配对云端
   appgog doctor          系统诊断

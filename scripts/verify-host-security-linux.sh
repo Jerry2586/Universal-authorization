@@ -58,6 +58,7 @@ printf 'touch %s/unsafe-executed\n' "$TEST_ROOT" > "$UNTRUSTED/scripts/install-h
 if APPGOG_INSTALL_ROOT="$UNTRUSTED" sh "$SOURCE/scripts/security-local.sh" engine; then echo 'Untrusted local root accepted' >&2; exit 1; fi
 if APPGOG_ROOT="$UNTRUSTED" sh "$SOURCE/scripts/appgog.sh" status; then echo 'Untrusted manager root accepted' >&2; exit 1; fi
 [ ! -e "$TEST_ROOT/unsafe-executed" ]
+python3 -I "$SOURCE/tests/fixtures/host-security-cloudflare.py"
 lifecycle prepare
 lifecycle install
 # Preserve a completed pre-mutation report before testing transition history.
@@ -72,9 +73,17 @@ gid=$(getent group appgog-security | cut -d: -f3)
 systemctl is-active --quiet appgog-host-security.service
 systemctl is-enabled --quiet appgog-local-response.timer
 systemctl is-active --quiet appgog-local-response.timer
+systemctl is-enabled --quiet appgog-cloudflare-monitor.timer
+systemctl is-active --quiet appgog-cloudflare-monitor.timer
+[ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/host-security-cloudflare.py)" = '0:0:700' ]
+systemctl start appgog-cloudflare-monitor.service
+jq -e '.checks | length == 4 and all(.[]; .state == "unavailable")' "$STATE/cloudflare-report.json" >/dev/null
+grep -Fxq 'RestrictAddressFamilies=AF_UNIX' "$UNIT"
+grep -Fxq 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' /etc/systemd/system/appgog-cloudflare-monitor.service
 [ "$(stat -c '%u:%g:%a' /usr/local/sbin/appgog-security-response)" = '0:0:700' ]
 [ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/response-config.json)" = '0:0:600' ]
 [ "$(stat -c '%u:%g:%a' /usr/local/lib/appgog-security/release-public.pem)" = '0:0:600' ]
+cloudflare_hash=$(sha256sum /usr/local/lib/appgog-security/host-security-cloudflare.py | cut -d' ' -f1)
 response_hash=$(sha256sum /usr/local/lib/appgog-security/host-security-response.py | cut -d' ' -f1)
 config_hash=$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)
 key_hash=$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)
@@ -116,6 +125,20 @@ if systemctl is-active --quiet appgog-local-response.timer; then echo 'Rollback 
 cp "$SOURCE/scripts/host-security-response.py" "$RELEASE/scripts/host-security-response.py"
 lifecycle install
 systemctl is-active --quiet appgog-local-response.timer
+# Collector parse failure must preserve its executable and inactive enabled timer.
+systemctl stop appgog-cloudflare-monitor.timer
+printf '
+invalid cloudflare syntax (
+' >> "$RELEASE/scripts/host-security-cloudflare.py"
+if lifecycle install; then echo 'Broken Cloudflare candidate unexpectedly installed' >&2; exit 1; fi
+[ "$(sha256sum /usr/local/lib/appgog-security/host-security-cloudflare.py | cut -d' ' -f1)" = "$cloudflare_hash" ]
+systemctl is-enabled --quiet appgog-cloudflare-monitor.timer
+if systemctl is-active --quiet appgog-cloudflare-monitor.timer; then echo 'Rollback changed Cloudflare inactive timer state' >&2; exit 1; fi
+systemctl is-active --quiet appgog-host-security.service
+systemctl is-active --quiet appgog-local-response.timer
+cp "$SOURCE/scripts/host-security-cloudflare.py" "$RELEASE/scripts/host-security-cloudflare.py"
+lifecycle install
+systemctl is-active --quiet appgog-cloudflare-monitor.timer
 # Independent key pin mismatch fails without silently rotating the trust root.
 printf 'invalid key
 ' > "$RELEASE/scripts/release-public.pem"
@@ -136,6 +159,11 @@ lifecycle uninstall
 [ ! -e /usr/local/sbin/appgog-security-response ]
 [ ! -e /etc/systemd/system/appgog-local-response.timer ]
 [ ! -e /etc/systemd/system/appgog-local-response.service ]
+[ ! -e /etc/systemd/system/appgog-cloudflare-monitor.service ]
+[ ! -e /etc/systemd/system/appgog-cloudflare-monitor.timer ]
+[ ! -e /usr/local/lib/appgog-security/host-security-cloudflare.py ]
+[ -s "$STATE/cloudflare-report.json" ]
+if systemctl is-active --quiet appgog-cloudflare-monitor.timer; then echo 'CF timer survived uninstall' >&2; exit 1; fi
 [ "$(sha256sum /usr/local/lib/appgog-security/response-config.json | cut -d' ' -f1)" = "$config_hash" ]
 [ "$(sha256sum /usr/local/lib/appgog-security/release-public.pem | cut -d' ' -f1)" = "$key_hash" ]
 if systemctl is-active --quiet appgog-local-response.timer; then echo 'Response timer survived uninstall' >&2; exit 1; fi

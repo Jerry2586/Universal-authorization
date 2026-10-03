@@ -1263,6 +1263,129 @@ def containment_check():
                      check_id='response.containment', category='host', scope='independent local response')
 
 
+
+def cloudflare_checks():
+    """Read a root-private report from the separate network collector; never read its token."""
+    identifiers = ('dns', 'workers', 'rules', 'settings')
+    labels = ('Cloudflare DNS', 'Cloudflare Workers 路由', 'Cloudflare 重定向与安全规则', 'Cloudflare HTTPS 与站点设置')
+    try:
+        payload = read_state(STATE_DIR / 'cloudflare-report.json', limit=8192)
+        if not isinstance(payload, dict) or set(payload) != {'schema', 'checked_at', 'checks'} or payload['schema'] != 1:
+            raise ValueError('invalid collector report')
+        timestamp = datetime.fromisoformat(payload['checked_at'].replace('Z', '+00:00'))
+        age = (datetime.now(timezone.utc) - timestamp).total_seconds()
+        if timestamp.utcoffset().total_seconds() != 0 or not -120 <= age <= 900:
+            raise ValueError('stale collector report')
+        rows = payload['checks']
+        if not isinstance(rows, list) or len(rows) != 4:
+            raise ValueError('incomplete collector report')
+        results = []
+        for index, row in enumerate(rows):
+            identifier = 'cloudflare.' + identifiers[index]
+            if not isinstance(row, dict) or set(row) != {'id', 'name', 'state', 'detail', 'scope', 'evidence'} or row.get('id') != identifier or row.get('name') != labels[index] or row.get('state') not in {'ok', 'finding', 'unavailable'} or not isinstance(row.get('detail'), str) or len(row['detail']) > 180 or row.get('scope') != 'Cloudflare single zone; read-only':
+                raise ValueError('invalid collector check')
+            evidence = row['evidence']
+            if evidence is not None and (not isinstance(evidence, dict) or set(evidence) != {'digest', 'count'} or not isinstance(evidence['digest'], str) or not re.fullmatch(r'[a-f0-9]{64}', evidence['digest']) or type(evidence['count']) is not int or not 0 <= evidence['count'] <= 5000):
+                raise ValueError('invalid collector evidence')
+            if row['state'] != 'unavailable' and evidence is None:
+                raise ValueError('missing collector evidence')
+            results.append(check(labels[index], row['state'], row['detail'], check_id=identifier,
+                category='network', scope=row['scope'], evidence=evidence, checked_at=payload['checked_at']))
+        return results
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError):
+        return [check(label, 'unavailable', 'Cloudflare 只读检查未配置、结果过期或采集报告不完整；请在 Linux 安全菜单配置',
+            check_id='cloudflare.' + identifier, category='network', scope='Cloudflare single zone; read-only')
+            for identifier, label in zip(identifiers, labels)]
+
+
+def process_posture_check():
+    """Bounded executable-path inspection; do not read command lines, environment or process memory."""
+    scope = 'host /proc executable paths; <=2048 processes; 3 seconds'
+    started = time.monotonic()
+    count, mutable, deleted, inaccessible = 0, 0, 0, 0
+    try:
+        with os.scandir('/proc') as entries:
+            for entry in entries:
+                if not entry.name.isdigit():
+                    continue
+                count += 1
+                if count > 2048 or time.monotonic() - started > 3:
+                    raise ValueError('process inventory budget')
+                try:
+                    executable = os.readlink('/proc/' + entry.name + '/exe')
+                    if executable.endswith(' (deleted)'):
+                        deleted += 1
+                        executable = executable[:-10]
+                    if executable.startswith(('/tmp/', '/var/tmp/', '/dev/shm/')):
+                        mutable += 1
+                except FileNotFoundError:
+                    # Exited processes and kernel threads have no exe; permission failures stay unknown.
+                    continue
+                except PermissionError:
+                    inaccessible += 1
+        if count == 0 or inaccessible:
+            raise ValueError('process coverage incomplete')
+        suspect = mutable + deleted
+        return check('宿主进程执行路径', 'warning' if suspect else 'ok',
+            f'检查 {count} 个进程；临时目录运行 {mutable}，执行文件已删除 {deleted}。合法更新也可能触发，需复核' if suspect
+            else f'检查 {count} 个进程，未发现临时目录或已删除的执行文件；不含进程内存检测',
+            check_id='host.process-executables', scope=scope, evidence={'count': count, 'mutable': mutable, 'deleted': deleted})
+    except (OSError, ValueError, TypeError):
+        return check('宿主进程执行路径', 'unavailable', '进程执行路径读取失败或超限；不报告整机干净',
+            check_id='host.process-executables', scope=scope)
+
+
+def failed_services_check():
+    scope = 'systemd failed service/timer units; bounded 256 KiB'
+    try:
+        # Reuse the bounded pipe collector without invoking a shell or accepting external arguments.
+        raw = bounded_command_output(['/usr/bin/systemctl', 'list-units', '--state=failed',
+            '--type=service,timer', '--no-legend', '--no-pager', '--plain'])
+        lines = raw.decode('utf-8', errors='strict').splitlines()
+        if len(lines) > 128 or any(len(line) > 2048 for line in lines):
+            raise ValueError('unit budget')
+        units = []
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 4 or parts[2] != 'failed' or not re.fullmatch(r'[A-Za-z0-9_.@:\\-]+\.(?:service|timer)', parts[0]):
+                raise ValueError('invalid systemd unit')
+            units.append(parts[0])
+        return check('失败服务与定时器', 'warning' if units else 'ok',
+            f'发现 {len(units)} 个失败单元；请在本机核对服务日志，不自动停服务或修复' if units else '未发现处于 failed 状态的服务或定时器；配置变化另由主机基线核对',
+            check_id='host.failed-units', scope=scope, evidence={'units': sorted(units)})
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return check('失败服务与定时器', 'unavailable', '无法完整读取 systemd 服务/定时器状态',
+            check_id='host.failed-units', scope=scope)
+
+
+def bounded_command_output(command):
+    """Fixed callers only; cap stdout allocation, elapsed time and reap the child on every path."""
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, cwd='/', env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'})
+    output = bytearray()
+    deadline = time.monotonic() + 5
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not ready.select(remaining):
+                    raise ValueError('command timeout')
+                chunk = os.read(process.stdout.fileno(), min(65536, 262145 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > 262144:
+                    raise ValueError('command output budget')
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
+            raise ValueError('command failure')
+        return bytes(output)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=2)
+        process.stdout.close()
+
 def scan():
     baseline_checks = [integrity_check(), host_configuration_check()]
     results = [*baseline_checks, container_contract_check(),
@@ -1290,6 +1413,9 @@ def scan():
     results.append(listener_posture_check())
     results.append(malware_scan())
     results.append(business_malware_scan())
+    results.append(process_posture_check())
+    results.append(failed_services_check())
+    results.extend(cloudflare_checks())
     return results
 
 

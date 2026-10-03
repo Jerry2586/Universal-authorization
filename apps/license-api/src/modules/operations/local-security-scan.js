@@ -60,13 +60,13 @@ export function localSecurityScan(action, env = process.env) {
           if (!validStatus || !['idle', 'running', 'finished', 'failed', 'unavailable'].includes(result?.state)) {
             resolve({ state: 'unavailable', reason: '本机检查代理返回异常' }); return;
           }
-          const checks = Array.isArray(result.checks) ? result.checks.slice(0, 20).map(sanitizeCheck).filter(Boolean) : [];
+          const checks = Array.isArray(result.checks) ? result.checks.slice(0, 24).map(sanitizeCheck).filter(Boolean) : [];
           const history = Array.isArray(result.history) ? result.history.slice(-8).map(item => {
             const clean = sanitizeCheck(item);
             if (!clean || !clean.id || !clean.evidence_digest || !clean.checked_at) return null;
             return { ...clean, previous_state: CHECK_STATES.has(item.previous_state) ? item.previous_state : null };
           }).filter(Boolean) : [];
-          if (result.state === 'finished' && (!Array.isArray(result.checks) || result.checks.length > 20 ||
+          if (result.state === 'finished' && (!Array.isArray(result.checks) || result.checks.length > 24 ||
               checks.length !== result.checks.length || checks.length === 0 || !safeTimestamp(result.checked_at))) {
             resolve({ state: 'unavailable', reason: '本机检查报告缺失或不完整' }); return;
           }
