@@ -84,11 +84,15 @@ class Firewall(unittest.TestCase):
             if 'legacy' in path: raise FileNotFoundError
             return path
         def output(command): return raw() if command[0].endswith('/nft') else IPT
-        with patch.object(f, 'host_namespace', return_value=True), patch.object(f, 'trusted_executable', side_effect=available), patch.object(a, 'bounded_command_output', side_effect=output) as run:
+        with patch.object(f, 'host_namespace', return_value=True), patch.object(f, 'trusted_executable', side_effect=available), patch.object(f.Path, 'is_symlink', return_value=False), patch.object(a, 'bounded_command_output', side_effect=output) as run:
             current = f.snapshot()
             self.assertEqual(len(current['sources']), 3)
             self.assertEqual(run.call_count, 6)
             self.assertIn(['/usr/sbin/iptables-save', '-M', '/bin/false'], [x.args[0] for x in run.call_args_list])
+        # Absence fixture must not depend on installed distro alternatives. A
+        # genuinely dangling optional alias remains a production failure.
+        with patch.object(f, 'host_namespace', return_value=True), patch.object(f, 'COMMANDS', (('iptables-legacy', '/fixed/dangling', (), False),)), patch.object(f, 'trusted_executable', side_effect=FileNotFoundError()), patch.object(f.Path, 'is_symlink', return_value=True):
+            with self.assertRaises(ValueError): f.snapshot_once()
         with patch.object(f, 'host_namespace', return_value=False), patch.object(a, 'bounded_command_output') as run:
             with self.assertRaises(ValueError): f.snapshot_once()
             run.assert_not_called()
