@@ -86,3 +86,5 @@ Windows Python/Node 测试包含固定动作、归属、证据脱敏、恢复失
 
 
 本地新增独立 Cloudflare 只读配置监测与宿主执行路径/失败单元检查，配置和覆盖边界见 [本地配置与运行监测](local-cloudflare-monitor.md)。这不代表账号登录审计、整机查杀或异地容灾完成。
+
+主机新增 UDP、路由变化和五项内核安全配置的只读检查。路由需 root 明确批准完整指纹，首次和重复安装不自动学习；菜单与范围见 [本地主机网络检查](local-host-network-monitor.md)。

@@ -45,6 +45,17 @@ case "${1:-}" in
     trusted_root_file "$source_dir/scripts/install-host-security.sh" || { echo "安装器归属或权限异常" >&2; exit 1; }
     APPGOG_INSTALL_ROOT="$ROOT" sh "$source_dir/scripts/install-host-security.sh" engine
     exit $? ;;
+  network-fingerprint|approve-network)
+    trusted_root_file "$AGENT" && [ "$(stat -c %a "$AGENT")" = 700 ] || { echo '代理文件或父目录不可信' >&2; exit 1; }
+    if [ "$1" = network-fingerprint ]; then
+      [ "$#" -eq 1 ] || exit 2
+      APPGOG_INSTALL_ROOT="$ROOT" /usr/bin/python3 -I "$AGENT" --network-fingerprint
+    else
+      [ "$#" -eq 2 ] || { echo '批准路由需要完整 SHA-256 指纹' >&2; exit 2; }
+      APPGOG_INSTALL_ROOT="$ROOT" /usr/bin/python3 -I "$AGENT" --approve-network-baseline "$2"
+      systemctl restart appgog-host-security.service
+    fi
+    exit $? ;;
   approve-program|approve-host)
     [ "$#" -eq 2 ] || { echo '批准程序需精确版本；批准主机需 APPROVE-HOST' >&2; exit 2; }
     [ -f "$AGENT" ] && [ ! -L "$AGENT" ] && [ "$(stat -c %u "$AGENT")" = 0 ] && [ "$(stat -c %a "$AGENT")" = 700 ] || { echo '代理文件归属不可信' >&2; exit 1; }
@@ -74,7 +85,7 @@ case "${1:-}" in
       429) echo 'Host scan cooldown active (60 seconds)' >&2; exit 1 ;;
       *) echo "Host scan rejected: HTTP $code" >&2; exit 1 ;;
     esac ;;
-  *) echo 'Usage: appgog security-local status|scan|history|engine|approve-program VERSION|approve-host APPROVE-HOST|cloudflare menu|response ACTION' >&2; exit 2 ;;
+  *) echo 'Usage: appgog security-local status|scan|history|engine|approve-program VERSION|approve-host APPROVE-HOST|network-fingerprint|approve-network SHA256|cloudflare menu|response ACTION' >&2; exit 2 ;;
 esac
 [ "$#" -eq 1 ] || exit 2
 result=$(curl --silent --show-error --fail --unix-socket "$SOCKET" --max-time 5 'http://localhost/status') || exit 1

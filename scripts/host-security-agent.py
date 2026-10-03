@@ -1242,6 +1242,161 @@ def listener_posture_check():
     return result
 
 
+NETWORK_BASELINE = STATE_DIR / 'network-baseline.json'
+MAX_NETWORK_BYTES = 262144
+MAX_ROUTES = 256
+KERNEL_POLICY = {
+    '/proc/sys/kernel/randomize_va_space': {2},
+    '/proc/sys/fs/protected_hardlinks': {1},
+    '/proc/sys/fs/protected_symlinks': {1},
+    '/proc/sys/kernel/kptr_restrict': {1, 2},
+    '/proc/sys/kernel/dmesg_restrict': {1},
+}
+
+
+def fixed_proc_text(path):
+    # /proc/net and /proc/self are kernel symlinks. Use our numeric PID without
+    # relaxing ancestor no-follow checks or accepting caller-selected paths.
+    net_files = {'/proc/net/udp', '/proc/net/udp6', '/proc/net/route', '/proc/net/ipv6_route'}
+    if path in net_files:
+        target = Path('/proc') / str(os.getpid()) / 'net' / Path(path).name
+    elif path in KERNEL_POLICY:
+        target = Path(path)
+    else:
+        raise ValueError('unsupported proc inspection path')
+    return read_regular(target, MAX_NETWORK_BYTES).decode('ascii', errors='strict')
+
+
+def udp_posture_from_text(ipv4_text, ipv6_text):
+    total, ports, loopback, malformed = 0, set(), set(), 0
+    for family, text in ((4, ipv4_text), (6, ipv6_text)):
+        lines = text.splitlines()
+        if not lines or lines[0].split()[:4] != ['sl', 'local_address', 'rem_address', 'st']:
+            raise ValueError('missing UDP header')
+        for line in lines[1:]:
+            cells = line.split()
+            if len(cells) < 4:
+                malformed += 1
+                continue
+            try:
+                local, port_hex = cells[1].rsplit(':', 1)
+                peer, peer_port = cells[2].rsplit(':', 1)
+                address = proc_address(local, ipv6=family == 6)
+                remote = proc_address(peer, ipv6=family == 6)
+                if address.version != family or remote.version != family or not re.fullmatch(r'[0-9A-Fa-f]{4}', port_hex) or not re.fullmatch(r'[0-9A-Fa-f]{4}', peer_port):
+                    raise ValueError('invalid UDP endpoint')
+                if cells[3] not in {'01', '07'}:
+                    raise ValueError('invalid UDP state')
+                # Unconnected bound sockets only; connected clients are outside this check.
+                if cells[3] != '07' or not remote.is_unspecified or int(peer_port, 16) != 0:
+                    continue
+                total += 1
+                port = int(port_hex, 16)
+                mapped = getattr(address, 'ipv4_mapped', None)
+                if address.is_loopback or (mapped is not None and mapped.is_loopback):
+                    loopback.add(port)
+                else:
+                    ports.add(port)
+            except (ValueError, IndexError):
+                malformed += 1
+    state = 'unavailable' if malformed else ('warning' if ports else 'ok')
+    detail = 'UDP 快照格式异常，不能形成完整结论' if malformed else ('非回环地址 UDP 绑定端口：' + ', '.join(map(str, sorted(ports)[:20])) if ports else '未发现非回环地址的未连接 UDP 绑定')
+    return check('UDP 绑定端口姿态', state, detail, check_id='network.udp-listeners', category='network',
+        scope='host network namespace /proc/net/udp and udp6; no reachability proof',
+        evidence={'total': total, 'public_ports': sorted(ports), 'loopback_ports': sorted(loopback), 'malformed': malformed})
+
+
+def udp_posture_check():
+    try:
+        return udp_posture_from_text(fixed_proc_text('/proc/net/udp'), fixed_proc_text('/proc/net/udp6'))
+    except (OSError, ValueError, UnicodeError):
+        return check('UDP 绑定端口姿态', 'unavailable', 'UDP/UDP6 快照缺失、读取异常或超过 256 KiB；不能判断完整范围',
+            check_id='network.udp-listeners', category='network', scope='fixed host UDP/UDP6 snapshots')
+
+
+def route_snapshot_from_text(ipv4_text, ipv6_text):
+    routes = []
+    lines = ipv4_text.splitlines()
+    if not lines or lines[0].split()[:4] != ['Iface', 'Destination', 'Gateway', 'Flags']:
+        raise ValueError('invalid IPv4 route header')
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) != 11 or not re.fullmatch(r'[A-Za-z0-9_.:@-]{1,32}', fields[0]):
+            raise ValueError('invalid IPv4 route')
+        if any(not re.fullmatch(r'[A-Fa-f0-9]{8}', fields[pos]) for pos in (1, 2, 7)) or not re.fullmatch(r'[A-Fa-f0-9]{4}', fields[3]) or any(not re.fullmatch(r'[0-9]{1,10}', fields[pos]) for pos in (4, 5, 6, 8, 9, 10)):
+            raise ValueError('invalid IPv4 route fields')
+        # RefCnt and Use are traffic counters, not configuration.
+        routes.append([4, fields[0], fields[1].upper(), fields[2].upper(), fields[3].upper(), int(fields[6]), fields[7].upper(), *map(int, fields[8:])])
+        if len(routes) > MAX_ROUTES:
+            raise ValueError('route coverage limit')
+    for line in ipv6_text.splitlines():
+        fields = line.split()
+        if len(fields) != 10 or not re.fullmatch(r'[A-Za-z0-9_.:@-]{1,32}', fields[9]) or any(not re.fullmatch(r'[A-Fa-f0-9]{32}', fields[pos]) for pos in (0, 2, 4)) or any(not re.fullmatch(r'[A-Fa-f0-9]{2}', fields[pos]) or int(fields[pos], 16) > 128 for pos in (1, 3)) or any(not re.fullmatch(r'[A-Fa-f0-9]{8}', fields[pos]) for pos in (5, 6, 7, 8)):
+            raise ValueError('invalid IPv6 route')
+        routes.append([6, *[fields[pos].upper() for pos in (0, 1, 2, 3, 4, 5, 8)], fields[9]])
+        if len(routes) > MAX_ROUTES:
+            raise ValueError('route coverage limit')
+    if not routes:
+        raise ValueError('empty route inventory')
+    routes.sort(key=lambda row: json.dumps(row, separators=(',', ':')))
+    return {'digest': hashlib.sha256(json.dumps(routes, separators=(',', ':')).encode()).hexdigest(), 'count': len(routes)}
+
+
+def route_snapshot():
+    first = route_snapshot_from_text(fixed_proc_text('/proc/net/route'), fixed_proc_text('/proc/net/ipv6_route'))
+    second = route_snapshot_from_text(fixed_proc_text('/proc/net/route'), fixed_proc_text('/proc/net/ipv6_route'))
+    if first != second:
+        raise ValueError('routes changed during observation')
+    return first
+
+
+def approve_network_baseline(expected):
+    if not re.fullmatch(r'[a-f0-9]{64}', expected):
+        raise ValueError('exact network fingerprint required')
+    current = route_snapshot()
+    if current['digest'] != expected:
+        raise ValueError('network fingerprint changed; approval refused')
+    atomic_json(NETWORK_BASELINE, {'schema': 1, 'root': str(ROOT), **current,
+        'approved_at': datetime.now(timezone.utc).isoformat()})
+
+
+def route_configuration_check():
+    scope = 'host IPv4/IPv6 main route snapshots; explicit root approval; no firewall audit'
+    try:
+        current = route_snapshot()
+        baseline = json.loads(read_state(NETWORK_BASELINE, 4096))
+        if not isinstance(baseline, dict) or set(baseline) != {'schema', 'root', 'digest', 'count', 'approved_at'} or type(baseline['schema']) is not int or baseline['schema'] != 1 or baseline['root'] != str(ROOT) or not isinstance(baseline['digest'], str) or not re.fullmatch(r'[a-f0-9]{64}', baseline['digest']) or type(baseline['count']) is not int or not 1 <= baseline['count'] <= MAX_ROUTES or not isinstance(baseline['approved_at'], str):
+            raise ValueError('invalid route baseline')
+        changed = any(current[key] != baseline[key] for key in ('digest', 'count'))
+        return check('主机路由配置变化', 'finding' if changed else 'ok',
+            '路由与 root 批准基线不符；核对合法网络变更及入侵证据' if changed else '受控 IPv4/IPv6 路由与批准基线一致',
+            check_id='network.routes', category='network', scope=scope, evidence=current)
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        return check('主机路由配置变化', 'unavailable', '未批准路由基线、部分读取、超限或观察期间变化；不能判断安全',
+            check_id='network.routes', category='network', scope=scope)
+
+
+def kernel_security_check():
+    values, missing, weakened = {}, [], []
+    for path, permitted in KERNEL_POLICY.items():
+        try:
+            value = fixed_proc_text(path).strip()
+            if not re.fullmatch(r'[0-9]{1,3}', value):
+                raise ValueError('invalid kernel value')
+            values[path] = int(value)
+            if int(value) not in permitted:
+                weakened.append(path.rsplit('/', 1)[1])
+        except (OSError, ValueError, UnicodeError):
+            missing.append(path.rsplit('/', 1)[1])
+    state = 'unavailable' if missing else ('warning' if weakened else 'ok')
+    detail = '内核防护参数低于建议值：' + ', '.join(weakened) if weakened else ('部分内核防护参数无法读取' if missing else '五项固定内核防护参数达到建议值')
+    if weakened and missing:
+        detail += '；另有参数未取得，不能形成完整结论'
+    return check('内核基础防护参数', state, detail, check_id='host.kernel-security',
+        scope='ASLR/hardlink/symlink/kptr/dmesg fixed parameters; no automatic changes',
+        evidence={'values': values, 'missing': missing, 'weakened': weakened})
+
+
 def containment_check():
     path = STATE_DIR / 'incident.json'
     if not path.exists() and not path.is_symlink():
@@ -1411,6 +1566,7 @@ def scan():
         except OSError:
             results.append(check(label, 'unavailable', '无法读取路径或权限'))
     results.append(listener_posture_check())
+    results.extend((udp_posture_check(), route_configuration_check(), kernel_security_check()))
     results.append(malware_scan())
     results.append(business_malware_scan())
     results.append(process_posture_check())
@@ -1556,6 +1712,10 @@ def main():
 if __name__ == '__main__':
     if sys.argv[1:] == ['--write-baseline'] and os.geteuid() == 0:
         write_baseline()
+    elif sys.argv[1:] == ['--network-fingerprint'] and os.geteuid() == 0:
+        print(route_snapshot()['digest'])
+    elif len(sys.argv) == 3 and sys.argv[1] == '--approve-network-baseline' and os.geteuid() == 0:
+        approve_network_baseline(sys.argv[2])
     elif sys.argv[1:] == ['--write-host-baseline'] and os.geteuid() == 0:
         write_host_baseline()
     elif sys.argv[1:] == ['--approve-host-baseline', 'APPROVE-HOST'] and os.geteuid() == 0:

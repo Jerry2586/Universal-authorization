@@ -282,6 +282,7 @@ security_menu() {
       '  9. 备份并使用可信签名发布包修复源码' \
       ' 10. 独立本地事故中心（隔离 / 离线验签修复 / 解除 / 策略）' \
       ' 11. Cloudflare 只读监测（配置身份 / 检查 / 核验基线）' \
+      ' 12. 核验后批准主机路由基线（完整指纹）' \
       '  0. 返回主菜单'
     tty_read '请选择：'
     case "$REPLY_VALUE" in
@@ -309,6 +310,14 @@ security_menu() {
       9) confirm '确认创建备份并重新下载当前签名版本修复源码？' && repair_source; pause_menu ;;
       10) security_local response menu; pause_menu ;;
       11) security_local cloudflare menu; pause_menu ;;
+      12)
+        printf '%s\n' '先独立检查 IPv4/IPv6 默认网关与主路由的合法性；此批准不审计防火墙或策略路由。'
+        if network_fingerprint=$(security_local network-fingerprint); then
+          printf '当前主路由指纹：%s\n' "$network_fingerprint"
+          tty_read '确认合法后输入上面的完整 SHA-256 指纹（留空取消）：'; approved_network=$REPLY_VALUE
+          [ -n "$approved_network" ] && security_local approve-network "$approved_network"
+        fi
+        pause_menu ;;
       0|'') return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
     esac

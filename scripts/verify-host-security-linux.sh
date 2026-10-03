@@ -67,6 +67,18 @@ wait_report
 jq -e 'any(.checks[]; .id == "integrity.program" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 # Enabling an installer-owned timer must not invalidate the fresh host baseline.
 jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
+# Actual host proc reads must work under the hardened unit; no automatic route approval.
+jq -e '(.checks | length <= 24) and any(.checks[]; .id == "network.udp-listeners" and (.state == "ok" or .state == "warning")) and any(.checks[]; .id == "network.routes" and .state == "unavailable") and any(.checks[]; .id == "host.kernel-security" and (.state == "ok" or .state == "warning"))' "$TEST_ROOT/report.json" >/dev/null
+[ "$(wc -c < "$TEST_ROOT/report.json")" -le 32768 ]
+[ ! -e "$STATE/network-baseline.json" ]
+fingerprint=$(sh "$RELEASE/scripts/security-local.sh" network-fingerprint)
+if sh "$RELEASE/scripts/security-local.sh" approve-network invalid > "$TEST_ROOT/network-refusal.log" 2>&1; then echo 'Invalid network fingerprint accepted' >&2; exit 1; fi
+[ ! -e "$STATE/network-baseline.json" ]
+sh "$RELEASE/scripts/security-local.sh" approve-network "$fingerprint"
+[ "$(stat -c '%u:%g:%a' "$STATE/network-baseline.json")" = '0:0:600' ]
+network_hash=$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)
+wait_report
+jq -e 'any(.checks[]; .id == "network.routes" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 gid=$(getent group appgog-security | cut -d: -f3)
 [ "$(stat -c '%u:%g:%a' /run/appgog-security)" = "0:$gid:750" ]
 [ "$(stat -c '%u:%g:%a' /run/appgog-security/scan.sock)" = "0:$gid:660" ]
@@ -97,6 +109,7 @@ printf '
 lifecycle install
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
+[ "$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)" = "$network_hash" ]
 wait_report
 if ! jq -e '.state == "finished" and any(.checks[]; .id == "integrity.program" and .state == "finding") and (.history | length > 0)' "$TEST_ROOT/report.json" >/dev/null; then
   jq '{state, checks: [.checks[] | {id,state}], history_count: (.history | length)}' "$TEST_ROOT/report.json" >&2
@@ -171,6 +184,7 @@ if systemctl is-active --quiet appgog-cloudflare-monitor.timer; then echo 'CF ti
 if systemctl is-active --quiet appgog-local-response.timer; then echo 'Response timer survived uninstall' >&2; exit 1; fi
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
+[ "$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)" = "$network_hash" ]
 [ -s "$STATE/events.json" ] && getent group appgog-security >/dev/null
 # Released history survives repeated uninstall and must not block a safe reinstall.
 incident_hash=$(sha256sum "$STATE/incident.json" | cut -d' ' -f1)
@@ -212,4 +226,5 @@ systemctl is-active --quiet appgog-host-security.service
 systemctl is-active --quiet appgog-local-response.timer
 [ "$(sha256sum "$STATE/baseline.json" | cut -d' ' -f1)" = "$program_hash" ]
 [ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$host_hash" ]
+[ "$(sha256sum "$STATE/network-baseline.json" | cut -d' ' -f1)" = "$network_hash" ]
 echo 'Isolated Linux agent: install, upgrade, rollback, socket grants, engine and preserving uninstall passed'
