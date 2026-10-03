@@ -30,7 +30,7 @@ test('host configuration detects account, service, application-setting and mode 
 with tempfile.TemporaryDirectory() as tmp:
  p=fixture(tmp); host=p/'host'; host.mkdir(); (host/'sshd.conf').write_text('known')
  cron=host/'cron.d'; cron.mkdir(); (cron/'job').write_text('approved')
- a.HOST_FILES=(str(host/'sshd.conf'),str(host/'missing.conf')); a.HOST_DIRS=(str(cron),)
+ a.HOST_FILES=(str(host/'sshd.conf'),str(host/'missing.conf')); a.HOST_DIRS=(str(cron),); a.LOCAL_PASSWD=host/'passwd'; a.LOCAL_PASSWD.write_text('service:x:100:100::/nonexistent:/usr/sbin/nologin')
  (p/'shared').mkdir(); env=p/'shared/.env'; env.write_text('TOKEN=secret-value')
  a.write_host_baseline(); original=a.HOST_BASELINE.read_bytes(); assert a.host_configuration_check()['state']=='ok'
  env.write_text('TOKEN=new-secret'); report=a.host_configuration_check(); assert report['state']=='finding'

@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory() as tmp:
  p=pathlib.Path(tmp).resolve(); a.ROOT=p; a.STATE_DIR=p/'state'; a.STATE_DIR.mkdir(mode=0o700)
  a.BASELINE=a.STATE_DIR/'baseline.json'; a.HOST_BASELINE=a.STATE_DIR/'host-baseline.json'
  a.HOST_FILES=(); a.HOST_DIRS=()
+ a.LOCAL_PASSWD=p/'local-passwd'; a.LOCAL_PASSWD.write_text('service:x:100:100::/nonexistent:/usr/sbin/nologin\\n')
  for dirname in a.PROGRAM_DIRS: (p/dirname).mkdir()
  for name in a.PROGRAM_ROOT_FILES:
   (p/name).write_text(json.dumps({'version':'1.2.68'}) if name=='package.json' else 'trusted')

@@ -23,6 +23,9 @@ BUILD_DOMAIN=build.appgog.test
 ' > "$TEST_ROOT/shared/.env"
 chmod 600 "$TEST_ROOT/shared/.env"
 export APPGOG_INSTALL_ROOT=$TEST_ROOT APPGOG_HOST_ENV_FILE=$TEST_ROOT/shared/.env PYTHONDONTWRITEBYTECODE=1
+LOGIN_USER=appgog-security-ci
+LOGIN_HOME=/home/appgog-security-ci
+LOGIN_CREATED=0
 checkpoint=setup
 lifecycle() { sh "$RELEASE/scripts/install-host-security.sh" "$1"; }
 wait_report() {
@@ -62,12 +65,27 @@ cleanup() {
     if [ -s "$STATE/firewall-report.json" ]; then cat "$STATE/firewall-report.json"; fi
   fi
   lifecycle uninstall || true
+  # Fixed CI-only paths and account; never recursively remove a user-supplied home.
+  if [ "$LOGIN_CREATED" = 1 ] && [ "$LOGIN_HOME" = /home/appgog-security-ci ]; then
+    rm -f "$LOGIN_HOME/.ssh/authorized_keys" "$LOGIN_HOME/.ssh/environment"
+    rmdir "$LOGIN_HOME/.ssh" "$LOGIN_HOME" 2>/dev/null || true
+    userdel "$LOGIN_USER" || true
+  fi
   # The baseline/history/group remain as required by the uninstall contract.
   exit "$result"
 }
 trap cleanup 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# Disposable disabled-password login account; never use a runner/root key file.
+[ ! -e "$LOGIN_HOME" ] && [ ! -L "$LOGIN_HOME" ] || { echo 'Existing login fixture home' >&2; exit 1; }
+if getent passwd "$LOGIN_USER" >/dev/null; then echo 'Existing login fixture account' >&2; exit 1; fi
+useradd --no-create-home --home-dir "$LOGIN_HOME" --shell /bin/sh "$LOGIN_USER"
+LOGIN_CREATED=1
+install -d -o "$LOGIN_USER" -g "$LOGIN_USER" -m 0700 "$LOGIN_HOME" "$LOGIN_HOME/.ssh"
+printf 'CI-only nonfunctional public-key marker\n' > "$LOGIN_HOME/.ssh/authorized_keys"
+chown "$LOGIN_USER:$LOGIN_USER" "$LOGIN_HOME/.ssh/authorized_keys"
+chmod 600 "$LOGIN_HOME/.ssh/authorized_keys"
 # Do not make lifecycle acceptance depend on a third-party feed CDN.
 # An invalid CI-only daily file intentionally leaves production malware status unknown.
 if [ ! -f /var/lib/clamav/daily.cvd ] && [ ! -f /var/lib/clamav/daily.cld ]; then
@@ -89,6 +107,33 @@ lifecycle install
 wait_report
 jq -e 'any(.checks[]; .id == "integrity.program" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 # Enabling an installer-owned timer must not invalidate the fresh host baseline.
+jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
+checkpoint=host-login-persistence
+python3 -I "$SOURCE/tests/fixtures/host-security-login.py"
+grep -Fxq 'ProtectHome=read-only' "$UNIT"
+jq -e --arg key "$LOGIN_HOME/.ssh/authorized_keys" '.schema == 1 and .files[$key].digest != null' "$STATE/host-baseline.json" >/dev/null
+login_baseline_hash=$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)
+printf 'CI-only additional login-key marker\n' >> "$LOGIN_HOME/.ssh/authorized_keys"
+request_fresh_scan
+jq -e 'any(.checks[]; .id == "host.configuration" and .state == "finding")' "$TEST_ROOT/report.json" >/dev/null
+if grep -Fq 'CI-only additional login-key marker' "$TEST_ROOT/report.json"; then echo 'Key content escaped into report' >&2; exit 1; fi
+[ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$login_baseline_hash" ]
+printf 'CI-only nonfunctional public-key marker\n' > "$LOGIN_HOME/.ssh/authorized_keys"
+request_fresh_scan
+jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
+printf 'CI_ONLY=not-a-secret\n' > "$LOGIN_HOME/.ssh/environment"
+chown "$LOGIN_USER:$LOGIN_USER" "$LOGIN_HOME/.ssh/environment"
+chmod 600 "$LOGIN_HOME/.ssh/environment"
+request_fresh_scan
+jq -e 'any(.checks[]; .id == "host.configuration" and .state == "finding")' "$TEST_ROOT/report.json" >/dev/null
+rm -f "$LOGIN_HOME/.ssh/environment"
+chmod 666 "$LOGIN_HOME/.ssh/authorized_keys"
+request_fresh_scan
+jq -e 'any(.checks[]; .id == "host.configuration" and .state == "unavailable")' "$TEST_ROOT/report.json" >/dev/null
+if sh "$RELEASE/scripts/security-local.sh" approve-host APPROVE-HOST; then echo 'Unsafe login permissions approved' >&2; exit 1; fi
+[ "$(sha256sum "$STATE/host-baseline.json" | cut -d' ' -f1)" = "$login_baseline_hash" ]
+chmod 600 "$LOGIN_HOME/.ssh/authorized_keys"
+request_fresh_scan
 jq -e 'any(.checks[]; .id == "host.configuration" and .state == "ok")' "$TEST_ROOT/report.json" >/dev/null
 checkpoint=host-network
 # Actual host proc reads must work under the hardened unit; no automatic route approval.

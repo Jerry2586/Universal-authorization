@@ -37,10 +37,22 @@ MAX_INVENTORY_BYTES = 128 * 1024 * 1024
 MAX_FILE_BYTES = 8 * 1024 * 1024
 HOST_FILES = ('/etc/passwd', '/etc/group', '/etc/ssh/sshd_config', '/etc/sudoers',
               '/etc/sysctl.conf', '/etc/ufw/ufw.conf',
-              '/etc/crontab', '/etc/docker/daemon.json', '/etc/login.defs')
+              '/etc/crontab', '/etc/docker/daemon.json', '/etc/login.defs', '/etc/ssh/sshrc')
 HOST_DIRS = ('/etc/ssh/sshd_config.d', '/etc/sudoers.d', '/etc/cron.d',
              '/etc/sysctl.d', '/etc/ufw', '/etc/firewalld', '/etc/iptables',
              '/etc/systemd/system', '/var/spool/cron')
+
+# Fixed local login scope; neither NSS nor private key files are queried.
+LOCAL_PASSWD = Path('/etc/passwd')
+NON_LOGIN_SHELLS = frozenset(('/bin/false', '/usr/bin/false', '/sbin/nologin', '/usr/sbin/nologin',
+                             '/bin/sync', '/usr/bin/sync', '/sbin/shutdown', '/usr/sbin/shutdown',
+                             '/sbin/halt', '/usr/sbin/halt'))
+SSH_LOGIN_FILES = ('authorized_keys', 'authorized_keys2', 'authorized_principals', 'rc', 'environment')
+MAX_LOCAL_ACCOUNTS = 256
+MAX_LOGIN_HOMES = 64
+MAX_LOGIN_FILE_BYTES = 64 * 1024
+MAX_LOGIN_BYTES = 1024 * 1024
+
 MAX_HISTORY = 64
 MAX_RESPONSE_BYTES = 32768
 MAX_CHECKS = 25
@@ -332,6 +344,127 @@ def integrity_check():
                      check_id='integrity.program', scope='bounded program inventory')
 
 
+
+def login_directory_metadata(folder):
+    """Descriptor-checked ancestors; a missing path never follows a symlink."""
+    target = Path(folder).absolute()
+    if os.name != 'posix':
+        for item in reversed((target, *target.parents)):
+            try:
+                metadata = item.lstat()
+            except FileNotFoundError:
+                return None
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                raise OSError('unsafe login directory')
+        return metadata
+    descriptors, opened = [], []
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
+        descriptor = os.open(target.anchor, flags)
+        descriptors.append(descriptor)
+        current = Path(target.anchor)
+        opened.append((current, os.fstat(descriptor)))
+        missing = False
+        for part in target.parts[1:]:
+            current = current / part
+            try:
+                descriptor = os.open(part, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                missing = True
+                break
+            descriptors.append(descriptor)
+            opened.append((current, os.fstat(descriptor)))
+        # Check each named ancestor against the pinned descriptor. Directory
+        # timestamps are intentionally not compared for unrelated sibling IO.
+        identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_uid, item.st_gid)
+        for (name, before), descriptor in zip(opened, descriptors):
+            if identity(before) != identity(os.fstat(descriptor)) or identity(before) != identity(name.lstat()):
+                raise OSError('login directory changed during lookup')
+        return None if missing else opened[-1][1]
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def local_login_inventory(expected_passwd_digest=None):
+    """Only fixed SSH entry files for bounded local root/login-shell accounts."""
+    passwd = read_regular(LOCAL_PASSWD, 256 * 1024)
+    if expected_passwd_digest is not None and hashlib.sha256(passwd).hexdigest() != expected_passwd_digest:
+        raise OSError('local account inventory changed after host read')
+    homes, users = {}, set()
+    rows = passwd.decode('utf-8', errors='strict').splitlines()
+    if not rows or len(rows) > MAX_LOCAL_ACCOUNTS:
+        raise OSError('local account inventory limit')
+    for row in rows:
+        fields = row.split(':')
+        if len(fields) != 7:
+            raise OSError('invalid local account inventory')
+        user, _, uid_text, gid_text, _, home, shell = fields
+        if (not user or len(user) > 64 or any(ord(char) < 33 or ord(char) == 127 for char in user)
+                or user in users or not re.fullmatch(r'[0-9]{1,10}', uid_text)
+                or not re.fullmatch(r'[0-9]{1,10}', gid_text)):
+            raise OSError('invalid local account identity')
+        users.add(user)
+        uid, gid = int(uid_text), int(gid_text)
+        if uid > 4294967294 or gid > 4294967294:
+            raise OSError('invalid local account numeric identity')
+        if uid != 0 and shell in NON_LOGIN_SHELLS:
+            continue
+        if (not home.startswith('/') or home == '/' or len(home) > 512
+                or posixpath.normpath(home) != home or home.startswith('//')
+                or any(ord(char) < 32 or ord(char) == 127 for char in home)
+                or len(Path(home).parts) > 32):
+            raise OSError('unsupported local login home')
+        homes.setdefault(home, set()).add(uid)
+        if len(homes) > MAX_LOGIN_HOMES:
+            raise OSError('local login home limit')
+    result, total = {}, 0
+    def directory(name, owners):
+        metadata = login_directory_metadata(name)
+        if metadata is None:
+            result[str(name) + '/'] = {'missing': True}
+            return None
+        if os.name == 'posix' and (metadata.st_uid not in owners | {0} or stat.S_IMODE(metadata.st_mode) & 0o022):
+            raise OSError('unsafe login directory ownership or permissions')
+        result[str(name) + '/'] = {'mode': stat.S_IMODE(metadata.st_mode), 'uid': metadata.st_uid, 'gid': metadata.st_gid}
+        return metadata
+    for name, owners in sorted(homes.items()):
+        home, ssh = Path(name), Path(name) / '.ssh'
+        home_before = directory(home, owners)
+        ssh_before = directory(ssh, owners) if home_before is not None else None
+        if home_before is None:
+            result[str(ssh) + '/'] = {'missing': True}
+        for entry in SSH_LOGIN_FILES:
+            target = ssh / entry
+            if ssh_before is None:
+                result[str(target)] = {'missing': True}
+                continue
+            try:
+                metadata = target.lstat()
+            except FileNotFoundError:
+                result[str(target)] = {'missing': True}
+                continue
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or (os.name == 'posix' and (metadata.st_uid not in owners | {0} or stat.S_IMODE(metadata.st_mode) & 0o022))):
+                raise OSError('unsafe login entry ownership, type or permissions')
+            payload = read_regular(target, MAX_LOGIN_FILE_BYTES)
+            total += len(payload)
+            if total > MAX_LOGIN_BYTES:
+                raise OSError('login entry byte limit')
+            if file_identity(metadata) != file_identity(target.lstat()):
+                raise OSError('login entry changed during read')
+            result[str(target)] = {'digest': hashlib.sha256(payload).hexdigest(),
+                                  'mode': stat.S_IMODE(metadata.st_mode), 'uid': metadata.st_uid,
+                                  'gid': metadata.st_gid, 'link': False}
+        for target, before in ((home, home_before), (ssh, ssh_before)):
+            after = login_directory_metadata(target)
+            if (before is None) != (after is None) or (before is not None and file_identity(before) != file_identity(after)):
+                raise OSError('login directory changed during inventory')
+    if read_regular(LOCAL_PASSWD, 256 * 1024) != passwd:
+        raise OSError('local account inventory changed during scan')
+    return result
+
+
 def host_snapshot():
     result, total = {}, 0
     def record(target, metadata):
@@ -370,6 +503,11 @@ def host_snapshot():
         result[name + '/'] = {'mode': stat.S_IMODE(metadata.st_mode), 'uid': getattr(metadata, 'st_uid', 0), 'gid': getattr(metadata, 'st_gid', 0)}
         for item, item_meta in bounded_tree(target, allow_links=True):
             record(item, item_meta)
+    passwd_record = result.get(str(LOCAL_PASSWD), {})
+    login = local_login_inventory(passwd_record.get('digest'))
+    if len(result) + len(login) > 2048:
+        raise OSError('host inventory limit')
+    result.update(login)
     # Hash application settings locally; never return their contents or individual hashes.
     shared = ROOT / 'shared'
     settings = shared / '.env' if shared.is_dir() else ROOT / '.env'
@@ -381,6 +519,8 @@ def host_snapshot():
         if not stat.S_ISREG(metadata.st_mode):
             raise OSError('unsafe application settings')
         record(settings, metadata)
+    if len(result) > 2048:
+        raise OSError('host inventory limit')
     return result
 
 
@@ -408,7 +548,7 @@ def host_configuration_check():
         changed = sorted(name for name in set(current) | set(expected) if current.get(name) != expected.get(name))
         return check('账户、SSH、Docker 与持久化配置', 'finding' if changed else 'ok',
                      f'固定配置清单 {len(current)} 项；差异 {len(changed)} 项；' + (', '.join(changed[:4]) if changed else '与本机批准基线一致'),
-                     check_id='host.configuration', scope='passwd/group/sshd/sudo/cron/systemd/docker; no shadow or private keys',
+                     check_id='host.configuration', scope='host configs; local root/login-shell default SSH entry files; no shadow/private keys/NSS/custom auth paths',
                      evidence={'count': len(current), 'changed': changed})
     except (OSError, ValueError, TypeError):
         return check('账户、SSH、Docker 与持久化配置', 'unavailable', '主机配置基线缺失、读取失败、超限或扫描期间变化',

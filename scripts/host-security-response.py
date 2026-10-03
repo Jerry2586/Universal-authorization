@@ -162,8 +162,9 @@ def approve_image(expected):
     item = target()
     if item.get('Image') != expected or item.get('State', {}).get('Health', {}).get('Status') != 'healthy':
         raise ValueError('image identity/health mismatch')
-    if AGENT.integrity_check()['state'] != 'ok' or AGENT.container_contract_check()['state'] != 'ok':
-        raise ValueError('source or container contract requires investigation')
+    if (AGENT.integrity_check()['state'] != 'ok' or AGENT.host_configuration_check()['state'] != 'ok'
+            or AGENT.container_contract_check()['state'] != 'ok'):
+        raise ValueError('source, host baseline or container contract requires investigation')
     AGENT.atomic_json(IMAGE, {'schema': 1, 'root': str(ROOT), 'version': VERSION,
                               'image_id': expected, 'program_baseline': baseline_pin(AGENT.BASELINE),
                               'host_baseline': baseline_pin(AGENT.HOST_BASELINE), 'approved_at': now()})

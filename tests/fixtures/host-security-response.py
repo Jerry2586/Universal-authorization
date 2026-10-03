@@ -98,6 +98,25 @@ class ResponseTests(unittest.TestCase):
             self.container['State']['Running'] = True
         return ''
 
+    def test_image_approval_rejects_host_findings_unknown_and_preserves_pin(self):
+        c.approve_image(IMAGE)
+        original = c.IMAGE.read_bytes()
+        for state in ('finding', 'warning', 'unavailable'):
+            with patch.object(a, 'host_configuration_check', lambda: {'state': state}):
+                with self.assertRaises(ValueError):
+                    c.approve_image(IMAGE)
+                self.assertEqual(c.IMAGE.read_bytes(), original)
+        self.assertEqual(c.approve_image(IMAGE)['state'], 'approved')
+
+    def test_resume_rejects_fresh_host_login_findings_before_start(self):
+        self.pinned()
+        for state in ('finding', 'warning', 'unavailable'):
+            with patch.object(a, 'host_configuration_check', lambda: {'state': state}):
+                with self.assertRaises(ValueError):
+                    c.resume('APPROVE-DATA-AND-RESUME')
+                self.assertContained()
+                self.assertFalse(any(call[0] == 'start' for call in self.calls))
+
     def pinned(self):
         c.approve_image(IMAGE)
         c.isolate()
