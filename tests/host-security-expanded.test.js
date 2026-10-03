@@ -141,3 +141,17 @@ with tempfile.TemporaryDirectory() as tmp:
  try: a.validate_zip_budget(target); raise AssertionError('broken ZIP accepted')
  except OSError: pass
 `));
+
+
+test('business malware history survives initial unknown, finding, recovery and service restart',enabled,()=>run(fixture+`
+with tempfile.TemporaryDirectory() as tmp:
+ p=fixture(tmp)
+ for state in ['unavailable', 'finding', 'ok']:
+  item=a.check('business scan', state, 'bounded result', check_id='malware.business', category='malware')
+  a.scan=lambda:[item]; a.run_scan()
+  assert a.STATE['state']=='finished' and a.STATE['history_state']=='ok', a.STATE
+  assert a.STATE['history'][-1]['state']==state and a.STATE['history'][-1]['category']=='malware'
+  a.EVENTS=[]; a.PREVIOUS={}; assert a.load_history()
+ assert [item['state'] for item in a.EVENTS]==['unavailable','finding','ok']
+ assert a.EVENTS[-1]['previous_state']=='finding'
+`));

@@ -1,6 +1,6 @@
 import { request as unixRequest } from 'node:http';
 
-const CHECK_CATEGORIES = new Set(['host', 'container', 'permissions', 'ssh', 'network']);
+const CHECK_CATEGORIES = new Set(['host', 'container', 'permissions', 'ssh', 'network', 'malware']);
 const CHECK_SEVERITIES = new Set(['info', 'low', 'medium', 'high', 'critical', 'unknown']);
 const CHECK_STATES = new Set(['ok', 'warning', 'finding', 'unavailable']);
 

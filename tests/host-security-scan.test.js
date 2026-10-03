@@ -135,3 +135,14 @@ test('history filters secret fields, bounds output and reports corrupted evidenc
     const bad=await withAgent(response({...finished,history}));assert.equal(bad.history.length,0);assert.equal(bad.history_state,'unavailable');
   }
 });
+
+
+test('business malware category survives the fixed local API in checks and transition history', async()=>{
+  const item={...basicCheck, id:'malware.business', category:'malware', state:'finding', severity:'high'};
+  const report=await withAgent(response({...finished, checks:[item], history:[{...item,previous_state:'ok'}]}));
+  assert.equal(report.state,'finished');
+  assert.equal(report.checks[0].category,'malware');
+  assert.equal(report.history_state,'ok');
+  assert.equal(report.history[0].category,'malware');
+  assert.equal(report.history[0].previous_state,'ok');
+});

@@ -416,7 +416,7 @@ def history_item(item):
     result = {key: bounded_text(item.get(key), limit) for key, limit in
               [('name', 60), ('detail', 180), ('id', 80), ('category', 32), ('severity', 16),
                ('checked_at', 40), ('scope', 120), ('evidence_digest', 64)]}
-    if result['category'] not in {'host', 'container', 'permissions', 'ssh', 'network'} or result['severity'] not in SEVERITIES:
+    if result['category'] not in {'host', 'container', 'permissions', 'ssh', 'network', 'malware'} or result['severity'] not in SEVERITIES:
         raise ValueError('invalid history classification')
     observed = datetime.fromisoformat(result['checked_at'].replace('Z', '+00:00'))
     if observed.tzinfo is None:
