@@ -1,4 +1,3 @@
-import { createSecurityUi } from './security-ui.js?v=security-console-1.2.69';
 import { createProductUi } from './products.js';
 import { $ } from './core.js';
 import { createPlanUi } from './plans.js';
@@ -33,7 +32,6 @@ export function createAdminPage(shell) {
   const productsUi = createProductUi(shell);
   const plansUi = createPlanUi(shell);
   const releaseUpload = createAdminReleaseUpload(shell);
-  const securityUi = createSecurityUi(shell);
 
   function applySession(session) {
     state.session = session;
@@ -41,7 +39,7 @@ export function createAdminPage(shell) {
     const sections = {
       products: 'product.view', licenses: 'license.view', plans: 'license.view', versions: 'version.view', builds: 'build.view', tickets: 'ticket.view',
       activations: 'activation.view', members: 'admin.manage', audit: 'audit.view',
-      announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage', security: 'system.manage',
+      announcements: 'system.manage', migration: 'system.manage', cms: 'system.manage',
     };
     for (const [view, permission] of Object.entries(sections)) {
       const item = document.querySelector(`.nav-item[data-view="${view}"]`);
@@ -145,9 +143,7 @@ export function createAdminPage(shell) {
     releaseUpload.bind();
     licenseUi.bind();
     bindLicenseForm();
-    bindSettingsForm();
-    securityUi.bind();
-    $('open-account-center')?.addEventListener('click', openAccountCenter);
+    bindSettingsForm();    $('open-account-center')?.addEventListener('click', openAccountCenter);
     $('refresh-admin')?.addEventListener('click', refresh);
     for (const id of [
       'license-search', 'license-plan-filter', 'license-status-filter', 'version-search', 'version-status-filter', 'version-product-filter',
@@ -174,5 +170,5 @@ export function createAdminPage(shell) {
       }
       if(!plans.length)options.append(element('p','暂无可用套餐，请先创建套餐。','muted'));
     }
-    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); securityUi.render(); }, applySession, afterSession });
+    productsUi.render(data.products ?? []); plansUi.render(data.license_plans ?? []); dashboard.render(data); }, applySession, afterSession });
 }

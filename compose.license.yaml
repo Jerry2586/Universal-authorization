@@ -11,7 +11,6 @@ services:
     restart: unless-stopped
     init: true
     read_only: true
-    group_add: ["${APPGOG_HOST_SECURITY_GID:-65532}"]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 512
@@ -43,8 +42,6 @@ services:
       - appgog-uploads:/app/var/uploads
       - ${APPGOG_SHARED_DIR:-./shared}/update-control:/app/var/update-control
       - appgog-license-config:/app/runtime/license
-      - ${APPGOG_SHARED_DIR:-./shared}/security:/app/runtime/security:ro
-      - /run/appgog-security:/app/runtime/host-security:ro
       - appgog-caddy-data:/app/runtime/caddy-data
       - appgog-caddy-config:/app/runtime/caddy-config
     healthcheck:

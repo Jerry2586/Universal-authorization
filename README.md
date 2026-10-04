@@ -1,10 +1,10 @@
-# APPGOG打包授权系统 v1.2.69
+# APPGOG打包授权系统 v1.2.70
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.69 增加深色科技感本机安全中心，提供安全首页、病毒查杀、实时防护、环境检查、网站与容器、隔离区、修复恢复、备份容灾、防护日志、设置十个页面；以有效本机报告驱动状态，未接入操作明确禁用；v1.2.68 提供私有/公开仓库通用短命令与私有仓库只读令牌终端输入；v1.2.67 恢复三种可重复运行的一行在线安装命令（首装或更新）；v1.2.66 将三种安装命令按服务器角色分段说明；v1.2.65 增加授权和打包节点每五分钟本机固定范围检查与云端自报时效、状态变更告警（候选，非独立宿主证据）；v1.2.63 增加授权机 Linux 本机配置检查、固定范围文件基线比对、可选 ClamAV 六文件检查和后台一键入口（候选，待 Linux 实机验收；不覆盖业务数据或整个宿主机）；v1.2.62 修复私有 Release 附件认证回下载；v1.2.61 增加授权后台的云端安全状态、文件摘要上报和分身份配对；目前云端只做监测与告警，分机角色安装已加入安装器，仍待 Linux 双拓扑实机验收。v1.2.60 完成纯净源码与授权桥的卸载解耦。授权桥 1.1.11 在 Xboard 正式卸载插件时撤销 bootstrap 宿主挂载，清除常驻 Guard、主题登记、安装身份和本地激活状态，并安排 PHP/Octane 运行时重载；站点在桥安装后追加的 bootstrap 自定义内容会保留。只删除保护清单但不执行正式卸载仍返回 423。官方产品 Git 和源 ZIP 不包含桥，也不依赖桥即可安装运行；桥、授权注入、签名和混淆仍只属于授权中心生成的客户保护包。
+v1.2.70 将本地安全查杀与云端监测完整迁出业务项目。APPGOG 保留授权、打包、产品、Worker、签名更新、备份、迁移和分机部署；铁幕安全与玄武引擎在独立安全项目维护。授权与打包原有同机、授权单机、打包单机三条安装入口继续使用。
 
-本地安全中心包括宿主固定范围检查、后台状态与历史、独立 root 事故菜单及受控恢复工具；新增界面优先呈现已有检查能力。隔离记录管理、网页策略编辑、网页一键事件恢复、独立不可变异机灾备与干净宿主重建仍未完成。实时防护采用每五分钟定期检查，不代表毫秒级入侵拦截或对 root 失守的可信证明。详见 [安全中心界面与能力边界](docs/security-console.md) 和 [本地安全事故处置与验收边界](docs/local-security-response.md)。
+安全功能的迁移位置、旧代理与事故记录的处理见 [安全项目剥离说明](docs/security-extraction.md)。升级不会删除旧代理的证书、扫描历史或事故记录，也不会自动解封已经隔离的业务服务。
 
 ## Linux 安装 + 专业管理菜单
 
@@ -47,7 +47,7 @@ curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- build
 其他域名可使用完整参数，例如在对应服务器上执行：`curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- --role all --auth-domain auth.example.com --build-domain build.example.com`；分机将 `all` 改为 `license` 或 `build`。短参数只适用于上面的本站域名。
 ### 安装后的 Linux 菜单
 
-在相应的服务器运行 `sudo appgog`：菜单 **18 → 1** 查看部署角色和配对状态，授权机 **18 → 3** 可撤销节点身份；菜单 **17** 查看本地安全检查、对接云端安全中心；菜单 **14** 卸载程序并保留数据库、密钥、上传文件和备份。
+在相应的服务器运行 `sudo appgog`：菜单 **18 → 1** 查看部署角色和配对状态，授权机 **18 → 3** 可撤销节点身份；菜单 **14** 卸载程序并保留数据库、密钥、上传文件和备份。
 
 上述三条短命令从公开的 `Jerry2586/i` 获取仅包含安装器的 `i.sh`，业务源码与签名发布包仍在私有仓库。首次访问私有发布包时，安装器在终端提示输入限定 `Jerry2586/Universal-authorization` 仓库、权限仅 `Contents: Read` 的 GitHub 令牌，保存为 root:600 文件；再次运行短命令以及 Linux 菜单/后台更新共用该文件。主仓库若设为公开，同样三条命令无需令牌即可运行。引导器先验 Ed25519 清单签名和 `.run` 哈希。禁止把令牌写进命令、URL 或 README。
 
@@ -59,7 +59,7 @@ curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- build
 
 每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.69` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.70` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 

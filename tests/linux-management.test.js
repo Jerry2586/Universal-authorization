@@ -12,9 +12,6 @@ const scripts = {
   docker: join(root, 'scripts/docker.sh'),
   installer: join(root, 'scripts/install-linux.sh'),
   manager: join(root, 'scripts/appgog.sh'),
-  securityLocal: join(root, 'scripts/security-local.sh'),
-  securityConnect: join(root, 'scripts/security-connect.sh'),
-  securityDoctor: join(root, 'scripts/security-doctor.sh'),
   updateHelper: join(root, 'scripts/update-helper.sh'),
   signedUpdateLibrary: join(root, 'scripts/lib/signed-update.sh'),
   releaseDownloadLibrary: join(root, 'scripts/lib/release-download.sh'),
@@ -74,12 +71,6 @@ test('Linux installer installs Docker, protects existing configuration, and crea
   assert.match(installer, /mv -Tf .*CURRENT_LINK/);
   assert.match(installer, /appgog-update-helper\.service/);
   assert.match(installer, /case "\$existing" in[\s\S]*"\$INSTALL_ROOT"\/\*/);
-  assert.doesNotMatch(installer.split('install_host_security_agent() {')[0], /ProtectSystem=strict/);
-  assert.match(installer, /install_host_security_agent\(\)[\s\S]*install-host-security\.sh/);
-  const hostInstaller=text(join(root, 'scripts/install-host-security.sh'));
-  assert.match(hostInstaller, /ProtectSystem=strict/);
-  assert.match(hostInstaller, /install -o root -g root -m 0700/);
-  assert.match(hostInstaller, /ExecStart=\$python_bin -I \$AGENT_FILE/);
   assert.match(installer, /\/usr\/local\/bin\/appgog/);
   assert.match(installer, /preflight_network/);
   assert.match(installer, /DNS A 记录/);
@@ -120,7 +111,7 @@ test('deployment role library selects one immutable compose contract and managem
   assert.match(roleLibrary, /角色 Compose 文件不存在/);
   assert.doesNotMatch(roleLibrary, /(^|\n)\s*\.\s+["']?\$?[^\n]*\.env/);
 
-  for (const script of [scripts.docker, scripts.manager, scripts.migration, scripts.securityConnect, scripts.securityDoctor]) {
+  for (const script of [scripts.docker, scripts.manager, scripts.migration]) {
     const contents = text(script);
     assert.match(contents, /scripts\/lib\/deployment-role\.sh/);
     assert.match(contents, /appgog_compose_file/);

@@ -71,19 +71,6 @@ function envFile(values) {
   }).join('\n') + '\n';
 }
 
-function validateCloudIdentities({ configRoot, env, deploymentRole, cloudUrl }) {
-  if (!cloudUrl) return;
-  if (new URL(cloudUrl).protocol !== 'https:') throw new Error('SECURITY_CLOUD_URL 必须使用 HTTPS');
-  const securityRoot = join(configRoot, 'security');
-  if (!existsSync(join(securityRoot, 'ca.crt'))) throw new Error('云端 CA 证书缺失');
-  const roles = deploymentRole === 'all' ? ['license', 'build', 'reader'] : [deploymentRole, 'reader'];
-  for (const role of roles) {
-    if (!validSecret(env[`SECURITY_CLOUD_${role.toUpperCase()}_TOKEN`])
-      || !existsSync(join(securityRoot, `${role}.crt`)) || !existsSync(join(securityRoot, `${role}.key`))) {
-      throw new Error(`云端 ${role} 身份凭据缺失`);
-    }
-  }
-}
 
 export function initialize({ root = '/app', env = process.env } = {}) {
   const configRoot = join(root, 'runtime');
@@ -116,8 +103,6 @@ export function initialize({ root = '/app', env = process.env } = {}) {
     if (existsSync(identityPath) || existsSync(databasePath) || existsSync(privatePath)) {
       throw new Error('已有授权中心身份或数据，拒绝转换为打包分机');
     }
-    const cloudUrl = env.SECURITY_CLOUD_URL || '';
-    validateCloudIdentities({ configRoot, env, deploymentRole, cloudUrl });
     if (unpaired) return { authUrl, buildUrl, deploymentRole, identity: null, unpaired: true };
     const values = { NODE_ENV: 'production', BUILD_CENTER_PORT: 8788, INTERNAL_LICENSE_URL: authUrl,
       BUILD_CENTER_NODE_TOKEN: buildToken };
@@ -171,20 +156,8 @@ export function initialize({ root = '/app', env = process.env } = {}) {
   identity.keyFingerprint = fingerprint;
   atomic(identityPath, JSON.stringify(identity, null, 2));
   if (migratedLicenseEncryptionKey) console.log('APPGOG 已为旧部署补齐独立的 LICENSE_ENCRYPTION_KEY；原身份、签名密钥和历史数据保持不变。');
-  const cloudUrl = env.SECURITY_CLOUD_URL ?? '';
-  const securityRoot = join(configRoot, 'security');
-  let cloud = {};
-  if (cloudUrl) {
-    validateCloudIdentities({ configRoot, env, deploymentRole, cloudUrl });
-    const ca = join(securityRoot, 'ca.crt');
-    cloud = { SECURITY_CLOUD_URL: cloudUrl, SECURITY_CLOUD_CA: ca,
-      SECURITY_CLOUD_CLIENT_CERT: join(securityRoot, 'reader.crt'),
-      SECURITY_CLOUD_CLIENT_KEY: join(securityRoot, 'reader.key'),
-      SECURITY_CLOUD_TOKEN: env.SECURITY_CLOUD_READER_TOKEN ?? '' };
-    if (!validSecret(cloud.SECURITY_CLOUD_TOKEN)) throw new Error('云端后台读取凭据缺失');
-  }
   const shared = { NODE_ENV: 'production', PUBLIC_BASE_URL: authUrl };
-  atomic(join(configRoot, 'license/runtime.env'), envFile({ ...shared, ...cloud, ...identity.options, ...identity.secrets,
+  atomic(join(configRoot, 'license/runtime.env'), envFile({ ...shared, ...identity.options, ...identity.secrets,
     ADMIN_USERNAME: identity.adminUsername, ADMIN_PASSWORD: identity.adminPassword,
     APPGOG_ROLE: 'license-center', EMBEDDED_WORKER: 'false', PORT: 8787,
     BUILD_CENTER_PUBLIC_URL: `${buildUrl}/build`, DATABASE_PATH: '/app/var/data/appgog.sqlite',

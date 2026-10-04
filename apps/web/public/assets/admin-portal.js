@@ -1,4 +1,4 @@
-import { createAdminPage } from './portal/admin-page.js?v=security-console-1.2.69';
+import { createAdminPage } from './portal/admin-page.js?v=business-1.2.70';
 import { createPortalShell } from './portal/shell.js';
 
 const shell = createPortalShell('admin');

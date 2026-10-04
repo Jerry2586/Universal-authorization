@@ -197,41 +197,23 @@ test('role-specific Compose files keep one hardened service and least-privilege 
   assert.match(start, /启动失败/);
 });
 
-test('Cloud security identities are separate and initialization fails closed on missing reader material', t => {
-  const root = fixture(t);
-  const security = join(root, 'runtime/security');
-  mkdirSync(security, { recursive: true });
-  const cloud = { ...env, SECURITY_CLOUD_URL: 'https://security.appgog.test:9443',
-    SECURITY_CLOUD_LICENSE_TOKEN: 'l'.repeat(40), SECURITY_CLOUD_BUILD_TOKEN: 'b'.repeat(40),
-    SECURITY_CLOUD_READER_TOKEN: 'r'.repeat(40) };
-  for (const name of ['ca.crt', 'license.crt', 'license.key', 'build.crt', 'build.key']) writeFileSync(join(security, name), name);
-  assert.throws(() => initialize({ root, env: cloud }), /reader 身份凭据缺失/);
-  writeFileSync(join(security, 'reader.crt'), 'reader.crt');
-  writeFileSync(join(security, 'reader.key'), 'reader.key');
-  initialize({ root, env: cloud });
-  const runtime = readFileSync(join(root, 'runtime/license/runtime.env'), 'utf8');
-  assert.match(runtime, /SECURITY_CLOUD_CLIENT_CERT=.*reader\.crt/);
-  assert.match(runtime, /SECURITY_CLOUD_CLIENT_KEY=.*reader\.key/);
-  assert.ok(!runtime.includes(cloud.SECURITY_CLOUD_LICENSE_TOKEN));
-  assert.ok(!runtime.includes(cloud.SECURITY_CLOUD_BUILD_TOKEN));
-  assert.ok(runtime.includes(cloud.SECURITY_CLOUD_READER_TOKEN));
-});
-
-test('split build cloud linkage requires build and reader identities but never a license identity', t => {
-  const root = fixture(t);
-  const security = join(root, 'runtime/security');
-  mkdirSync(security, { recursive: true });
-  const cloud = { ...env, APPGOG_DEPLOYMENT_ROLE: 'build', APPGOG_BUSINESS_PAIRED: 'true',
-    BUILD_CENTER_NODE_TOKEN: 'n'.repeat(48), WORKER_NODE_TOKEN: 'w'.repeat(48),
-    SECURITY_CLOUD_URL: 'https://security.appgog.test:9443',
-    SECURITY_CLOUD_BUILD_TOKEN: 'b'.repeat(40), SECURITY_CLOUD_READER_TOKEN: 'r'.repeat(40) };
-  for (const name of ['ca.crt', 'build.crt', 'build.key']) writeFileSync(join(security, name), name);
-  assert.throws(() => initialize({ root, env: cloud }), /reader 身份凭据缺失/);
-  writeFileSync(join(security, 'reader.crt'), 'reader.crt');
-  writeFileSync(join(security, 'reader.key'), 'reader.key');
-  assert.doesNotThrow(() => initialize({ root, env: cloud }));
-  assert.equal(existsSync(join(security, 'license.crt')), false);
-  assert.equal(existsSync(join(security, 'license.key')), false);
+test('legacy cloud configuration never requires security credentials or spawns security processes after extraction', t => {
+  for (const role of ['all','license','build']) {
+    const root = fixture(t);
+    const old = { ...env, APPGOG_DEPLOYMENT_ROLE: role,
+      SECURITY_CLOUD_URL: 'https://security.appgog.test:9443',
+      SECURITY_CLOUD_READER_TOKEN: 'r'.repeat(40),
+      ...(role === 'build' ? { BUILD_CENTER_NODE_TOKEN: 'b'.repeat(48), WORKER_NODE_TOKEN: 'w'.repeat(48) } : {}) };
+    initialize({root, env:old});
+    const runtime=readFileSync(join(root,'runtime',role==='build'?'build':'license','runtime.env'),'utf8');
+    assert.doesNotMatch(runtime,/SECURITY_CLOUD/);
+    assert.equal(existsSync(join(root,'runtime/security')),false);
+    const again=initialize({root,env:old});
+    assert.equal(again.deploymentRole,role);
+  }
+  const start=readFileSync('scripts/docker/start.js','utf8');
+  assert.doesNotMatch(start,/security-agent|SECURITY_CLOUD/);
+  assert.doesNotMatch(readFileSync('scripts/docker/health.js','utf8'),/SECURITY_CLOUD/);
 });
 
 test('split build node keeps authorization identity and signing keys off the build host', t => {

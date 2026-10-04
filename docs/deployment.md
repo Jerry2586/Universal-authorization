@@ -2,7 +2,7 @@
 
 日期：2026-10-02。
 
-APPGOG打包授权系统 v1.2.69 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署和独立云端安全中心的实机验收仍在进行；以下分机与云端步骤只用于候选部署验证。
+APPGOG打包授权系统 v1.2.70 的正式生产路线使用授权与打包同机的 Docker Compose + Caddy。分机部署的双拓扑实机验收仍在进行；安全服务通过独立的铁幕安全项目安装。
 
 ## 1. 前置条件
 
@@ -32,7 +32,7 @@ APPGOG打包授权系统 v1.2.69 的正式生产路线使用授权与打包同�
 配置只读仓库令牌后，引导器通过 GitHub Release API 获取正式包，不通过第三方 GitHub 代理。所有备用来源都必须通过同一 Ed25519 签名和 SHA-256 校验。若有自有国内对象存储/CDN，把整套 Release 附件原样同步后执行：
 
 ```sh
-sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.69 sh ./install.sh
+sudo env APPGOG_CHINA_RELEASE_BASE=https://download.example.cn/appgog/v1.2.70 sh ./install.sh
 ```
 
 完全断网时可从 Release 下载版本化 `.run` 后上传执行。需要自动配置 Cloudflare DNS 时，可在安装器交互提示中提供凭据；不要把 Token 写进命令行参数。
@@ -159,7 +159,7 @@ appgog migration-rollback-import <迁移ID>
 
 ## 8. 分机部署与独立云端配对（候选版本）
 
-同机：业务服务器安装 `--role all`（默认），同时运行授权、打包、Worker；安全中心在另一台 Linux 服务器。三服务器：分别在授权机和打包机安装 `--role license`、`--role build`；安全中心在第三台服务器。两种模式的授权数据库、业务签名私钥都只在授权机，打包机仅持有独立服务节点凭据。同机或分机的业务节点由云端的独立证书和令牌识别。
+同机安装 `--role all`（默认），运行授权、打包和 Worker。分机分别安装 `--role license`、`--role build`。授权数据库与业务签名私钥只在授权机，打包机只持有自身业务节点凭据。独立安全服务的身份与业务节点配对分别管理。
 
 ### 独立授权服务器：执行授权安装命令
 
@@ -191,15 +191,7 @@ curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- all
 
 `--role all` 同时运行授权、打包和 Worker。菜单 **18** 会显示同机无需配对；现有同机安装升级时保留角色、数据库、签名密钥和配置。当前私有 Release 首次需要仓库只读令牌；各节点重复原命令即可获取签名 Latest 版本。仅本地源码验证可用 `scripts/install-linux.sh --source-dir <已核验源码目录> --role <角色>`，不能代替签名生产包。
 
-后续云端安全中心对接步骤：
-1. 在一台独立的干净 Linux 服务器，从可信的安全中心源码执行 `sudo bash scripts/install-linux.sh --host security.example.com`。在此服务器上，从经签名验证的 APPGOG 同版本源码运行 `node scripts/create-baseline.js <已验签源码路径> > /root/appgog-baseline.json`；不得用曾疑似失守的业务节点生成基线。使用云端仓库的 `scripts/enroll-node.sh` 分别注册 `license-center` 和 `build-center` 的公网 `https://域名/health`。
-2. 在安全中心服务器上用 `scripts/export-business-bundle.sh all|license|build /root/新目录` 导出独立配对包，私密传输；同机使用 `all`，分机各用自己的 `license`、`build` 包。业务机上执行 `sudo appgog security-connect https://security.example.com:9443 /root/对应配对包 <独立获取的CA-SHA256指纹>`。配对先验证服务器 CA、域名、客户端证书和令牌，再写入配置并重启；摘要不匹配则恢复先前配置。
-3. 业务机执行 `sudo appgog security-doctor`；授权机最终必须看到两个节点的报告新鲜、摘要匹配以及外部 HTTPS 探测健康。打包机只持有自己的上报身份，云端 reader 身份留在授权机。云端使用 `scripts/rotate-identity.sh stage|commit <角色>` 分阶段更新证书和令牌，更新业务配对并验证后再撤销旧身份。
-
-授权机和打包机均由宿主 systemd 代理开机执行首次固定范围扫描，此后约每五分钟复查；本地管理员手动检查共用同一锁和冷却。节点定期将状态、检查时间和计数经 mTLS 上报云端，详情仅留本机；云端超过十五分钟未见有效扫描或超过两分钟未收到节点报告时标为过期。云端的宿主结果是节点自报，不能独立证明节点未失守；本地候选已增加独立 root 事故菜单：默认只告警，管理员明确启用后仅在病毒阳性与程序基线偏移同时出现时隔离本机 APPGOG 容器；不会自动删除文件、卷或重建业务。离线验签修复只恢复程序文件且保持隔离。操作与恢复条件见 [本地安全事故处置](local-security-response.md)。请先完成 Linux systemd、ClamAV、两/三机 TLS 与恢复演练再用于生产。
-
-每台业务服务器重跑同一安装命令进行升级，安全中心升级运行自身安装脚本。备份/恢复须按本文件第 6 节执行；分机分别备份和恢复自身角色的卷与 `.env`，不可把授权密钥导入打包机。认证连通性验收包含正确与错误令牌、身份交叉使用、证书与域名验证、断线恢复、两种拓扑的首装和升级；没有真实 Linux 服务器的记录不能算完成生产验收。
-每台业务机的 `sudo appgog` 菜单 17 和命令 `sudo appgog security-local scan|status` 分别启动本地固定范围扫描、查看报告；云端身份诊断与配对独立显示。首次配对需要由云端服务器控制台取得 CA 证书 SHA-256 指纹，不能仅从收到的身份包读取后照抄；若已有 CA 变化，配对会拒绝，必须离线核对事件并安排审计后的 CA 恢复。普通网络失联只报告异常，不永久锁死管理入口。配对中的重启会短暂停服务，应在维护窗口进行。
+本地查杀和玄武云端对接由独立安全项目安装与维护，见 [安全项目剥离说明](security-extraction.md)。本项目管理菜单保留业务角色配对、更新、备份和迁移；不再创建、更新或卸载安全代理。旧安全事故围栏仍会阻止误启动，必须在独立安全控制台核对证据后处理。
 
 ## 仓库改为私有时的在线安全更新
 

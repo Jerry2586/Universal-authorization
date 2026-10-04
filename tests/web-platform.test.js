@@ -119,6 +119,13 @@ test('同站双入口：管理员与客户会话隔离，写操作必须有 CSRF
   assert.equal(adminLogin.status, 200);
   const adminCookie = adminLogin.cookie.split(';')[0];
   const adminCsrf = adminLogin.data.csrf_token;
+  assert.doesNotMatch(adminHtml, /data-page="security"|view=ironcurtain|security-console/);
+  for (const path of ['/web/admin/security/status','/web/admin/security/local-scan']) {
+    const removed = await send(path,{cookie:adminCookie});
+    assert.equal(removed.status,404,'extracted security endpoints must not remain on the business server');
+    const postRemoved = await send(path,{method:'POST',body:{},cookie:adminCookie,csrf:adminCsrf});
+    assert.equal(postRemoved.status,404);
+  }
   const blocked = await send('/web/admin/licenses', {
     method: 'POST', cookie: adminCookie,
     body: { customer_ref: 'ORDER-1', domain: 'demo.example.com' },

@@ -55,10 +55,6 @@ export function createOperationsService({ repository, config, packageVersion = '
         subjectType: 'system_update', subjectId: queued.id, metadata: { version: queued.version }, now });
       return queued;
     },
-    recordLocalSecurityScan(state, actorId) {
-      repository.audit({ actorType: 'admin', actorId, action: 'host_security.scan_requested',
-        subjectType: 'host_security', subjectId: 'local', metadata: { state }, now: clock().toISOString() });
-    },
     serviceEnabled(key, fallback = true) {
       const property = serviceConfig[key];
       return property ? config[property] !== false : boolSetting(key, fallback);

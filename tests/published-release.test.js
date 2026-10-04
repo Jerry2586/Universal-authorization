@@ -41,17 +41,6 @@ function buildReleaseFixture() {
     'compose.build.yaml',
     'scripts/install-linux.sh',
     'scripts/backup-integrity.py', 'docs/local-backup-integrity.md',
-    'packages/core/src/host-scan-contract.js', 'docs/local-scan-report-contract.md',
-    'scripts/install-host-security.sh',
-    'scripts/host-security-agent.py',
-    'scripts/host-security-response.py',
-    'scripts/host-security-repair.py', 'scripts/host-security-cloudflare.py', 'scripts/host-security-firewall.py',
-    'scripts/verify-host-security-linux.sh',
-    'scripts/verify-host-security-response-linux.py', 'scripts/verify-host-security-firewall-linux.py',
-    'docs/local-security-response.md', 'docs/local-database-health.md', 'docs/local-cloudflare-monitor.md', 'docs/local-host-network-monitor.md', 'docs/local-host-firewall-monitor.md', 'docs/local-host-login-monitor.md',
-    'scripts/security-connect.sh',
-    'scripts/security-doctor.sh', 'scripts/security-local.sh',
-    'scripts/security-agent.js',
     'scripts/lib/deployment-role.sh',
   ]) zipEntries.set(`${releaseName}/${path}`, readFileSync(join(root, path)));
   const zip = writeZip(zipEntries, { date: new Date('2026-09-25T00:00:00Z') });

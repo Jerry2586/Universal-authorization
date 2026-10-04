@@ -14,9 +14,9 @@ compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$COMPOSE_FILE" "$@
 fail() { echo "错误：$*" >&2; exit 1; }
 incident_guard() {
   if [ -e /var/lib/appgog-security/incident.json ] || [ -L /var/lib/appgog-security/incident.json ]; then
-    [ -f /usr/local/sbin/appgog-security-response ] && [ ! -L /usr/local/sbin/appgog-security-response ] || fail '隔离记录存在，独立恢复控制器缺失；禁止启动。'
-    /usr/local/sbin/appgog-security-response guard >/dev/null || fail '本地安全事故未解除；请使用独立事故恢复菜单。'
+    fail '旧版安全隔离记录仍存在；请由管理员核实事件、归档证据并人工解除历史围栏后再启动业务。'
   fi
+  [ ! -e "$ROOT_DIR/.operation-fence" ] || fail '业务维护围栏生效，禁止启动。'
 }
 
 compose_version_supported() {
@@ -32,28 +32,6 @@ require_config() {
   if [ ! -f .env ]; then
     echo '请复制 .env.docker.example 为 .env，只填写 AUTH_DOMAIN 和 BUILD_DOMAIN。' >&2
     exit 1
-  fi
-}
-host_security_lifecycle() {
-  action=$1
-  host_root=$ROOT_DIR
-  host_env=$ROOT_DIR/.env
-  # Release layouts share one stable installation root across upgrades.
-  if [ -L "$ROOT_DIR/.env" ]; then
-    resolved_env=$(readlink -f "$ROOT_DIR/.env" 2>/dev/null || true)
-    case "$resolved_env" in
-      */shared/.env)
-        host_root=$(dirname -- "$(dirname -- "$resolved_env")")
-        release_path=$(readlink -f "$ROOT_DIR")
-        case "$release_path" in "$host_root"/releases/*) host_env=$resolved_env ;; *) fail '共享配置链接不属于当前发布目录' ;; esac
-        ;;
-      *) fail '拒绝非发布布局的配置符号链接' ;;
-    esac
-  fi
-  if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    APPGOG_INSTALL_ROOT="$host_root" APPGOG_HOST_ENV_FILE="$host_env" sh "$ROOT_DIR/scripts/install-host-security.sh" "$action" || return 1
-  else
-    echo '本地安全代理不可用：需在带 systemd 的 Linux 上以 root 安装；业务容器可继续运行。' >&2
   fi
 }
 build_with_retry() {
@@ -422,19 +400,15 @@ case "${1:-help}" in
     incident_guard
     require_docker
     require_config
-    host_security_lifecycle prepare
     deploy
-    host_security_lifecycle install
     echo '单容器安装完成。用 sh scripts/docker.sh credentials 查看初始管理员账号密码。'
     ;;
   start)
     incident_guard
     require_docker
     require_config
-    host_security_lifecycle prepare
     prepare_update_control
     compose up -d --no-build --pull never --wait --wait-timeout 180
-    host_security_lifecycle install
     ;;
   stop)
     require_docker
@@ -445,11 +419,9 @@ case "${1:-help}" in
     incident_guard
     require_docker
     require_config
-    host_security_lifecycle prepare
     prepare_update_control
     if [ "${APPGOG_RESTORE_NO_START:-false}" != true ]; then
       compose up -d --no-build --pull never --force-recreate --wait --wait-timeout 180
-      host_security_lifecycle install
     fi
     ;;
 

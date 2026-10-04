@@ -657,9 +657,6 @@ EOF
   fi
 }
 
-install_host_security_agent() {
-  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" APPGOG_HOST_ENV_FILE="$SHARED_DIR/.env"     sh "$CURRENT_LINK/scripts/install-host-security.sh" install || log '本地安全代理未就绪；请检查日志，面板不得显示已防护'
-}
 print_result() {
   if [ "$DEPLOYMENT_ROLE" = build ]; then
     printf '\nAPPGOG 打包分机已安装：%s\n打包入口：https://%s/build\n授权上游：https://%s\n运行诊断：appgog doctor\n' "$INSTALL_ROOT" "$BUILD_DOMAIN" "$AUTH_DOMAIN"
@@ -701,8 +698,7 @@ wait_public_https() {
 }
 
 if [ -e /var/lib/appgog-security/incident.json ] || [ -L /var/lib/appgog-security/incident.json ]; then
-  [ -x /usr/local/sbin/appgog-security-response ] || fail '本地隔离记录存在，独立控制器缺失；禁止更新覆盖证据。'
-  /usr/local/sbin/appgog-security-response guard >/dev/null || fail '先在独立本地事故菜单核验恢复，再执行普通安装/升级。'
+  fail '旧版安全隔离记录仍存在；请由管理员核实事件、归档证据并人工解除历史围栏，禁止更新覆盖证据。'
 fi
 prepare_shared_layout
 if [ -f "$SHARED_DIR/.env" ]; then

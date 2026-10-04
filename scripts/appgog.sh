@@ -42,7 +42,7 @@ ROOT_DIR=$(resolve_root) || {
   for trusted_script in dns lifecycle manager-migration signed-update deployment-role; do
     trusted_root_file "$ROOT_DIR/scripts/lib/$trusted_script.sh" || { echo "管理脚本归属或权限异常：$trusted_script" >&2; exit 1; }
   done
-  for trusted_script in appgog docker security-local security-connect security-doctor migration; do
+  for trusted_script in appgog docker migration; do
     trusted_root_file "$ROOT_DIR/scripts/$trusted_script.sh" || { echo "管理入口归属或权限异常：$trusted_script" >&2; exit 1; }
   done
 }
@@ -124,7 +124,6 @@ uninstall_keep_data() {
   (cd "$ROOT_DIR" && compose down --remove-orphans) 2>&1 | tee -a "$uninstall_log"
   image=$(sed -n 's/^APPGOG_IMAGE=//p' "$ENV_FILE" | tail -n 1)
   [ -z "$image" ] || docker image rm "$image" >> "$uninstall_log" 2>&1 || true
-  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" APPGOG_HOST_ENV_FILE="$ENV_FILE" sh "$ROOT_DIR/scripts/install-host-security.sh" uninstall >> "$uninstall_log" 2>&1 || return 1
   systemctl disable --now appgog-update-helper.service >> "$uninstall_log" 2>&1 || true
   rm -f /etc/systemd/system/appgog-update-helper.service /usr/local/bin/appgog
   systemctl daemon-reload >/dev/null 2>&1 || true
@@ -251,80 +250,6 @@ installed_role() {
   appgog_deployment_role "$ENV_FILE"
 }
 
-security_local() {
-  [ "$(id -u)" -eq 0 ] || { say_error '宿主检查需要 root 或 sudo。'; return 1; }
-  APPGOG_INSTALL_ROOT="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/security-local.sh" "$@"
-}
-
-security_cloud_doctor() {
-  [ "$(id -u)" -eq 0 ] || { say_error '读取云端身份需要 root 或 sudo。'; return 1; }
-  APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/security-doctor.sh"
-}
-
-security_connect() {
-  [ "$(id -u)" -eq 0 ] || { say_error '配对操作需要 root 或 sudo。'; return 1; }
-  [ "$#" -eq 3 ] || { say_error '需要云端 HTTPS 地址和私有身份包目录。'; return 2; }
-  APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/security-connect.sh" --cloud-url "$1" --bundle-dir "$2" --ca-sha256 "$3" --install-dir "$INSTALL_ROOT"
-}
-
-security_menu() {
-  while :; do
-    header
-    printf '%s\n' "安全中心（本机角色：$(installed_role)）" \
-      '  1. 查看宿主检查和本地查杀结果' \
-      '  2. 立即运行固定范围本地检查' \
-      '  3. 检验云端加密身份和节点状态' \
-      '  4. 与独立云端配对（需要离线交付的身份包）' \
-      '  5. 查看最近告警与恢复记录' \
-      '  6. 安装或更新本地 ClamAV 查杀引擎' \
-      '  7. 核验后批准当前程序基线（仅 root）' \
-      '  8. 核验后批准当前主机配置基线（仅 root）' \
-      '  9. 备份并使用可信签名发布包修复源码' \
-      ' 10. 独立本地事故中心（隔离 / 离线验签修复 / 解除 / 策略）' \
-      ' 11. Cloudflare 只读监测（配置身份 / 检查 / 核验基线）' \
-      ' 12. 核验后批准主机路由基线（完整指纹）' \
-      ' 13. 运行时防火墙（只读采集 / 指纹批准 / 状态）' \
-      '  0. 返回主菜单'
-    tty_read '请选择：'
-    case "$REPLY_VALUE" in
-      1) security_local status; pause_menu ;;
-      2) security_local scan; pause_menu ;;
-      3) security_cloud_doctor; pause_menu ;;
-      4)
-        tty_read '云端 HTTPS 地址（含端口）：'; cloud_origin=$REPLY_VALUE
-        tty_read '私有身份包目录绝对路径：'; bundle_dir=$REPLY_VALUE
-        tty_read '通过独立渠道取得的云端 CA SHA-256 指纹：'; ca_fingerprint=$REPLY_VALUE
-        [ -n "$cloud_origin" ] && [ -n "$bundle_dir" ] && confirm '确认进行加密配对并重启业务容器？' && security_connect "$cloud_origin" "$bundle_dir" "$ca_fingerprint"
-        pause_menu ;;
-      5) security_local history; pause_menu ;;
-      6) confirm '确认从发行版仓库安装 ClamAV 并更新特征库？' && security_local engine; pause_menu ;;
-      7)
-        printf '%s\n' '先独立核验签名发布包，排除被篡改文件；批准会接受当前程序。'
-        tty_read '输入已核验的完整版本号：'; approved_version=$REPLY_VALUE
-        [ -n "$approved_version" ] && security_local approve-program "$approved_version"
-        pause_menu ;;
-      8)
-        printf '%s\n' '先检查账户、SSH、sudo、定时任务、systemd、网络配置和 APPGOG 配置的合法变更。'
-        tty_read '确认全部合法后输入 APPROVE-HOST：'; approved_host=$REPLY_VALUE
-        [ "$approved_host" = APPROVE-HOST ] && security_local approve-host "$approved_host"
-        pause_menu ;;
-      9) confirm '确认创建备份并重新下载当前签名版本修复源码？' && repair_source; pause_menu ;;
-      10) security_local response menu; pause_menu ;;
-      11) security_local cloudflare menu; pause_menu ;;
-      13) security_local firewall menu; pause_menu ;;
-      12)
-        printf '%s\n' '先独立检查 IPv4/IPv6 默认网关与主路由的合法性；此批准不审计防火墙或策略路由。'
-        if network_fingerprint=$(security_local network-fingerprint); then
-          printf '当前主路由指纹：%s\n' "$network_fingerprint"
-          tty_read '确认合法后输入上面的完整 SHA-256 指纹（留空取消）：'; approved_network=$REPLY_VALUE
-          [ -n "$approved_network" ] && security_local approve-network "$approved_network"
-        fi
-        pause_menu ;;
-      0|'') return 0 ;;
-      *) say_error '无效选项。'; pause_menu ;;
-    esac
-  done
-}
 business_pair_file() { printf '%s' "$SHARED_DIR/business-nodes.json"; }
 
 business_pair_status() {
@@ -595,7 +520,6 @@ main_menu() {
       ' 14. 卸载系统（保留数据）' \
       ' 15. 导出控制中心安全回滚包（授权机/同机）' \
       ' 16. 导入控制中心安全回滚包（授权机/同机）' \
-      ' 17. 安全中心：本地查杀与云端加密对接' \
       ' 18. 业务中心跨机配对（授权签发/打包导入）' \
       '  0. 退出'
     printf '\n%b危险操作会再次要求确认；更新前自动创建完整备份。%b\n\n' "$DIM" "$RESET"
@@ -622,7 +546,6 @@ main_menu() {
       14) confirm '确认卸载程序但保留数据库、Key、上传、构建成品、配置和备份？' && uninstall_keep_data; return 0 ;;
       15) if [ "$(installed_role)" = build ]; then say_error '打包机不持有授权控制中心。'; else migration_rollback_export; fi; pause_menu ;;
       16) if [ "$(installed_role)" = build ]; then say_error '打包机不持有授权控制中心。'; else say_warn '请使用命令 appgog migration-rollback-import <迁移ID> 执行，避免输错文件。'; fi; pause_menu ;;
-      17) security_menu ;;
       18) business_menu ;;
       0|'') printf '已退出 APPGOG 管理中心。\n'; return 0 ;;
       *) say_error '无效选项。'; pause_menu ;;
@@ -658,14 +581,6 @@ APPGOG 管理命令
   appgog business-export                授权机签发 root 私有配对包
   appgog business-import PATH           打包机导入并验证私有配对包
   appgog business-revoke                授权机撤销当前节点身份
-  appgog security-local status|scan|history|engine  本地检查、告警历史、查杀引擎
-  appgog security-local approve-program <版本>  核验后批准程序基线
-  appgog security-local approve-host APPROVE-HOST  核验后批准主机配置
-  appgog security-local response menu  独立事故隔离、可信源码修复和人工恢复
-  appgog security-local firewall menu  宿主实际规则快照、明确批准和状态
-  appgog security-local cloudflare menu  CF 只读身份、配置变化和可信基线
-  appgog security-doctor             验证云端身份和节点状态
-  appgog security-connect URL BUNDLE_DIR CA_SHA256  用独立身份包配对云端
   appgog doctor          系统诊断
   appgog diagnostics     导出不含凭证的诊断报告
   appgog repair          修复配置与密钥权限
@@ -681,9 +596,6 @@ case "${1:-menu}" in
   business-export) business_pair_export ;;
   business-import) [ "$#" -eq 2 ] || { usage >&2; exit 2; }; business_pair_import "$2" ;;
   business-revoke) confirm '撤销两个已签发节点身份？' && business_pair_revoke ;;
-  security-local) shift; security_local "$@" ;;
-  security-doctor) security_cloud_doctor ;;
-  security-connect) [ "$#" -eq 4 ] || { usage >&2; exit 2; }; security_connect "$2" "$3" "$4" ;;
   update) online_update ;;
   repair-source) repair_source ;;
   uninstall) confirm '确认卸载程序但保留全部业务数据？' && uninstall_keep_data ;;
