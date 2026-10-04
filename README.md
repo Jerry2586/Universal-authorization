@@ -1,8 +1,8 @@
-# APPGOG打包授权系统 v1.2.70
+# APPGOG打包授权系统 v1.2.71
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.70 将本地安全查杀与云端监测完整迁出业务项目。APPGOG 保留授权、打包、产品、Worker、签名更新、备份、迁移和分机部署；铁幕安全与玄武引擎在独立安全项目维护。授权与打包原有同机、授权单机、打包单机三条安装入口继续使用。
+v1.2.71 重设计授权运营中心与客户打包中心，提供日间、夜间、跟随系统三种外观，并统一登录、侧栏、卡片、表格和弹窗的视觉样式。本地安全查杀与云端监测已独立迁出业务项目。APPGOG 保留授权、打包、产品、Worker、签名更新、备份、迁移和分机部署；铁幕安全与玄武引擎在独立安全项目维护。授权与打包原有同机、授权单机、打包单机三条安装入口继续使用。
 
 安全功能的迁移位置、旧代理与事故记录的处理见 [安全项目剥离说明](docs/security-extraction.md)。升级不会删除旧代理的证书、扫描历史或事故记录，也不会自动解封已经隔离的业务服务。
 
@@ -59,7 +59,7 @@ curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- build
 
 每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.70` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.71` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 

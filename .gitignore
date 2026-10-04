@@ -20,3 +20,6 @@ backups/
 
 __pycache__/
 *.py[cod]
+
+# Disposable local UI previews and acceptance screenshots
+.codex-tmp/

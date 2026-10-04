@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f4f5fa">
   <title>APPGOG · 打包中心</title>
+  <script src="/assets/portal-theme.js"></script>
   <link rel="stylesheet" href="/assets/site.css">
   <link rel="stylesheet" href="/assets/admin-login.css">
   <link rel="stylesheet" href="/assets/build-center.css">
@@ -17,6 +18,7 @@
     <header class="admin-entry-header">
       <a class="wordmark" href="/build" aria-label="APPGOG 打包中心"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a>
       <span class="admin-entry-caption">主题打包平台</span>
+      <div class="entry-header-tools"><span class="entry-workspace-label">工作空间</span><div class="appearance-control" data-theme-control></div></div>
     </header>
     <div class="admin-entry-main">
       <div class="admin-entry-card">
@@ -67,7 +69,7 @@
     <main class="workspace">
       <header class="workspace-header">
         <div class="header-left"><button class="sidebar-toggle icon-button" type="button" aria-label="收起目录" title="收起目录" aria-expanded="true" aria-controls="portal-navigation"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m7-11-3 3 3 3"/></svg></button><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">主题打包中心</span><h1 id="page-title">交付工作台</h1></div></div>
-        <div class="header-actions"><span class="header-domain" id="header-domain">未绑定域名</span><button id="logout" class="header-logout" type="button">退出登录</button><button id="refresh-customer" class="icon-button" type="button" title="刷新数据">↻</button></div>
+        <div class="header-actions"><div class="appearance-control" data-theme-control></div><span class="header-domain" id="header-domain">未绑定域名</span><button id="logout" class="header-logout" type="button">退出登录</button><button id="refresh-customer" class="icon-button" type="button" title="刷新数据" aria-label="刷新数据"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 11.7-2L20 8M4 16l2.3 3A7 7 0 0 0 18 17"/></svg></button></div>
       </header>
 
       <div class="workspace-content">
@@ -85,9 +87,9 @@
           </section>
 
           <div class="stats-grid stats-grid-three">
-            <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>授权状态</span><strong id="license-status">—</strong><small>实时验证</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-blue">⌁</div><div><span>绑定域名</span><strong id="license-domain">—</strong><small>唯一激活域名</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>当前可打包</span><strong id="license-limit">—</strong><small id="license-quota-note">同时计算总额度与 24 小时上限</small><details class="quota-inline-details"><summary>额度明细</summary><p id="customer-quota-total">—</p><p id="customer-quota-daily">—</p></details></div></article>
+            <article class="stat-card"><div class="stat-icon stat-green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 12 2 2 4-4"/><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/></svg></div><div><span>授权状态</span><strong id="license-status">—</strong><small>实时验证</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z"/></svg></div><div><span>绑定域名</span><strong id="license-domain">—</strong><small>唯一激活域名</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-violet"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16V9m5 7V4m5 12v-5"/></svg></div><div><span>当前可打包</span><strong id="license-limit">—</strong><small id="license-quota-note">同时计算总额度与 24 小时上限</small><details class="quota-inline-details"><summary>额度明细</summary><p id="customer-quota-total">—</p><p id="customer-quota-daily">—</p></details></div></article>
           </div>
 
           <section class="surface build-start-card"><div><h3>打包你的主题</h3><p>选择版本，打包完成后下载并激活。</p></div><button class="button button-primary" type="button" data-go-view="builds">开始打包</button></section>

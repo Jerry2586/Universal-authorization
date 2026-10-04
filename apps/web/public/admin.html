@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f4f5fa">
   <title>APPGOG · 运营中心</title>
+  <script src="/assets/portal-theme.js"></script>
   <link rel="stylesheet" href="/assets/site.css">
   <link rel="stylesheet" href="/assets/admin-login.css">
   <link rel="stylesheet" href="/assets/portal-design.css">
@@ -16,6 +17,7 @@
     <header class="admin-entry-header">
       <a class="wordmark" href="/admin" aria-label="APPGOG 运营中心"><i class="wordmark-mark" aria-hidden="true"><img src="/assets/logo.png" alt=""></i><span>APPGOG</span></a>
       <span class="admin-entry-caption">授权管理平台</span>
+      <div class="entry-header-tools"><span class="entry-workspace-label">工作空间</span><div class="appearance-control" data-theme-control></div></div>
     </header>
     <div class="admin-entry-main">
       <div class="admin-entry-card">
@@ -75,17 +77,17 @@
     <main class="workspace">
       <header class="workspace-header">
         <div class="header-left"><button class="sidebar-toggle icon-button" type="button" aria-label="收起目录" title="收起目录" aria-expanded="true" aria-controls="portal-navigation"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m7-11-3 3 3 3"/></svg></button><button class="mobile-menu" type="button" aria-label="打开导航">☰</button><div><span class="header-context">授权运营后台</span><h1 id="page-title">运营总览</h1></div></div>
-        <div class="header-actions"><button id="open-account-center" class="operator-chip account-menu-toggle" type="button" title="打开用户中心"><span class="operator-avatar">A</span><span><strong>Administrator</strong><small>用户中心</small></span></button><button id="logout" class="header-logout" type="button">退出登录</button><button id="refresh-admin" class="icon-button" type="button" title="刷新数据">↻</button></div>
+        <div class="header-actions"><div class="appearance-control" data-theme-control></div><button id="open-account-center" class="operator-chip account-menu-toggle" type="button" title="打开用户中心"><span class="operator-avatar">A</span><span><strong>Administrator</strong><small>用户中心</small></span></button><button id="logout" class="header-logout" type="button">退出登录</button><button id="refresh-admin" class="icon-button" type="button" title="刷新数据" aria-label="刷新数据"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 11.7-2L20 8M4 16l2.3 3A7 7 0 0 0 18 17"/></svg></button></div>
       </header>
 
       <div class="workspace-content">
         <section class="page-view active" data-page="overview">
           <div class="welcome-row"><div><span class="overline">OPERATIONS OVERVIEW</span><h2>授权业务运行状态</h2><p>集中掌握授权、构建与客户交付的实时进展。</p></div><button class="button button-primary" type="button" data-go-view="licenses">＋ 签发授权</button></div>
           <div class="stats-grid stats-grid-four">
-            <article class="stat-card"><div class="stat-icon stat-blue">◇</div><div><span>授权总数</span><strong id="stat-licenses">—</strong><small>累计签发</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>正常授权</span><strong id="stat-active">—</strong><small>允许登录与构建</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-violet">↗</div><div><span>今日构建</span><strong id="stat-builds">—</strong><small>今日任务请求</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-amber">◎</div><div><span>有效激活</span><strong id="stat-activations">—</strong><small>当前安装站点</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l4 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8z"/><path d="M8 3v5h8V3M8 13h8m-8 4h5"/></svg></div><div><span>授权总数</span><strong id="stat-licenses">—</strong><small>累计签发</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 12 2 2 4-4"/><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/></svg></div><div><span>正常授权</span><strong id="stat-active">—</strong><small>允许登录与构建</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-violet"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16V9m5 7V4m5 12v-5"/></svg></div><div><span>今日构建</span><strong id="stat-builds">—</strong><small>今日任务请求</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-amber"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2"/></svg></div><div><span>有效激活</span><strong id="stat-activations">—</strong><small>当前安装站点</small></div></article>
           </div>
           <div class="admin-overview-grid">
             <section class="surface table-surface"><div class="surface-head table-title"><div><span class="overline">RECENT BUILDS</span><h3>最近构建</h3></div><button class="text-action" type="button" data-go-view="builds">全部任务 →</button></div><div class="table-scroll"><table><thead><tr><th>版本</th><th>域名</th><th>状态</th><th>进度</th></tr></thead><tbody id="overview-build-list"><tr><td colspan="4" class="empty-cell">暂无构建任务</td></tr></tbody></table></div></section>
@@ -215,7 +217,7 @@
           <div class="stats-grid stats-grid-four">
             <article class="stat-card"><div class="stat-icon stat-blue">ID</div><div><span>当前部署身份</span><strong id="migration-deployment-id">—</strong><small>控制中心唯一身份</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-violet">G</div><div><span>所有权代次</span><strong id="migration-generation">—</strong><small>只允许单一 Active</small></div></article>
-            <article class="stat-card"><div class="stat-icon stat-green">✓</div><div><span>本机状态</span><strong id="migration-identity-state">—</strong><small>Active / Fenced</small></div></article>
+            <article class="stat-card"><div class="stat-icon stat-green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 12 2 2 4-4"/><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/></svg></div><div><span>本机状态</span><strong id="migration-identity-state">—</strong><small>Active / Fenced</small></div></article>
             <article class="stat-card"><div class="stat-icon stat-amber">⇩</div><div><span>接收状态</span><strong id="migration-receiver-state">未开启</strong><small id="migration-receiver-expiry">—</small></div></article>
           </div>
           <div class="management-grid cms-grid">

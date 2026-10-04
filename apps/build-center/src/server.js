@@ -16,7 +16,7 @@ const files = new Map([
   ...['site.css', 'admin-login.css', 'build-center.css', 'portal-design.css'].map(name => [`/assets/${name}`, [`assets/${name}`, 'text/css; charset=utf-8']]),
   ['/assets/favicon.svg', ['assets/favicon.svg', 'image/svg+xml']],
   ['/assets/logo.png', ['assets/logo.png', 'image/png']],
-  ...['customer-portal.js', ...['customer-page', 'quota-view', 'system-version', 'shell', 'core', 'ui', 'tickets', 'api-client', 'dialog', 'live-refresh'].map(name => `portal/${name}.js`)]
+  ...['portal-theme.js', 'customer-portal.js', ...['customer-page', 'quota-view', 'system-version', 'shell', 'core', 'ui', 'tickets', 'api-client', 'dialog', 'live-refresh'].map(name => `portal/${name}.js`)]
     .map(name => [`/assets/${name}`, [`assets/${name}`, 'text/javascript; charset=utf-8']]),
 ]);
 const proxyPaths = /^\/web\/(?:customer(?:\/|$)|session$|logout$)/;
