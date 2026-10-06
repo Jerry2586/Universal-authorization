@@ -23,6 +23,8 @@ jobs:
         run: php -v
       - name: Unit and integration tests
         run: npm test
+      - name: Root backup restoration and shared ingress boundary
+        run: sudo env "PATH=$PATH" node --test tests/backup-integrity.test.js
       - name: Linux dual-tree bridge integrity performance
         run: node scripts/verify-bridge-integrity-performance.js
       - name: Shared HTTPS nested lock and exclusion boundaries

@@ -119,7 +119,7 @@ test('same-inode mutation after MAC read is rejected without retaining output', 
   assert.equal(existsSync(f.output), false);
 });
 
-test('Linux shell rejects tampered and legacy backups before decryption, build or volume restoration', { skip: process.platform === 'win32' }, t => {
+test('Linux shell rejects tampered and legacy backups before decryption, build or volume restoration', { skip: process.platform === 'win32' || process.getuid() !== 0 }, t => {
   const f = fixture(t); const real = realBackup(f.root);
   const root = join(f.root, 'project'); const bin = join(f.root, 'bin'); const temporary = join(f.root, 'tmp');
   mkdirSync(join(root, 'scripts'), { recursive: true }); mkdirSync(bin); mkdirSync(temporary);
@@ -269,7 +269,7 @@ test('legacy snapshot refuses same-inode mutation before invoking restore consum
 });
 
 
-test('Linux shell restores the complete authenticated stream after stdin-draining Docker preparation', { skip: process.platform === 'win32' }, t => {
+test('Linux shell restores the complete authenticated stream after stdin-draining Docker preparation', { skip: process.platform === 'win32' || process.getuid() !== 0 }, t => {
   const f = fixture(t); const real = realBackup(f.root, Buffer.alloc(1024 * 1024 + 19, 92));
   const root = join(f.root, 'project'); const bin = join(f.root, 'bin'); mkdirSync(join(root, 'scripts'), { recursive: true }); mkdirSync(bin);
   for (const name of ['docker.sh', 'backup-integrity.py']) cpSync(resolve('scripts', name), join(root, 'scripts', name));
