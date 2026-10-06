@@ -30,9 +30,9 @@ jobs:
       - name: Shared HTTPS nested lock and exclusion boundaries
         run: sudo env GITHUB_ACTIONS=true python3 tests/shared-ingress-lock.test.py
       - name: Fresh install, real build, update and complete restore
-        run: sh scripts/docker/verify.sh
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true sh scripts/docker/verify.sh
       - name: Standalone license and unpaired build Docker smoke
-        run: sh scripts/docker/verify-split.sh
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true sh scripts/docker/verify-split.sh
       - name: Package self-extracting installer
         env:
           APPGOG_ALLOW_UNSIGNED_ARTIFACTS: '1'
