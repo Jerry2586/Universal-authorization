@@ -14,6 +14,8 @@ DOCKER_SCRIPT="$ROOT_DIR/scripts/docker.sh"
 ENV_FILE="$INSTALL_ROOT/shared/.env"
 [ -f "$ENV_FILE" ] || ENV_FILE="$ROOT_DIR/.env"
 . "$ROOT_DIR/scripts/lib/deployment-role.sh"
+. "$ROOT_DIR/scripts/lib/shared-ingress.sh"
+appgog_ingress_lock || exit 1
 DEPLOYMENT_ROLE=$(appgog_deployment_role "$ENV_FILE") || exit 1
 COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
 appgog_require_control_role "$DEPLOYMENT_ROLE" || exit 1

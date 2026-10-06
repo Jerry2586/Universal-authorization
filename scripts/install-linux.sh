@@ -41,6 +41,7 @@ SCRIPT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)
 . "$SCRIPT_ROOT/scripts/lib/release-install.sh"
 . "$SCRIPT_ROOT/scripts/lib/dns.sh"
 . "$SCRIPT_ROOT/scripts/lib/version-lock.sh"
+. "$SCRIPT_ROOT/scripts/lib/shared-ingress.sh"
 
 usage() {
   cat <<'EOF'
@@ -420,8 +421,10 @@ validate_project_contract() {
 }
 
 prepare_shared_layout() {
-  mkdir -p "$RELEASES_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control/requests"
+  mkdir -p "$RELEASES_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control/requests" "$SHARED_DIR/ingress"
   chmod 700 "$SHARED_DIR" "$SHARED_DIR/backups" "$SHARED_DIR/logs" "$SHARED_DIR/update-control" 2>/dev/null || true
+  chmod 755 "$SHARED_DIR/ingress"
+  chown root:root "$SHARED_DIR/ingress"
   chown -R 1000:1000 "$SHARED_DIR/update-control" 2>/dev/null || true
   chmod 770 "$SHARED_DIR/update-control" "$SHARED_DIR/update-control/requests" 2>/dev/null || true
   if [ ! -f "$SHARED_DIR/.env" ] && [ -f "$INSTALL_ROOT/.env" ]; then cp -p "$INSTALL_ROOT/.env" "$SHARED_DIR/.env"; fi
@@ -700,6 +703,9 @@ wait_public_https() {
 if [ -e /var/lib/appgog-security/incident.json ] || [ -L /var/lib/appgog-security/incident.json ]; then
   fail '旧版安全隔离记录仍存在；请由管理员核实事件、归档证据并人工解除历史围栏，禁止更新覆盖证据。'
 fi
+log "检测系统：${PRETTY_NAME:-$DISTRO}"
+install_packages
+appgog_ingress_lock || fail '无法取得共享入口锁。'
 prepare_shared_layout
 if [ -f "$SHARED_DIR/.env" ]; then
   UPGRADE_MODE=true
@@ -718,8 +724,6 @@ if [ -f "$SHARED_DIR/.env" ]; then
     [ -z "$existing_caddy_image" ] || CADDY_IMAGE=$existing_caddy_image
   fi
 fi
-log "检测系统：${PRETTY_NAME:-$DISTRO}"
-install_packages
 prompt_domain AUTH_DOMAIN '授权中心域名'
 prompt_domain BUILD_DOMAIN '客户打包中心域名'
 [ "$AUTH_DOMAIN" != "$BUILD_DOMAIN" ] || fail '两个域名必须不同。'
@@ -790,5 +794,6 @@ fi
 if [ "$OPEN_MENU" = true ] && [ "$NON_INTERACTIVE" = false ] && { [ -t 0 ] || [ -t 1 ]; } && [ -r /dev/tty ]; then
   cleanup_version_guard
   trap - 0 2 15
+  appgog_ingress_unlock
   exec /usr/local/bin/appgog </dev/tty >/dev/tty
 fi

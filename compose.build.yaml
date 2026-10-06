@@ -8,6 +8,10 @@ services:
         NODE_IMAGE: ${APPGOG_NODE_IMAGE:-node:24-bookworm-slim}
         CADDY_IMAGE: ${APPGOG_CADDY_IMAGE:-caddy:2.10}
     pull_policy: never
+    labels:
+      com.appgog.shared-ingress: "v1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     init: true
     read_only: true
@@ -37,6 +41,7 @@ services:
       - "${HTTPS_PORT:-443}:8443"
       - "${HTTPS_PORT:-443}:8443/udp"
     volumes:
+      - ${APPGOG_SHARED_DIR:-./shared}/ingress:/app/runtime/ingress:ro
       - appgog-artifacts:/app/var/artifacts
       - ${APPGOG_SHARED_DIR:-./shared}/update-control:/app/var/update-control
       - appgog-build-config:/app/runtime/build
