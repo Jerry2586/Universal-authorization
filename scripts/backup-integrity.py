@@ -23,21 +23,6 @@ CHUNK_BYTES = 1024 * 1024
 DOMAIN = b"\x00APPGOG-BACKUP-AUTH-V1"
 
 
-def consumer_lock_fds():
-    """Keep only the validated shared-ingress FD across authenticated restore."""
-    marker = os.environ.get("APPGOG_INGRESS_LOCKED", "")
-    if not marker:
-        return ()
-    if marker != "8" or os.geteuid() != 0:
-        raise ValueError("共享入口锁标记无效")
-    held = os.fstat(8)
-    current = os.stat("/run/lock/appgog-ingress.lock", follow_symlinks=False)
-    if (not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or
-            current.st_nlink != 1 or current.st_mode & 0o022 or
-            (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino)):
-        raise ValueError("继承的共享入口锁不匹配")
-    return (8,)
-
 def regular_input(path):
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
@@ -281,7 +266,7 @@ def envelope(action, key_path, input_path, output_path=None, allow_legacy=False,
                 os.fsync(output.fileno())
                 if consumer:
                     output.seek(0)
-                    subprocess.run(consumer, stdin=output, pass_fds=consumer_lock_fds(), check=True)
+                    subprocess.run(consumer, stdin=output, check=True)
                 output.close()
                 output = None
     except BaseException:

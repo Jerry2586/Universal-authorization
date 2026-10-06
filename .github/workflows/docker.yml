@@ -25,9 +25,7 @@ jobs:
         run: npm test
       - name: Linux dual-tree bridge integrity performance
         run: node scripts/verify-bridge-integrity-performance.js
-      - name: Shared HTTPS nested lock and exclusion boundaries
-        run: sudo env GITHUB_ACTIONS=true python3 tests/shared-ingress-lock.test.py
-      - name: Root backup restoration and shared ingress boundary
+      - name: Root backup restoration
         run: sudo env "PATH=$PATH" node --test tests/backup-integrity.test.js
       - name: Prepare root-controlled disposable Docker workspace
         shell: bash

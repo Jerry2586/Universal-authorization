@@ -5,7 +5,6 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT_DIR/scripts/lib/backup.sh"
 . "$ROOT_DIR/scripts/lib/diagnostics.sh"
 . "$ROOT_DIR/scripts/lib/deployment-role.sh"
-. "$ROOT_DIR/scripts/lib/shared-ingress.sh"
 cd "$ROOT_DIR"
 BACKUP_KEY_FILE=${APPGOG_BACKUP_KEY_FILE:-$ROOT_DIR/.backup-key}
 ENV_FILE="$ROOT_DIR/.env"
@@ -396,9 +395,6 @@ usage() {
   cleanup-images          清理未被使用的悬空镜像
 EOF
 }
-case "${1:-help}" in
-  install|update|start|stop|restart|backup|restore|restore-stream|repair-permissions) appgog_ingress_lock || exit 1 ;;
-esac
 case "${1:-help}" in
   install|update)
     incident_guard

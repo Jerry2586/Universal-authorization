@@ -28,6 +28,3 @@ http://127.0.0.1:8081 {
     Referrer-Policy "strict-origin-when-cross-origin"
   }
 }
-
-# Root-managed, external site configuration; business processes own no writes here.
-import /app/runtime/ingress/*.caddy

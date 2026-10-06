@@ -39,7 +39,7 @@ ROOT_DIR=$(resolve_root) || {
 }
 [ "$(id -u)" != 0 ] || {
   trusted_root_path "$ROOT_DIR" || { echo "安装目录或父目录不可信：$ROOT_DIR" >&2; exit 1; }
-  for trusted_script in dns lifecycle manager-migration signed-update deployment-role shared-ingress; do
+  for trusted_script in dns lifecycle manager-migration signed-update deployment-role; do
     trusted_root_file "$ROOT_DIR/scripts/lib/$trusted_script.sh" || { echo "管理脚本归属或权限异常：$trusted_script" >&2; exit 1; }
   done
   for trusted_script in appgog docker migration; do
@@ -56,7 +56,6 @@ OPERATIONS_LOG="$SHARED_DIR/logs/operations.log"
 . "$ROOT_DIR/scripts/lib/manager-migration.sh"
 . "$ROOT_DIR/scripts/lib/signed-update.sh"
 . "$ROOT_DIR/scripts/lib/deployment-role.sh"
-. "$ROOT_DIR/scripts/lib/shared-ingress.sh"
 COMPOSE_FILE=$(appgog_compose_file "$ROOT_DIR" "$ENV_FILE") || exit 1
 compose() { docker compose -p "${APPGOG_PROJECT:-appgog}" -f "$COMPOSE_FILE" "$@"; }
 
@@ -115,8 +114,7 @@ repair_source() {
   run_signed_installer "$version" true repair.log
 }
 
-uninstall_keep_data() (
-  appgog_ingress_lock || return 1
+uninstall_keep_data() {
   [ "$(id -u)" -eq 0 ] || { say_error '卸载需要使用 root 或 sudo。'; return 1; }
   case "$INSTALL_ROOT" in /opt/appgog|/srv/appgog|/home/*/appgog) ;; *) say_error "拒绝卸载非标准目录：$INSTALL_ROOT"; return 1 ;; esac
   mkdir -p "$SHARED_DIR/logs"
@@ -135,7 +133,7 @@ uninstall_keep_data() (
   rm -f "$INSTALL_ROOT/current"
   printf '%s 卸载完成，Docker 数据卷与 shared 目录已保留\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$uninstall_log"
   say_ok "程序已卸载；数据库、Key、上传、构建成品、配置和备份仍保留。日志：$uninstall_log"
-)
+}
 
 env_value() {
   key=$1
@@ -325,12 +323,11 @@ business_pair_revoke() {
   say_ok '两项节点身份已撤销；打包机将无法访问授权机。'
 }
 
-business_pair_import() (
-  appgog_ingress_lock || return 1
+business_pair_import() {
   [ "$(installed_role)" = build ] || { say_error '只有独立打包机可导入。'; return 1; }
   [ "$(id -u)" -eq 0 ] || { say_error '导入需要 root。'; return 1; }
   APPGOG_INSTALL_DIR="$INSTALL_ROOT" sh "$ROOT_DIR/scripts/business-connect.sh" "$1"
-)
+}
 
 business_menu() {
   while :; do
@@ -362,8 +359,7 @@ show_status() {
   run_docker status
 }
 
-configure_domains() (
-  appgog_ingress_lock || return 1
+configure_domains() {
   [ -f "$ENV_FILE" ] || {
     say_error '.env 不存在，请重新运行一键安装器。'
     return 1
@@ -425,10 +421,9 @@ configure_domains() (
   if confirm '现在执行安全更新并应用配置？'; then
     run_docker update
   fi
-)
+}
 
-configure_services() (
-  appgog_ingress_lock || return 1
+configure_services() {
   [ -f "$ENV_FILE" ] || { say_error '.env 不存在，请重新运行一键安装器。'; return 1; }
   printf '%s\n' '服务开关只影响 APPGOG 业务入口，不会删除任何授权、Key、主题或构建数据。'
   for item in \
@@ -445,7 +440,7 @@ configure_services() (
   done
   say_ok '服务开关已写入 .env。'
   if confirm '现在重建并应用服务开关？'; then run_docker update; fi
-)
+}
 
 logs_menu() {
   printf '%s\n' '1. 全部服务' '2. 初始化服务' '3. 授权中心' '4. 打包中心' '5. 构建 Worker' '6. HTTPS/Caddy' '0. 返回'
