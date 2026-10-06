@@ -29,10 +29,16 @@ jobs:
         run: sudo env GITHUB_ACTIONS=true python3 tests/shared-ingress-lock.test.py
       - name: Root backup restoration and shared ingress boundary
         run: sudo env "PATH=$PATH" node --test tests/backup-integrity.test.js
+      - name: Prepare root-controlled disposable Docker workspace
+        shell: bash
+        run: |
+          fixture=$(sudo mktemp -d /root/appgog-docker-ci.XXXXXXXX)
+          tar --exclude=.git --exclude=node_modules --exclude=.codex --exclude=dist --exclude=backups --exclude=logs -cf - . | sudo tar --no-same-owner -C "$fixture" -xf -
+          echo "APPGOG_DOCKER_CI_ROOT=$fixture" >> "$GITHUB_ENV"
       - name: Fresh install, real build, update and complete restore
-        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true sh scripts/docker/verify.sh
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true sh "$APPGOG_DOCKER_CI_ROOT/scripts/docker/verify.sh"
       - name: Standalone license and unpaired build Docker smoke
-        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true sh scripts/docker/verify-split.sh
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true sh "$APPGOG_DOCKER_CI_ROOT/scripts/docker/verify-split.sh"
       - name: Package self-extracting installer
         env:
           APPGOG_ALLOW_UNSIGNED_ARTIFACTS: '1'
@@ -72,8 +78,9 @@ jobs:
       - name: Service diagnostics on failure
         if: failure()
         run: |
-          docker compose ps -a
-          docker compose logs --tail=100 appgog
+          if [ -n "${APPGOG_DOCKER_CI_ROOT:-}" ]; then
+            sudo sh -c 'cd "$1" && docker compose ps -a && docker compose logs --tail=100 appgog' -- "$APPGOG_DOCKER_CI_ROOT"
+          fi
   preflight-sign:
     if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/')
     needs: verify
