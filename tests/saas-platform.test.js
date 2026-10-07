@@ -171,6 +171,24 @@ test('owner creates a release_manager who can log in but cannot issue a license'
     method: 'POST', body: { username: 'release.manager', password: '183726' },
   });
   assert.equal(manager.status, 200);
+  assert.equal((await app.send('/web/admin/login', {
+    method: 'POST', body: { username: 'release.manager', password: 183726 },
+  })).status, 401);
+  assert.equal((await app.send('/web/admin/login', {
+    method: 'POST', body: { username: 'release.manager', password: 'x'.repeat(129) },
+  })).status, 401);
+  const numericCurrentPassword = await app.send('/web/admin/account/password', {
+    method: 'POST', cookie: manager.cookie.split(';')[0], csrf: manager.data.csrf_token,
+    body: { current_password: 183726, new_password: 'Manager-password_2026!', confirm_password: 'Manager-password_2026!' },
+  });
+  assert.equal(numericCurrentPassword.status, 403);
+  assert.equal(numericCurrentPassword.data.error.code, 'ADMIN_PASSWORD_CURRENT_INVALID');
+  const oversizedCurrentPassword = await app.send('/web/admin/account/password', {
+    method: 'POST', cookie: manager.cookie.split(';')[0], csrf: manager.data.csrf_token,
+    body: { current_password: 'x'.repeat(129), new_password: 'Manager-password_2026!', confirm_password: 'Manager-password_2026!' },
+  });
+  assert.equal(oversizedCurrentPassword.status, 403);
+  assert.equal(oversizedCurrentPassword.data.error.code, 'ADMIN_PASSWORD_CURRENT_INVALID');
   const denied = await app.send('/web/admin/licenses', {
     method: 'POST', cookie: manager.cookie.split(';')[0], csrf: manager.data.csrf_token,
     body: { customer_ref: 'ORDER-NOT-ALLOWED', domain: 'no.example.com' },
@@ -571,13 +589,23 @@ test('管理员停用后旧会话立即失效，所有者账号受保护', async
   assert.equal(protectedChange.status, 403);
 });
 
-test('管理员可修改自己的六位数字密码，修改后所有旧会话失效', async (t) => {
+test('管理员可使用 6–128 位混合字符密码，修改后所有旧会话失效', async (t) => {
   const app = await fixture(t);
   const first = await app.owner();
   const second = await app.owner();
+  const invalidPasswords = ['short', 'x'.repeat(129), 123456];
+  for (const password of invalidPasswords) {
+    const rejected = await app.send('/web/admin/account/password', {
+      method: 'POST', cookie: first.cookie, csrf: first.csrf,
+      body: { current_password: app.config.adminPassword, new_password: password, confirm_password: password },
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.data.error.code, 'ADMIN_PASSWORD_INVALID');
+  }
+  const newPassword = 'Appgog-admin_2026!';
   const changed = await app.send('/web/admin/account/password', {
     method: 'POST', cookie: first.cookie, csrf: first.csrf,
-    body: { current_password: app.config.adminPassword, new_password: '516204', confirm_password: '516204' },
+    body: { current_password: app.config.adminPassword, new_password: newPassword, confirm_password: newPassword },
   });
   assert.equal(changed.status, 200);
   assert.match(changed.cookie, /^appgog_admin_session=;/);
@@ -587,8 +615,40 @@ test('管理员可修改自己的六位数字密码，修改后所有旧会话�
     method: 'POST', body: { username: app.config.adminUsername, password: app.config.adminPassword },
   })).status, 401);
   assert.equal((await app.send('/web/admin/login', {
-    method: 'POST', body: { username: app.config.adminUsername, password: '516204' },
+    method: 'POST', body: { username: app.config.adminUsername, password: newPassword },
   })).status, 200);
+});
+
+test('创建管理员拒绝过短、超长和非字符串密码', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  const invalidPasswords = ['short', 'x'.repeat(129), 123456];
+  for (const [index, password] of invalidPasswords.entries()) {
+    const rejected = await app.send('/web/admin/admins', {
+      method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+      body: { username: `invalid-password-${index}`, password, role: 'support' },
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.data.error.code, 'ADMIN_PASSWORD_INVALID');
+  }
+});
+
+test('管理员写入和审计处于同一事务，审计失败时创建账号整体回滚', async (t) => {
+  const app = await fixture(t);
+  const owner = await app.owner();
+  app.database.exec("CREATE TEMP TRIGGER deny_admin_create_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'admin.created' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+  const rejected = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'audit-rollback', password: 'Rollback-password_2026!', role: 'support' },
+  });
+  assert.equal(rejected.status, 500);
+  assert.equal(app.repository.adminByUsername('audit-rollback'), undefined);
+  app.database.exec('DROP TRIGGER deny_admin_create_audit');
+  const created = await app.send('/web/admin/admins', {
+    method: 'POST', cookie: owner.cookie, csrf: owner.csrf,
+    body: { username: 'audit-rollback', password: 'Rollback-password_2026!', role: 'support' },
+  });
+  assert.equal(created.status, 201);
 });
 
 test('普通管理员可软删除并释放用户名，所有者和当前账号不可删除', async (t) => {

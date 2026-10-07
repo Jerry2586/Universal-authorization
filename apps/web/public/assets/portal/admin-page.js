@@ -66,7 +66,7 @@ export function createAdminPage(shell) {
       const form = element('form', null, 'form-stack');
       const fields = [
         ['current_password', '当前密码', 'current-password'],
-        ['new_password', '新密码（6 位数字）', 'new-password'],
+        ['new_password', '新密码（6–128 个字符）', 'new-password'],
         ['confirm_password', '确认新密码', 'new-password'],
       ];
       for (const [name, labelText, autocomplete] of fields) {
@@ -74,8 +74,7 @@ export function createAdminPage(shell) {
         label.append(element('span', labelText));
         const input = element('input');
         input.name = name; input.type = 'password'; input.autocomplete = autocomplete;
-        input.inputMode = 'numeric'; input.required = true;
-        if (name !== 'current_password') { input.minLength = 6; input.maxLength = 6; input.pattern = '[0-9]{6}'; }
+        input.required = true; input.minLength = 6; input.maxLength = 128;
         label.append(input); form.append(label);
       }
       const row = element('div', null, 'dialog-actions');

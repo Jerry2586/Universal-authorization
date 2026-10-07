@@ -1,7 +1,7 @@
 import { DomainError, invariant } from '../../../packages/core/src/errors.js';
 import { newCsrfToken, newId, newSessionToken } from '../../../packages/core/src/identifiers.js';
 import { hashSecret } from '../../../packages/core/src/security.js';
-import { verifyPassword } from '../../../packages/core/src/password.js';
+import { isValidAdminPassword, verifyPassword } from '../../../packages/core/src/password.js';
 import { adminCan, adminPermissions } from './admin-policy.js';
 
 function addSeconds(date, seconds) {
@@ -35,7 +35,7 @@ export function createSessionService({ repository, config, clock = () => new Dat
 
     loginAdmin(username, password, ip = null) {
       const admin = repository.adminByUsername(String(username ?? '').trim());
-      invariant(admin && admin.status === 'active' && verifyPassword(String(password ?? ''), admin.password_hash), 'ADMIN_LOGIN_FAILED', '管理员账号或密码错误', 401);
+      invariant(admin && admin.status === 'active' && isValidAdminPassword(password) && verifyPassword(password, admin.password_hash), 'ADMIN_LOGIN_FAILED', '管理员账号或密码错误', 401);
       const current = repository.updateAdminLogin(admin.id, ip, clock().toISOString());
       return { ...create('admin', admin.id), admin: {
         id: current.id, username: current.username, display_name: current.display_name,

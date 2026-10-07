@@ -2,9 +2,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { createIdentityService } from '../apps/license-api/src/modules/identity/service.js';
 
 const root = resolve(import.meta.dirname, '..');
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
+
+test('identity service refuses to run without an atomic transaction boundary', () => {
+  assert.throws(
+    () => createIdentityService({ repository: {} }),
+    error => error?.code === 'IDENTITY_ATOMIC_REQUIRED' && error?.status === 500,
+  );
+});
 
 test('packages and independent services do not import license-api application internals', () => {
   const sqliteQueue = read('packages/adapters/src/sqlite-build-queue.js');
@@ -144,6 +152,8 @@ test('identity and operations services receive bounded repository ports', () => 
   const identityPort = read('apps/license-api/src/modules/identity/repository-port.js');
   const operationsPort = read('apps/license-api/src/modules/operations/repository-port.js');
   assert.match(bootstrap, /createIdentityRepositoryPort\(repository\)/);
+  assert.match(bootstrap, /createIdentityService\(\{[\s\S]*?atomic: operation => transaction\(database, operation\)/,
+    'Identity 高风险状态变化和审计必须共享数据库事务');
   assert.match(bootstrap, /createOperationsRepositoryPort\(repository\)/);
   assert.doesNotMatch(portal, /createAdminAccount|changeAdminPassword|authenticateServiceNode|updateCmsSettings/,
     'Portal Service 不得重新接管 Identity 或 Operations 用例');

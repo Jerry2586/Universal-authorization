@@ -48,7 +48,7 @@
 | 方法和路径 | 身份 | 用途 |
 |---|---|---|
 | `POST /web/customer/login` | 固定 License Key | 输入 `{ "license_key": "..." }` 登录，返回 CSRF Token |
-| `POST /web/admin/login` | 管理员账号密码 | 输入 `{ "username": "...", "password": "..." }` 登录 |
+| `POST /web/admin/login` | 管理员账号密码 | 输入 `{ "username": "...", "password": "..." }` 登录；密码必须是 6–128 个字符的字符串 |
 | `GET /web/session?actor=admin\|customer` | 对应已登录会话 | 当前身份和 CSRF Token；打包中心仅允许 customer |
 | `POST /web/logout?actor=admin\|customer` | 对应已登录会话 | 退出并清除该身份 Cookie，不影响另一身份 |
 | `GET /web/customer/overview` | 客户 | 当前授权、过去 24 小时已用/剩余构建额度、可用版本、最近构建与自己的工单 |
@@ -76,7 +76,7 @@
 | `POST /web/admin/erasure-cleanup/retry` | 平台所有者 | 立即重试永久删除留下的文件补偿任务；系统启动时也会自动重试 |
 | `POST /web/admin/domain-migrations/{id}/review` | 授权管理员 | 兼容处理旧版尚未结束的迁移申请；v1.1.0 客户新换绑不再等待审批 |
 | `POST /web/admin/licenses/{id}/status` | 管理员 | 输入 `{ "status": "active" }`，也支持 `suspended`、`revoked` |
-| `POST /web/admin/account/password` | 当前管理员 | 校验当前密码并把密码修改为新的六位数字，成功后撤销该账号全部会话 |
+| `POST /web/admin/account/password` | 当前管理员 | 校验当前密码并把密码修改为 6–128 个字符（支持字母、数字和符号），成功后撤销该账号全部会话 |
 | `DELETE /web/admin/admins/{id}` | 所有者 | 软删除普通管理员并撤销会话；不能删除所有者或当前账号 |
 | `POST /web/admin/cms/settings` | 所有者 | 修改平台名称、换绑冷却和运营公告；部署域名、服务开关拒绝网页写入 |
 | `GET /web/admin/tickets/{id}` | `ticket.view` | 查看客户、授权、构建上下文、公开回复和内部备注 |

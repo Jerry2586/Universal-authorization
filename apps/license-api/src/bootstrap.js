@@ -85,7 +85,9 @@ export function bootstrap({ database, config, privateKey, publicKey = '', keyrin
     packagePrivateKey: signingKeys.package.privateKey, issuer: config.publicBaseUrl,
     repository: createOperationsRepositoryPort(repository), atomic: fn => transaction(database, fn), clock,
   });
-  const identity = createIdentityService({ repository: createIdentityRepositoryPort(repository), clock });
+  const identity = createIdentityService({
+    repository: createIdentityRepositoryPort(repository), atomic: operation => transaction(database, operation), clock,
+  });
   const operations = createOperationsService({
     repository: createOperationsRepositoryPort(repository), config, packageVersion: PACKAGE_VERSION, clock,
   });

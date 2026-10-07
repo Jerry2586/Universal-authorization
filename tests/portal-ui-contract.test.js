@@ -61,6 +61,17 @@ test('admin UI exposes independent announcement, protected key reveal, and signe
   assert.match(operations, /setTimer\(reload, 250\)/);
 });
 
+test('admin password forms allow 6–128 characters without forcing a numeric keypad', () => {
+  const html = read('apps/web/public/admin.html');
+  const script = read('apps/web/public/assets/portal/admin-page.js');
+  assert.match(html, /name="password" type="password" autocomplete="current-password" minlength="6" maxlength="128"/);
+  assert.match(html, /name="password" type="password" autocomplete="new-password" minlength="6" maxlength="128"/);
+  assert.doesNotMatch(html, /inputmode="numeric"|pattern="\[0-9\]\{6\}"/);
+  assert.match(script, /新密码（6–128 个字符）/);
+  assert.match(script, /input\.required = true; input\.minLength = 6; input\.maxLength = 128/);
+  assert.doesNotMatch(script, /inputMode = 'numeric'|pattern = '\[0-9\]\{6\}'/);
+});
+
 test('customer build UI keeps the version catalog in build tasks and removes migration notes', () => {
   const html = read('apps/web/public/build.html');
   const script = read('apps/web/public/assets/portal/customer-page.js');

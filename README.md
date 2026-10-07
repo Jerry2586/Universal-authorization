@@ -1,8 +1,8 @@
-# APPGOG打包授权系统 v1.2.71
+# APPGOG打包授权系统 v1.2.74
 
 这是一个可以直接安装运行的 APPGOG/Xboard 主题授权、打包和激活系统。一套源码支持四种角色：完整系统、授权中心、客户打包中心和构建 Worker。授权中心持有唯一数据库与签名私钥；打包中心只代理客户接口；独立 Worker 可通过节点凭证下载源码 ZIP、上传构建成品，不需要和授权中心共享磁盘。
 
-v1.2.71 重设计授权运营中心与客户打包中心，提供日间、夜间、跟随系统三种外观，并统一登录、侧栏、卡片、表格和弹窗的视觉样式。本地安全查杀与云端监测已独立迁出业务项目。APPGOG 保留授权、打包、产品、Worker、签名更新、备份、迁移和分机部署；铁幕安全与玄武引擎在独立安全项目维护。授权与打包原有同机、授权单机、打包单机三条安装入口继续使用。
+v1.2.74 取消管理员密码只能使用固定六位数字的限制，统一支持 6–128 个字母、数字和符号，并保留修改密码后撤销全部旧会话的安全行为。授权运营中心与客户打包中心继续提供日间、夜间、跟随系统三种外观；本地安全查杀与云端监测在独立安全项目维护。APPGOG 保留授权、打包、产品、Worker、签名更新、备份、迁移和分机部署，同机、授权单机、打包单机三条安装入口继续使用。
 
 安全功能的迁移位置、旧代理与事故记录的处理见 [安全项目剥离说明](docs/security-extraction.md)。升级不会删除旧代理的证书、扫描历史或事故记录，也不会自动解封已经隔离的业务服务。
 
@@ -59,7 +59,7 @@ curl -fsSL https://jerry2586.github.io/i/i.sh | sh -s -- build
 
 每次正式版本同步更新 Git 源码、`main`、版本标签、GitHub Release、源码 ZIP、自解压 `.run`、两份 SHA-256、`release-manifest.json`、Ed25519 清单签名和稳定引导文件 `install.sh`。
 
-仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.71` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
+仓库通过 `release-contract.json` 固定 Node、pnpm、Caddy、Docker Compose 和 CPU 架构要求。打包脚本与 GitHub Actions 会同时校验源码、环境配置、文档、ZIP、`.run` 和签名清单；任一版本或环境不匹配都会直接停止发布。正式 Release 发布后使用 `node scripts/verify-published-release.js --tag v1.2.74` 从 GitHub API 返回的下载地址回取七个附件，再次验证 Latest 状态、附件数量、Ed25519 签名、ZIP/RUN 哈希和包内版本。完整强制规则见 `AGENTS.md` 与 `docs/release-policy.md`。
 
 安装完成后输入 `appgog` 打开管理菜单，可查看状态、启停和重启服务、查看日志、保存域名配置、查看初始凭证、安全更新、完整备份、恢复和运行系统诊断。命令行模式同样可用：
 
@@ -186,7 +186,7 @@ npm run cms:package
 - Activation、Package 和 Notification 使用三套独立 Ed25519 密钥；固定 Key、安装 Key、刷新 Secret 等只保存 HMAC 摘要。
 - 免费版、付费版和历史兼容版在签发或切换时固化能力与额度快照；授权中心额度、客户包运行时、SDK 和服务端 Guard 四层执行，不能通过修改套餐模板或前端按钮绕过。
 - 客户包提供 `APPGOGLicense.hasCapability()` 与 `requireCapability()`；只有签名激活凭证含 `updates:read` 时才查询并展示签名版本通知。
-- 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；首次管理员密码和新建管理员密码均为六位数字，管理员可在用户中心自行改密；普通管理员可软删除，所有者和当前账号受保护。
+- 管理员账号密码登录及所有者、授权运营、版本管理员、客服、审计角色；管理员密码支持 6–128 个字母、数字和符号，管理员可在用户中心自行改密；普通管理员可软删除，所有者和当前账号受保护。
 - 客户打包站只接收固定 Key，不暴露内部客户编号、订单号或授权记录 ID；授权中心可审计成员操作。
 - 已激活主题使用服务端签名的离线宽限；网络故障/服务端故障时限期可用，明确拒绝会锁定；初次激活仍必须在线。
 - 客户主题内置确定性的 Xboard 插件 ZIP；首次激活自动调用官方 `plugin/upload`、`plugin/install`、`plugin/enable`。插件状态保存在 `storage/app/private/appgog-license-bridge/`，服务器迁移必须连同 Laravel `APP_KEY` 一起迁移，否则无法解密原安装身份和授权状态。
